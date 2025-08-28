@@ -5,6 +5,7 @@ import os
 from transform_player_stats import calculate_player_stats, get_distinct_players
 from generate_team_stats import generate_team_stats, get_available_teams
 from pca import get_player_pca_score
+from get_team_city import get_team_city
 
 # Configuration
 SEASON_YEAR = "2023-2024"  # Default season year
@@ -101,14 +102,64 @@ def test_data_loading():
     except Exception as e:
         print(f"Error testing imported functions: {e}")
 
-def create_llm_training_data(df, n_previous=5, filter_nan=True):
+def determine_home_away_teams(df):
     """
-    Create LLM training data by concatenating current description with N previous descriptions.
-    Only concatenates within the same game (respects game_id boundaries).
+    Determine which team is home and which is away for each game by tracking score increments.
     
     Args:
-        df (pd.DataFrame): Play-by-play DataFrame with 'description' and 'game_id' columns
-        n_previous (int): Number of previous descriptions to include (default: 5)
+        df (pd.DataFrame): Play-by-play DataFrame with game_id, team, away_score, home_score columns
+        
+    Returns:
+        dict: Dictionary mapping game_id to {'home_team': team_name, 'away_team': team_name}
+    """
+    game_team_mapping = {}
+    
+    for game_id in df['game_id'].unique():
+        game_df = df[df['game_id'] == game_id].sort_values('play_id').reset_index(drop=True)
+        
+        home_team = None
+        away_team = None
+        prev_away_score = 0
+        prev_home_score = 0
+        
+        for i, row in game_df.iterrows():
+            current_away_score = row.get('away_score', 0) or 0
+            current_home_score = row.get('home_score', 0) or 0
+            team = row.get('team', '')
+            
+            # Check if away score incremented and we haven't identified away team yet
+            if current_away_score > prev_away_score and away_team is None:
+                away_team = team
+                
+            # Check if home score incremented and we haven't identified home team yet  
+            if current_home_score > prev_home_score and home_team is None:
+                home_team = team
+                
+            # Update previous scores
+            prev_away_score = current_away_score
+            prev_home_score = current_home_score
+            
+            # Break early if we've identified both teams
+            if home_team and away_team:
+                break
+        
+        # Store the mapping for this game
+        game_team_mapping[game_id] = {
+            'home_team': home_team or 'Unknown',
+            'away_team': away_team or 'Unknown'
+        }
+    
+    return game_team_mapping
+
+def create_llm_training_data(df, n_total=5, filter_nan=True):
+    """
+    Create LLM training data by concatenating descriptions with score context.
+    Only concatenates within the same game (respects game_id boundaries).
+    Format: "away_team: score home_team: score | description"
+    
+    Args:
+        df (pd.DataFrame): Play-by-play DataFrame with required columns
+        n_total (int): Total number of descriptions to concatenate together (default: 5)
         filter_nan (bool): Whether to filter out rows with NaN descriptions (default: True)
     
     Returns:
@@ -121,33 +172,44 @@ def create_llm_training_data(df, n_previous=5, filter_nan=True):
     if filter_nan:
         result_df = result_df.dropna(subset=['description']).reset_index(drop=True)
     
+    # Determine home/away team mapping for all games
+    print("Determining home/away team mappings...")
+    game_team_mapping = determine_home_away_teams(result_df)
+    
     concatenated_descriptions = []
     
     for i in range(len(result_df)):
         current_game_id = result_df.iloc[i]['game_id']
         current_desc = result_df.iloc[i]['description']
         
-        # Collect descriptions from the same game only
+        # Get team mapping for current game
+        team_mapping = game_team_mapping.get(current_game_id, {'home_team': 'Unknown', 'away_team': 'Unknown'})
+        
+        # Collect descriptions with score context from the same game only
         descriptions_to_concat = []
         
-        # Go backwards from current position to collect previous descriptions
+        # Go backwards from current position to collect descriptions
         collected_count = 0
+        
         for j in range(i, -1, -1):  # Start from current row and go backwards
             row_game_id = result_df.iloc[j]['game_id']
             row_desc = result_df.iloc[j]['description']
+            row_away_score = result_df.iloc[j].get('away_score', 0) or 0
+            row_home_score = result_df.iloc[j].get('home_score', 0) or 0
             
             # Stop if we've moved to a different game
             if row_game_id != current_game_id:
                 break
             
-            # Add valid descriptions
+            # Add valid descriptions with score context
             if pd.notna(row_desc):
-                descriptions_to_concat.insert(0, str(row_desc))  # Insert at beginning to maintain order
+                # Format: "away_team: score home_team: score | description"
+                score_context = f"{team_mapping['away_team']}: {row_away_score} {team_mapping['home_team']}: {row_home_score} | {str(row_desc)}"
+                descriptions_to_concat.insert(0, score_context)  # Insert at beginning to maintain order
                 collected_count += 1
                 
-                # Stop if we've collected enough (including current description)
-                if collected_count > n_previous:
-                    descriptions_to_concat.pop(0)  # Remove the oldest one to maintain n_previous + current
+                # Stop if we've collected the desired total number of descriptions
+                if collected_count >= n_total:
                     break
         
         # Join with delimiter
@@ -159,13 +221,13 @@ def create_llm_training_data(df, n_previous=5, filter_nan=True):
     
     return result_df
 
-def generate_llm_dataset(season_year=None, n_previous=5, sample_size=None, game_id_filter=None):
+def generate_llm_dataset(season_year=None, n_total=5, sample_size=None, game_id_filter=None):
     """
     Generate a complete LLM training dataset from play-by-play data.
     
     Args:
         season_year (str, optional): Season year to use. If None, uses current SEASON_YEAR
-        n_previous (int): Number of previous descriptions to include in concatenation
+        n_total (int): Total number of descriptions to concatenate together per row
         sample_size (int, optional): If provided, randomly sample this many rows
         game_id_filter (list, optional): If provided, only include these game IDs
     
@@ -189,7 +251,7 @@ def generate_llm_dataset(season_year=None, n_previous=5, sample_size=None, game_
     df = df.sort_values(['game_id', 'play_id']).reset_index(drop=True)
     
     # Create concatenated descriptions
-    result_df = create_llm_training_data(df, n_previous=n_previous)
+    result_df = create_llm_training_data(df, n_total=n_total)
     
     # Sample if requested
     if sample_size and sample_size < len(result_df):
@@ -197,7 +259,7 @@ def generate_llm_dataset(season_year=None, n_previous=5, sample_size=None, game_
         print(f"Sampled {sample_size} rows from dataset")
     
     print(f"Generated dataset with {len(result_df)} rows")
-    print(f"Each row contains current description + up to {n_previous} previous descriptions")
+    print(f"Each row contains up to {n_total} descriptions concatenated together")
     
     return result_df
 
@@ -262,7 +324,7 @@ if __name__ == "__main__":
         df_test = df_test.sort_values(['game_id', 'play_id']).reset_index(drop=True)
         
         # Generate training data from the limited dataset
-        test_df = create_llm_training_data(df_test, n_previous=3, filter_nan=True)
+        test_df = create_llm_training_data(df_test, n_total=3, filter_nan=True)
         print(f"Generated test dataset with {len(test_df)} rows from first 1500 rows")
         
         # Preview the results

@@ -1,5 +1,5 @@
 import pandas as pd
-from get_team_city import get_team_city_LA
+from get_team_city import get_team_city
 from datetime import datetime, timedelta
 import os
 
@@ -43,7 +43,7 @@ def generate_team_stats(team_name, target_date=None):
     Returns:
         dict: Dictionary containing average PACE, OEFF, and DEFF
     """
-    team_city = get_team_city_LA(team_name)
+    team_city = get_team_city(team_name)
 
     # If target_date is empty or None, use all games
     if not target_date:

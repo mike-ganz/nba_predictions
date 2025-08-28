@@ -22,52 +22,6 @@ def get_team_city(team_name):
         'Golden State Warriors': 'Golden State',
         'Houston Rockets': 'Houston',
         'Indiana Pacers': 'Indiana',
-        'Los Angeles Clippers': 'Los Angeles',
-        'Los Angeles Lakers': 'Los Angeles',
-        'Memphis Grizzlies': 'Memphis',
-        'Miami Heat': 'Miami',
-        'Milwaukee Bucks': 'Milwaukee',
-        'Minnesota Timberwolves': 'Minnesota',
-        'New Orleans Pelicans': 'New Orleans',
-        'New York Knicks': 'New York',
-        'Oklahoma City Thunder': 'Oklahoma City',
-        'Orlando Magic': 'Orlando',
-        'Philadelphia 76ers': 'Philadelphia',
-        'Phoenix Suns': 'Phoenix',
-        'Portland Trail Blazers': 'Portland',
-        'Sacramento Kings': 'Sacramento',
-        'San Antonio Spurs': 'San Antonio',
-        'Toronto Raptors': 'Toronto',
-        'Utah Jazz': 'Utah',
-        'Washington Wizards': 'Washington'
-    }
-    
-    return team_cities.get(team_name, team_name)
-
-def get_team_city_LA(team_name):
-    """
-    Converts a full NBA team name to just the city/state name
-    
-    Args:
-        team_name (str): Full team name
-        
-    Returns:
-        str: City/state portion of team name
-    """
-    # Dictionary mapping full names to city/state names
-    team_cities = {
-        'Atlanta Hawks': 'Atlanta',
-        'Boston Celtics': 'Boston', 
-        'Brooklyn Nets': 'Brooklyn',
-        'Charlotte Hornets': 'Charlotte',
-        'Chicago Bulls': 'Chicago',
-        'Cleveland Cavaliers': 'Cleveland',
-        'Dallas Mavericks': 'Dallas',
-        'Denver Nuggets': 'Denver',
-        'Detroit Pistons': 'Detroit',
-        'Golden State Warriors': 'Golden State',
-        'Houston Rockets': 'Houston',
-        'Indiana Pacers': 'Indiana',
         'Los Angeles Clippers': 'LA Clippers',
         'Los Angeles Lakers': 'LA Lakers',
         'Memphis Grizzlies': 'Memphis',
@@ -178,5 +132,48 @@ def get_team_abbreviation(team_name):
         'Utah Jazz': 'UTH',
         'Washington Wizards': 'WAS'
     }
+
+def get_team_full_name(team_name):
+    """
+    Converts a 3-letter team abbreviation to its full team name
     
-    return team_abbrev.get(team_name, team_name)
+    Args:
+        team_name (str): Full team name
+        
+    Returns:
+        str: Full team name, or original abbreviation if not found
+    """
+    team_full_name = {
+        'ATL': 'Atlanta Hawks',
+        'BOS': 'Boston Celtics', 
+        'BKN': 'Brooklyn Nets',
+        'CHA': 'Charlotte Hornets',
+        'CHI': 'Chicago Bulls',
+        'CLE': 'Cleveland Cavaliers',
+        'DAL': 'Dallas Mavericks',
+        'DEN': 'Denver Nuggets',
+        'DET': 'Detroit Pistons',
+        'GSW': 'Golden State Warriors',
+        'HOU': 'Houston Rockets',
+        'IND': 'Indiana Pacers',
+        'LAC': 'Los Angeles Clippers',
+        'LAL': 'Los Angeles Lakers',
+        'MEM': 'Memphis Grizzlies',
+        'MIA': 'Miami Heat',
+        'MIL': 'Milwaukee Bucks',
+        'MIN': 'Minnesota Timberwolves',
+        'NO': 'New Orleans Pelicans',
+        'NYK': 'New York Knicks',
+        'OKC': 'Oklahoma City Thunder',
+        'ORL': 'Orlando Magic',
+        'PHI': 'Philadelphia 76ers',
+        'PHX': 'Phoenix Suns',
+        'POR': 'Portland Trail Blazers',
+        'SAC': 'Sacramento Kings',
+        'SAS': 'San Antonio Spurs',
+        'TOR': 'Toronto Raptors',
+        'UTH': 'Utah Jazz',
+        'WAS': 'Washington Wizards'
+    }
+    
+    return team_full_name.get(team_name, team_name)
