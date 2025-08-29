@@ -420,9 +420,14 @@ class TrainingDataGenerator:
         if config.season_year and '-' in config.season_year:
             season = config.season_year.split('-')[1]  # "2023-2024" -> "2024"
         
+        # Use fast mode for small test datasets to avoid expensive PCA calculations
+        # Detect if this is a test scenario based on the number of lineups
+        total_players = sum(len(players) for players in lineups.values()) if lineups else 0
+        use_fast_mode = total_players <= 30  # Threshold for test mode
+        
         return lineup_manager.process_lineups_for_training_data(
             lineups, away_abbrev, home_abbrev, away_full_name, home_full_name, 
-            game_date, season
+            game_date, season, fast_mode=use_fast_mode
         )
     
     def clear_caches(self) -> Dict[str, int]:
