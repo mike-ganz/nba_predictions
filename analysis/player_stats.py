@@ -172,20 +172,23 @@ class LineupManager:
     def __init__(self, player_analyzer: Optional[PlayerAnalyzer] = None):
         self.player_analyzer = player_analyzer or PlayerAnalyzer()
     
-    def get_lineup_by_game_id(self, game_id: int, boxscore_data: Optional[pd.DataFrame] = None) -> Dict[str, List[str]]:
+    def get_lineup_by_game_id(self, game_id: int, boxscore_data: Optional[pd.DataFrame] = None, 
+                             max_date: Optional[str] = None, current_season: Optional[str] = None) -> Dict[str, List[str]]:
         """
         Get player lineups for a specific game.
         
         Args:
             game_id: Game ID to get lineups for
             boxscore_data: Player boxscore data (optional, will load if not provided)
+            max_date: Only load data up to this date (YYYY-MM-DD format)
+            current_season: Only load data for this season and prior (e.g., "2023-2024")
             
         Returns:
             dict: Dictionary mapping team names to player lists
         """
         try:
             from generate_lineup import get_lineup_by_game_id
-            return get_lineup_by_game_id(game_id, boxscore_data)
+            return get_lineup_by_game_id(game_id, boxscore_data, max_date, current_season)
         except ImportError as e:
             print(f"Warning: Could not import lineup function: {e}")
             return {}

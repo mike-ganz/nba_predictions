@@ -180,8 +180,17 @@ class TrainingDataGenerator:
         unique_games = df['game_id'].unique()
         print(f"Loading team stats for {len(unique_games)} unique games...")
         
-        # Load player boxscore data for lineups (with optimization)
-        boxscore_data = self._load_boxscore_data(unique_games)
+        # Find the latest game date for date filtering optimization
+        max_game_date = None
+        if 'date' in df.columns:
+            try:
+                max_game_date = pd.to_datetime(df['date']).max().strftime('%Y-%m-%d')
+                print(f"📅 Using max game date for filtering: {max_game_date}")
+            except Exception as e:
+                print(f"Warning: Could not determine max game date: {e}")
+        
+        # Load player boxscore data for lineups (with date filtering optimization)
+        boxscore_data = self._load_boxscore_data(unique_games, max_game_date)
         
         for game_id in unique_games:
             game_df = df[df['game_id'] == game_id]
@@ -198,7 +207,12 @@ class TrainingDataGenerator:
             lineups = {}
             if boxscore_data is not None:
                 try:
-                    lineups = lineup_manager.get_lineup_by_game_id(game_id, boxscore_data)
+                    lineups = lineup_manager.get_lineup_by_game_id(
+                        game_id, 
+                        boxscore_data,
+                        max_date=game_date,  # Pass game date for additional filtering
+                        current_season=config.season_year
+                    )
                 except Exception as e:
                     print(f"Warning: Could not get lineups for game {game_id}: {e}")
             
@@ -209,30 +223,36 @@ class TrainingDataGenerator:
                 'game_date': game_date
             }
     
-    def _load_boxscore_data(self, unique_games: List[int]) -> Optional[pd.DataFrame]:
+    def _load_boxscore_data(self, unique_games: List[int], max_game_date: Optional[str] = None) -> Optional[pd.DataFrame]:
         """
-        Load player boxscore data with optimizations for small datasets.
+        Load player boxscore data with date filtering optimization.
         
         Args:
             unique_games: List of unique game IDs
+            max_game_date: Latest game date to load data for (YYYY-MM-DD format)
             
         Returns:
             pd.DataFrame or None: Player boxscore data if available
         """
         print("Loading player boxscore data for lineups...")
         try:
-            boxscore_data = data_loader.load_all_player_boxscores()
+            # Use date filtering to only load relevant data
+            boxscore_data = data_loader.load_all_player_boxscores(
+                max_date=max_game_date,
+                current_season=config.season_year
+            )
             if boxscore_data is None:
                 return None
                 
             print(f"Loaded boxscore data with {len(boxscore_data)} player records")
             
-            # OPTIMIZATION: Filter to only games we need if testing with small dataset
+            # ADDITIONAL OPTIMIZATION: Filter to only games we need if testing with small dataset
             if len(unique_games) <= 5:  # Testing mode - filter data
                 original_size = len(boxscore_data)
-                boxscore_data = boxscore_data[boxscore_data['GAME-ID'].isin(unique_games)]
+                game_id_column = 'GAME-ID' if 'GAME-ID' in boxscore_data.columns else 'game_id'
+                boxscore_data = boxscore_data[boxscore_data[game_id_column].isin(unique_games)]
                 filtered_size = len(boxscore_data)
-                print(f"🚀 OPTIMIZED: Filtered from {original_size} to {filtered_size} records for target games")
+                print(f"🚀 FURTHER OPTIMIZED: Filtered from {original_size} to {filtered_size} records for target games")
             
             return boxscore_data
             

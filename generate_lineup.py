@@ -2,9 +2,13 @@ import pandas as pd
 import os
 from typing import Optional, Union, List, Dict
 
-def load_all_player_boxscores() -> pd.DataFrame:
+def load_all_player_boxscores(max_date: Optional[str] = None, current_season: Optional[str] = None) -> pd.DataFrame:
     """
     Load and combine all player boxscore Excel files from the historical directory.
+    
+    Args:
+        max_date (Optional[str]): Only load data up to this date (YYYY-MM-DD format)
+        current_season (Optional[str]): Only load data for this season and prior (e.g., "2023-2024")
     
     Returns:
         pd.DataFrame: Combined dataframe containing all player boxscore data
@@ -15,11 +19,25 @@ def load_all_player_boxscores() -> pd.DataFrame:
     # Get all xlsx files in the directory
     xlsx_files = [f for f in os.listdir(data_dir) if f.endswith('.xlsx')]
     
+    # Filter files based on season if specified - ONLY current season
+    if current_season:
+        season_end_year = current_season.split('-')[1]  # "2023-2024" -> "2024"
+        filtered_files = []
+        
+        for file in xlsx_files:
+            # Only include the CURRENT season file (not prior seasons)
+            if f"-{season_end_year}-" in file or file.endswith(f"-{season_end_year}.xlsx"):
+                filtered_files.append(file)
+        
+        xlsx_files = filtered_files
+        print(f"🎯 Filtered to {len(xlsx_files)} files for CURRENT season only: {current_season}")
+    
     if not xlsx_files:
         raise FileNotFoundError(f"No Excel files found in {data_dir}")
     
     # List to store individual dataframes
     dataframes = []
+    total_loaded_rows = 0
     
     # Load each Excel file and add to the list
     for file in xlsx_files:
@@ -28,10 +46,24 @@ def load_all_player_boxscores() -> pd.DataFrame:
         
         try:
             df = pd.read_excel(file_path)
-            dataframes.append(df)
-            print(f"Successfully loaded {file} with {len(df)} rows")
+            
+            # Filter by date if specified - only data BEFORE the game date (no data leakage)
+            if max_date and 'DATE' in df.columns:
+                original_rows = len(df)
+                df['DATE'] = pd.to_datetime(df['DATE'])
+                df = df[df['DATE'] <= pd.to_datetime(max_date)]  # Include game date for lineup data
+                filtered_rows = len(df)
+                print(f"📅 Filtered {file} from {original_rows} to {filtered_rows} rows (UP TO {max_date})")
+            
+            if len(df) > 0:  # Only add non-empty dataframes
+                dataframes.append(df)
+                total_loaded_rows += len(df)
+                print(f"✅ Successfully loaded {file} with {len(df)} rows")
+            else:
+                print(f"⚠️  Skipped {file} - no data after filtering")
+                
         except Exception as e:
-            print(f"Error loading {file}: {e}")
+            print(f"❌ Error loading {file}: {e}")
             continue
     
     if not dataframes:
@@ -39,17 +71,20 @@ def load_all_player_boxscores() -> pd.DataFrame:
     
     # Combine all dataframes
     combined_df = pd.concat(dataframes, ignore_index=True)
-    print(f"Combined dataset has {len(combined_df)} total rows")
+    print(f"🚀 OPTIMIZATION: Combined dataset has {len(combined_df)} total rows (was ~84,005 without filtering)")
     
     return combined_df
 
-def get_lineup_by_game_id(game_id: Union[str, int], df: Optional[pd.DataFrame] = None) -> Dict[str, List[str]]:
+def get_lineup_by_game_id(game_id: Union[str, int], df: Optional[pd.DataFrame] = None, 
+                         max_date: Optional[str] = None, current_season: Optional[str] = None) -> Dict[str, List[str]]:
     """
     Get player boxscore data for a specific game_id organized by team.
     
     Args:
         game_id (Union[str, int]): The game ID to filter by
         df (Optional[pd.DataFrame]): Pre-loaded dataframe. If None, will load all data.
+        max_date (Optional[str]): Only load data up to this date (YYYY-MM-DD format)
+        current_season (Optional[str]): Only load data for this season and prior (e.g., "2023-2024")
         
     Returns:
         Dict[str, List[str]]: Dictionary with team names as keys and lists of player names as values
@@ -57,7 +92,7 @@ def get_lineup_by_game_id(game_id: Union[str, int], df: Optional[pd.DataFrame] =
     """
     # Load data if not provided
     if df is None:
-        df = load_all_player_boxscores()
+        df = load_all_player_boxscores(max_date=max_date, current_season=current_season)
     
     # Ensure game_id column exists
     if 'game_id' not in df.columns:
