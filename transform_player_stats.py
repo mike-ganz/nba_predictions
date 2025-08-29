@@ -56,18 +56,33 @@ def load_from_cache(player_name, max_date, current_season):
             return json.load(f)
     return None
 
-def calculate_player_stats(player_name, max_date=None):
+def calculate_player_stats(player_name, max_date=None, current_season=None):
     """
     Calculates and returns aggregated player statistics for the configured season.
     Implements caching to avoid redundant calculations.
     """
+    # Use provided season or fall back to global SEASON_YEAR
+    season_to_use = current_season if current_season else SEASON_YEAR
+    
     # Attempt to load from cache
-    cached_data = load_from_cache(player_name, max_date, SEASON_YEAR)
+    cached_data = load_from_cache(player_name, max_date, season_to_use)
     if cached_data:
         return cached_data
 
-    # Get player data from the loaded DataFrame
-    player_df = df[df['PLAYER \nFULL NAME'] == player_name]
+    # If current_season is provided and different from loaded SEASON_YEAR, load that season's data
+    if current_season and current_season != SEASON_YEAR:
+        try:
+            # Convert current_season year to season format (e.g., "2024" -> "2023-2024")
+            season_year = int(current_season)
+            season_format = f"{season_year-1}-{current_season}"
+            temp_df = load_player_data(season_format)
+            player_df = temp_df[temp_df['PLAYER \nFULL NAME'] == player_name]
+        except (ValueError, FileNotFoundError):
+            # Fallback to current loaded data if season loading fails
+            player_df = df[df['PLAYER \nFULL NAME'] == player_name]
+    else:
+        # Get player data from the loaded DataFrame
+        player_df = df[df['PLAYER \nFULL NAME'] == player_name]
     
     if len(player_df) == 0:
         return None
@@ -109,7 +124,7 @@ def calculate_player_stats(player_name, max_date=None):
               , **{k: round(v, 3) if isinstance(v, (int, float)) else v for k, v in stats_sum.items()}}
     
     # Save the calculated stats to cache
-    save_to_cache(player_name, max_date, SEASON_YEAR, stats_sum)
+    save_to_cache(player_name, max_date, season_to_use, stats_sum)
     
     return stats_sum
 
