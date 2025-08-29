@@ -19,7 +19,7 @@ class PlayerAnalyzer:
     
     def get_player_pca_scores(self, player_name: str, game_date: Optional[str] = None,
                             season: Optional[str] = None, use_cache: bool = True, 
-                            force_fast_mode: bool = False) -> Tuple[float, float, float, float]:
+                            force_fast_mode: bool = False, force_real_mode: bool = False) -> Tuple[float, float, float, float]:
         """
         Get PCA scores for a player with caching and fast test mode support.
         
@@ -29,6 +29,7 @@ class PlayerAnalyzer:
             season: Season year for context
             use_cache: Whether to use cached results
             force_fast_mode: If True, always use dummy values (for testing)
+            force_real_mode: If True, always use real PCA calculations (for cache building)
             
         Returns:
             tuple: (offense, defense, shot_selection, efficiency) scores
@@ -41,8 +42,16 @@ class PlayerAnalyzer:
             return self._pca_cache[cache_key]
         
         try:
-            # Check if we're in fast test mode
-            if force_fast_mode or self._should_use_fast_mode():
+            # Determine which mode to use based on parameters
+            if force_fast_mode:
+                # Explicitly requested dummy values
+                scores = self._generate_dummy_pca_scores(player_name)
+            elif force_real_mode:
+                # Explicitly requested real PCA (cache building mode)
+                from pca import get_player_pca_score
+                scores = get_player_pca_score(player_name, game_date, season)
+            elif self._should_use_fast_mode():
+                # Normal fast mode logic (small cache size)
                 scores = self._generate_dummy_pca_scores(player_name)
             else:
                 # Use real PCA computation
@@ -123,7 +132,7 @@ class PlayerAnalyzer:
     
     def create_player_object(self, player_name: str, team_abbrev: str,
                            game_date: Optional[str] = None, season: Optional[str] = None,
-                           fast_mode: bool = False) -> Dict[str, Any]:
+                           fast_mode: bool = False, real_mode: bool = False) -> Dict[str, Any]:
         """
         Create a complete player object with stats for training data.
         
@@ -133,13 +142,14 @@ class PlayerAnalyzer:
             game_date: Date of the game
             season: Season year
             fast_mode: If True, use dummy PCA values for faster processing
+            real_mode: If True, always use real PCA calculations (for cache building)
             
         Returns:
             dict: Complete player object with stats
         """
         # Get PCA scores
         offense, defense, shot_selection, efficiency = self.get_player_pca_scores(
-            player_name, game_date, season, force_fast_mode=fast_mode
+            player_name, game_date, season, force_fast_mode=fast_mode, force_real_mode=real_mode
         )
         
         # Convert to integers for JSON
@@ -241,7 +251,7 @@ class LineupManager:
             if team_abbrev:
                 for player_name in player_list:
                     player_obj = self.player_analyzer.create_player_object(
-                        player_name, team_abbrev, game_date, season, fast_mode=fast_mode
+                        player_name, team_abbrev, game_date, season, fast_mode=fast_mode, real_mode=(not fast_mode)
                     )
                     players.append(player_obj)
         

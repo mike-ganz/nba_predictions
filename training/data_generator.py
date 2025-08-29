@@ -75,7 +75,8 @@ class TrainingDataGenerator:
     def generate_dataset(self, season_year: Optional[str] = None, 
                         n_total: int = DEFAULT_N_TOTAL_PLAYS, 
                         sample_size: Optional[int] = None, 
-                        game_id_filter: Optional[List[int]] = None) -> pd.DataFrame:
+                        game_id_filter: Optional[List[int]] = None,
+                        force_real_pca: bool = False) -> pd.DataFrame:
         """
         Generate a complete LLM training dataset from play-by-play data.
         
@@ -84,6 +85,7 @@ class TrainingDataGenerator:
             n_total: Total number of descriptions to concatenate together per row
             sample_size: If provided, randomly sample this many rows
             game_id_filter: If provided, only include these game IDs
+            force_real_pca: If True, always use real PCA calculations (for cache building)
         
         Returns:
             pd.DataFrame: DataFrame ready for LLM training with concatenated descriptions
@@ -105,7 +107,7 @@ class TrainingDataGenerator:
         df = df.sort_values(['game_id', 'play_id']).reset_index(drop=True)
         
         # Create concatenated descriptions
-        result_df = self.create_llm_training_data(df, n_total=n_total)
+        result_df = self.create_llm_training_data(df, n_total=n_total, force_real_pca=force_real_pca)
         
         # Sample if requested
         if sample_size and sample_size < len(result_df):
@@ -118,7 +120,7 @@ class TrainingDataGenerator:
         return result_df
     
     def create_llm_training_data(self, df: pd.DataFrame, n_total: int = DEFAULT_N_TOTAL_PLAYS,
-                               filter_nan: bool = True) -> pd.DataFrame:
+                               filter_nan: bool = True, force_real_pca: bool = False) -> pd.DataFrame:
         """
         Create LLM training data in structured JSON format with team stats and recent plays.
         Only includes plays within the same game (respects game_id boundaries).
@@ -127,6 +129,7 @@ class TrainingDataGenerator:
             df: Play-by-play DataFrame with required columns
             n_total: Total number of recent plays to include (default: 5)
             filter_nan: Whether to filter out rows with NaN descriptions (default: True)
+            force_real_pca: If True, always use real PCA calculations (for cache building)
         
         Returns:
             pd.DataFrame: DataFrame with new 'json_training_data' column containing JSON strings
@@ -144,7 +147,7 @@ class TrainingDataGenerator:
         
         # Load and cache team stats and lineups
         print("Loading team stats and lineups...")
-        self._load_game_context(result_df, game_team_mapping)
+        self._load_game_context(result_df, game_team_mapping, force_real_pca=force_real_pca)
         
         json_training_data = []
         
@@ -157,7 +160,7 @@ class TrainingDataGenerator:
             
             # Create the JSON training data for this row
             json_obj = self._create_training_json(
-                result_df, i, game_context, game_team_mapping, n_total
+                result_df, i, game_context, game_team_mapping, n_total, force_real_pca=force_real_pca
             )
             
             # Convert to JSON string
@@ -169,7 +172,8 @@ class TrainingDataGenerator:
         
         return result_df
     
-    def _load_game_context(self, df: pd.DataFrame, game_team_mapping: Dict[int, Dict[str, str]]) -> None:
+    def _load_game_context(self, df: pd.DataFrame, game_team_mapping: Dict[int, Dict[str, str]], 
+                          force_real_pca: bool = False) -> None:
         """
         Load and cache team stats and lineups for all games in the dataset.
         
@@ -263,7 +267,7 @@ class TrainingDataGenerator:
     def _create_training_json(self, df: pd.DataFrame, row_index: int, 
                             game_context: Dict[str, Any], 
                             game_team_mapping: Dict[int, Dict[str, str]],
-                            n_total: int) -> Dict[str, Any]:
+                            n_total: int, force_real_pca: bool = False) -> Dict[str, Any]:
         """
         Create the JSON training data object for a single row.
         
@@ -273,6 +277,7 @@ class TrainingDataGenerator:
             game_context: Cached team stats and lineup data for the game
             game_team_mapping: Mapping of game IDs to home/away teams
             n_total: Number of recent plays to include
+            force_real_pca: If True, always use real PCA calculations (for cache building)
             
         Returns:
             dict: Complete JSON training data object
@@ -292,7 +297,7 @@ class TrainingDataGenerator:
         
         # Create players array from lineups
         players = self._create_player_objects(
-            lineups, away_abbrev, home_abbrev, game_date
+            lineups, away_abbrev, home_abbrev, game_date, force_real_pca=force_real_pca
         )
         
         # Handle None REST_DAYS by converting to 0
@@ -398,7 +403,8 @@ class TrainingDataGenerator:
         return recent_plays
     
     def _create_player_objects(self, lineups: Dict[str, List[str]], away_abbrev: str, 
-                             home_abbrev: str, game_date: Optional[str]) -> List[Dict[str, Any]]:
+                             home_abbrev: str, game_date: Optional[str],
+                             force_real_pca: bool = False) -> List[Dict[str, Any]]:
         """
         Create player objects with PCA stats from lineup data.
         
@@ -407,6 +413,7 @@ class TrainingDataGenerator:
             away_abbrev: Away team abbreviation
             home_abbrev: Home team abbreviation
             game_date: Date of the game
+            force_real_pca: If True, always use real PCA calculations (for cache building)
             
         Returns:
             list: List of player objects with stats
@@ -421,9 +428,14 @@ class TrainingDataGenerator:
             season = config.season_year.split('-')[1]  # "2023-2024" -> "2024"
         
         # Use fast mode for small test datasets to avoid expensive PCA calculations
-        # Detect if this is a test scenario based on the number of lineups
-        total_players = sum(len(players) for players in lineups.values()) if lineups else 0
-        use_fast_mode = total_players <= 30  # Threshold for test mode
+        # BUT never use fast mode if force_real_pca=True (for cache building)
+        if force_real_pca:
+            use_fast_mode = False  # Always use real PCA for cache building
+            print(f"🔥 CACHE BUILDING MODE: Using REAL PCA values for {sum(len(players) for players in lineups.values()) if lineups else 0} players")
+        else:
+            # Detect if this is a test scenario based on the number of lineups
+            total_players = sum(len(players) for players in lineups.values()) if lineups else 0
+            use_fast_mode = total_players <= 30  # Threshold for test mode
         
         return lineup_manager.process_lineups_for_training_data(
             lineups, away_abbrev, home_abbrev, away_full_name, home_full_name, 
