@@ -1,5 +1,6 @@
 import pandas as pd
 import os
+import json
 
 # Import required functions from other modules
 from transform_player_stats import calculate_player_stats, get_distinct_players
@@ -146,6 +147,49 @@ def calculate_game_time_remaining(period, remaining_time):
     except (ValueError, IndexError, TypeError):
         return "00:00"
 
+def convert_to_quarter_time(period, remaining_time):
+    """
+    Convert period and remaining_time to quarter and time_remaining for JSON format.
+    
+    Args:
+        period (int): Current period (1-4)
+        remaining_time (str): Time remaining in current period (format: "0:MM:SS")
+        
+    Returns:
+        tuple: (quarter, time_remaining_in_quarter)
+    """
+    try:
+        if pd.isna(remaining_time) or not remaining_time:
+            return period, "00:00"
+            
+        time_parts = str(remaining_time).split(':')
+        if len(time_parts) >= 2:
+            minutes = int(time_parts[-2])
+            seconds = int(time_parts[-1])
+            time_in_quarter = f"{minutes:02d}:{seconds:02d}"
+            return period, time_in_quarter
+        else:
+            return period, "00:00"
+    except (ValueError, IndexError, TypeError):
+        return period, "00:00"
+
+def determine_scoring_info(prev_away_score, prev_home_score, curr_away_score, curr_home_score, away_abbrev, home_abbrev):
+    """
+    Determine scoring team and points scored based on score changes.
+    
+    Returns:
+        tuple: (scoring_team, points_scored)
+    """
+    away_diff = curr_away_score - prev_away_score
+    home_diff = curr_home_score - prev_home_score
+    
+    if away_diff > 0:
+        return away_abbrev, away_diff
+    elif home_diff > 0:
+        return home_abbrev, home_diff
+    else:
+        return None, 0
+
 def create_team_abbreviation_mapping():
     """
     Create mapping from 3-letter team abbreviations to full team names.
@@ -277,17 +321,16 @@ def determine_home_away_teams(df):
 
 def create_llm_training_data(df, n_total=5, filter_nan=True):
     """
-    Create LLM training data by concatenating descriptions with team stats, lineups, time, and score context.
-    Only concatenates within the same game (respects game_id boundaries).
-    Format: "AWAY_TEAM (OEFF: x DEFF: y PACE: z REST_DAYS: w) HOME_TEAM (...) AWAY_LINEUP: [...] HOME_LINEUP: [...] || XX:XX away_team: score home_team: score | description --> ..."
+    Create LLM training data in structured JSON format with team stats and recent plays.
+    Only includes plays within the same game (respects game_id boundaries).
     
     Args:
         df (pd.DataFrame): Play-by-play DataFrame with required columns
-        n_total (int): Total number of descriptions to concatenate together (default: 5)
+        n_total (int): Total number of recent plays to include (default: 5)
         filter_nan (bool): Whether to filter out rows with NaN descriptions (default: True)
     
     Returns:
-        pd.DataFrame: DataFrame with new 'concatenated_description' column
+        pd.DataFrame: DataFrame with new 'json_training_data' column containing JSON strings
     """
     # Work with a copy to avoid modifying original DataFrame
     result_df = df.copy()
@@ -332,7 +375,7 @@ def create_llm_training_data(df, n_total=5, filter_nan=True):
         stats['lineups'] = lineups
         game_team_stats[game_id] = stats
     
-    concatenated_descriptions = []
+    json_training_data = []
     
     for i in range(len(result_df)):
         current_game_id = result_df.iloc[i]['game_id']
@@ -346,12 +389,11 @@ def create_llm_training_data(df, n_total=5, filter_nan=True):
         home_abbrev = team_stats.get('home_abbrev', 'Unknown')
         lineups = team_stats.get('lineups', {})
         
-        # Collect descriptions with enhanced context from the same game only
-        descriptions_to_concat = []
-        
-        # Go backwards from current position to collect descriptions
+        # Collect recent plays from the same game only
+        recent_plays = []
         collected_count = 0
         
+        # Go backwards from current position to collect recent plays
         for j in range(i, -1, -1):  # Start from current row and go backwards
             row_game_id = result_df.iloc[j]['game_id']
             row_desc = result_df.iloc[j]['description']
@@ -362,65 +404,119 @@ def create_llm_training_data(df, n_total=5, filter_nan=True):
             if row_game_id != current_game_id:
                 break
             
-            # Add valid descriptions with score and time context
+            # Add valid descriptions as recent plays
             if pd.notna(row_desc):
-                # Calculate game time remaining
+                # Get quarter and time remaining in quarter
                 row_period = result_df.iloc[j].get('period', 4)
                 row_remaining_time = result_df.iloc[j].get('remaining_time', '0:00:00')
-                game_time_remaining = calculate_game_time_remaining(row_period, row_remaining_time)
+                quarter, time_in_quarter = convert_to_quarter_time(row_period, row_remaining_time)
                 
-                # Format: "XX:XX away_team: score home_team: score | description"
-                time_score_context = f"{game_time_remaining} {away_abbrev}: {row_away_score} {home_abbrev}: {row_home_score} | {str(row_desc)}"
-                descriptions_to_concat.insert(0, time_score_context)  # Insert at beginning to maintain order
+                # Determine scoring info by comparing with previous play
+                scoring_team = None
+                points_scored = 0
+                
+                if j < len(result_df) - 1:  # Not the last row
+                    next_j = j + 1
+                    if (next_j < len(result_df) and 
+                        result_df.iloc[next_j]['game_id'] == current_game_id):
+                        
+                        prev_away_score = result_df.iloc[next_j].get('away_score', 0) or 0
+                        prev_home_score = result_df.iloc[next_j].get('home_score', 0) or 0
+                        
+                        scoring_team, points_scored = determine_scoring_info(
+                            prev_away_score, prev_home_score, 
+                            row_away_score, row_home_score, 
+                            away_abbrev, home_abbrev
+                        )
+                
+                # Create play object with proper type conversion
+                play_obj = {
+                    "quarter": int(quarter),
+                    "time_remaining": str(time_in_quarter),
+                    "description": str(row_desc),
+                    "score": f"{away_abbrev} {int(row_away_score)} - {home_abbrev} {int(row_home_score)}",
+                    "scoring_team": str(scoring_team) if scoring_team else None,
+                    "points_scored": int(points_scored)
+                }
+                
+                recent_plays.insert(0, play_obj)  # Insert at beginning to maintain chronological order
                 collected_count += 1
                 
-                # Stop if we've collected the desired total number of descriptions
+                # Stop if we've collected the desired total number of plays
                 if collected_count >= n_total:
                     break
         
-        # Create team stats header with lineups (once per concatenated description)
         # Handle None REST_DAYS by converting to 0
         away_rest_days = away_stats.get('REST_DAYS') if away_stats.get('REST_DAYS') is not None else 0
         home_rest_days = home_stats.get('REST_DAYS') if home_stats.get('REST_DAYS') is not None else 0
         
-        away_stats_str = f"OEFF: {away_stats.get('OEFF', 'N/A')} DEFF: {away_stats.get('DEFF', 'N/A')} PACE: {away_stats.get('PACE', 'N/A')} REST_DAYS: {away_rest_days}"
-        home_stats_str = f"OEFF: {home_stats.get('OEFF', 'N/A')} DEFF: {home_stats.get('DEFF', 'N/A')} PACE: {home_stats.get('PACE', 'N/A')} REST_DAYS: {home_rest_days}"
+        # Create players array from lineups
+        players = []
         
-        # Format lineups
-        away_lineup = "N/A"
-        home_lineup = "N/A"
-        
-        # The lineups dict has team names as keys, we need to match them to away/home
-        # We need to convert abbreviations to full names to match lineup keys
+        # Get abbreviation to full name mapping for lineup matching
         abbrev_mapping = create_team_abbreviation_mapping()
         away_full_name = abbrev_mapping.get(away_abbrev, away_abbrev)
         home_full_name = abbrev_mapping.get(home_abbrev, home_abbrev)
         
-        # Try to find matching lineup by checking if team name contains the full name or vice versa
-        for team_name, players in lineups.items():
+        # Process lineups to create player objects
+        for team_name, player_list in lineups.items():
+            # Determine if this lineup is for away or home team
+            team_abbrev = None
+            
             # Check for away team match
             if (away_full_name in team_name or team_name in away_full_name or 
                 any(part in team_name for part in away_full_name.split())):
-                away_lineup = ", ".join(players[:5])  # Limit to first 5 players for brevity
-                if len(players) > 5:
-                    away_lineup += f" (+{len(players)-5} more)"
+                team_abbrev = away_abbrev
+            # Check for home team match
+            elif (home_full_name in team_name or team_name in home_full_name or
+                  any(part in team_name for part in home_full_name.split())):
+                team_abbrev = home_abbrev
             
-            # Check for home team match  
-            if (home_full_name in team_name or team_name in home_full_name or
-                any(part in team_name for part in home_full_name.split())):
-                home_lineup = ", ".join(players[:5])  # Limit to first 5 players for brevity
-                if len(players) > 5:
-                    home_lineup += f" (+{len(players)-5} more)"
+            # Add players from this team
+            if team_abbrev:
+                for player_name in player_list:
+                    player_obj = {
+                        "name": str(player_name),
+                        "team": str(team_abbrev),
+                        "stats": {
+                            "offense": None,
+                            "defense": None,
+                            "shot_selection": None,
+                            "efficiency": None
+                        }
+                    }
+                    players.append(player_obj)
         
-        team_stats_header = f"{away_abbrev} ({away_stats_str}) {home_abbrev} ({home_stats_str}) AWAY_LINEUP: [{away_lineup}] HOME_LINEUP: [{home_lineup}] || "
+        # Create JSON structure with proper type conversion
+        json_obj = {
+            "away_team": {
+                "name": str(away_abbrev) if away_abbrev else "Unknown",
+                "stats": {
+                    "OEFF": float(away_stats.get('OEFF')) if away_stats.get('OEFF') is not None else None,
+                    "DEFF": float(away_stats.get('DEFF')) if away_stats.get('DEFF') is not None else None,
+                    "PACE": float(away_stats.get('PACE')) if away_stats.get('PACE') is not None else None,
+                    "REST_DAYS": int(away_rest_days) if away_rest_days is not None else 0
+                }
+            },
+            "home_team": {
+                "name": str(home_abbrev) if home_abbrev else "Unknown",
+                "stats": {
+                    "OEFF": float(home_stats.get('OEFF')) if home_stats.get('OEFF') is not None else None,
+                    "DEFF": float(home_stats.get('DEFF')) if home_stats.get('DEFF') is not None else None,
+                    "PACE": float(home_stats.get('PACE')) if home_stats.get('PACE') is not None else None,
+                    "REST_DAYS": int(home_rest_days) if home_rest_days is not None else 0
+                }
+            },
+            "players": players,
+            "recent_plays": recent_plays
+        }
         
-        # Join descriptions and prepend team stats header
-        descriptions_part = " --> ".join(descriptions_to_concat)
-        concatenated_desc = team_stats_header + descriptions_part
-        concatenated_descriptions.append(concatenated_desc)
+        # Convert to JSON string
+        json_string = json.dumps(json_obj, separators=(',', ':'))
+        json_training_data.append(json_string)
     
-    # Add the concatenated descriptions as a new column
-    result_df['concatenated_description'] = concatenated_descriptions
+    # Add the JSON training data as a new column
+    result_df['json_training_data'] = json_training_data
     
     return result_df
 
@@ -491,10 +587,10 @@ def save_llm_dataset(df, filename=None, season_year=None):
 
 def preview_llm_data(df, n_samples=3):
     """
-    Preview sample concatenated descriptions from the LLM dataset.
+    Preview sample JSON training data from the LLM dataset.
     
     Args:
-        df (pd.DataFrame): LLM dataset with concatenated_description column
+        df (pd.DataFrame): LLM dataset with json_training_data column
         n_samples (int): Number of samples to show
     """
     print(f"\n=== Preview of LLM Training Data (showing {n_samples} samples) ===\n")
@@ -507,7 +603,16 @@ def preview_llm_data(df, n_samples=3):
         print(f"Game ID: {row['game_id']}")
         print(f"Date: {row['date']}")
         print(f"Original Description: {row['description']}")
-        print(f"Concatenated Description: {row['concatenated_description']}")
+        print(f"JSON Training Data:")
+        
+        # Parse and pretty print JSON for readability
+        try:
+            json_obj = json.loads(row['json_training_data'])
+            print(json.dumps(json_obj, indent=2))
+        except Exception as e:
+            print(f"Error parsing JSON: {e}")
+            print(row['json_training_data'])
+            
         print("-" * 80)
 
 if __name__ == "__main__":
