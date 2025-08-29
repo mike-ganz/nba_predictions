@@ -31,31 +31,48 @@ def load_team_data(season_year):
 # Load data for the configured season year
 df = load_team_data(SEASON_YEAR)
 
-def generate_team_stats(team_name, target_date=None):
+def generate_team_stats(team_name, target_date=None, fallback_season=None):
     """
     Calculate average PACE, OEFF, and DEFF for a team up to a specific date.
-    Uses the configured season data.
+    Uses the configured season data, or fallback season if specified.
     
     Args:
         team_name (str): Name of the team
         target_date (str or None): Date in format 'YYYY-MM-DD', or None/empty for all games
+        fallback_season (str or None): Season to use for fallback (e.g., "2022-2023")
     
     Returns:
         dict: Dictionary containing average PACE, OEFF, and DEFF
     """
     team_city = get_team_city(team_name)
 
-    # If target_date is empty or None, use all games
+    # Determine which dataset to use
+    if fallback_season and fallback_season != SEASON_YEAR:
+        # Load fallback season data
+        try:
+            fallback_df = load_team_data(fallback_season)
+            data_source = fallback_df
+            season_label = fallback_season
+        except (ValueError, FileNotFoundError):
+            # If fallback season not available, use current season
+            data_source = df
+            season_label = SEASON_YEAR
+            print(f"Warning: Fallback season {fallback_season} not available, using {SEASON_YEAR}")
+    else:
+        data_source = df
+        season_label = SEASON_YEAR
+
+    # If target_date is empty or None, use all games from the data source
     if not target_date:
-        mask = (df['TEAM'] == team_city)
-        team_data = df[mask]
+        mask = (data_source['TEAM'] == team_city)
+        team_data = data_source[mask]
         last_game_date = team_data['DATE'].max() if len(team_data) > 0 else None
         rest_days = None
     else:
         # Convert target_date to datetime
         target_date_dt = pd.to_datetime(target_date)
-        mask = (df['TEAM'] == team_city) & (df['DATE'] < target_date_dt)
-        team_data = df[mask]
+        mask = (data_source['TEAM'] == team_city) & (data_source['DATE'] < target_date_dt)
+        team_data = data_source[mask]
         last_game_date = team_data['DATE'].max() if len(team_data) > 0 else None
         rest_days = (target_date_dt - last_game_date).days if last_game_date is not None else None
 
@@ -64,7 +81,7 @@ def generate_team_stats(team_name, target_date=None):
 
     stats = {
         'TEAM_NAME': team_name,
-        'SEASON': SEASON_YEAR,
+        'SEASON': season_label,
         'OEFF': round(team_data['OEFF'].median(), 1),
         'DEFF': round(team_data['DEFF'].median(), 1),
         'PACE': round(team_data['PACE'].median(), 1),

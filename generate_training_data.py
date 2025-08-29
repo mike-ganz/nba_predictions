@@ -230,15 +230,37 @@ def create_team_abbreviation_mapping():
         'WAS': 'Washington Wizards'
     }
 
-def get_team_stats_for_game(game_df, team_mapping, target_date=None):
+def get_prior_season(current_season):
+    """
+    Get the prior season year from current season.
+    
+    Args:
+        current_season (str): Current season in format "YYYY-YYYY"
+        
+    Returns:
+        str: Prior season in format "YYYY-YYYY"
+    """
+    try:
+        # Extract the ending year (e.g., "2023-2024" -> "2024")
+        end_year = int(current_season.split('-')[1])
+        prior_end_year = end_year - 1
+        prior_start_year = prior_end_year - 1
+        return f"{prior_start_year}-{prior_end_year}"
+    except (ValueError, IndexError):
+        return "2022-2023"  # Default fallback
+
+def get_team_stats_for_game(game_df, team_mapping, target_date=None, min_games_threshold=10):
     """
     Get team stats for both teams in a game.
-    Falls back to season averages if date-filtered stats aren't available.
+    Falls back to PRIOR season averages if team has played fewer than min_games_threshold
+    in current season before target_date. This prevents data leakage and ensures
+    sufficient sample size for reliable current season stats.
     
     Args:
         game_df (pd.DataFrame): DataFrame for a single game
         team_mapping (dict): Mapping of game_id to home/away teams
         target_date (str, optional): Date for stats calculation
+        min_games_threshold (int): Minimum games before using current season (default: 10)
         
     Returns:
         dict: Team stats for home and away teams
@@ -254,14 +276,29 @@ def get_team_stats_for_game(game_df, team_mapping, target_date=None):
     home_team_full = abbrev_mapping.get(home_abbrev, home_abbrev)
     away_team_full = abbrev_mapping.get(away_abbrev, away_abbrev)
     
-    # Get team stats - try with date first, then fall back to season averages
-    home_stats = generate_team_stats(home_team_full, target_date)
-    if not home_stats:  # If no stats with date filter, use season averages
-        home_stats = generate_team_stats(home_team_full, None) or {}
+    # Determine prior season for fallback (prevents data leakage)
+    prior_season = get_prior_season(SEASON_YEAR)
     
-    away_stats = generate_team_stats(away_team_full, target_date)
-    if not away_stats:  # If no stats with date filter, use season averages
-        away_stats = generate_team_stats(away_team_full, None) or {}
+    def get_stats_with_threshold(team_name):
+        """Get team stats, falling back to prior season if < min_games_threshold"""
+        current_stats = generate_team_stats(team_name, target_date)
+        
+        # If no current season stats OR fewer than threshold games, use prior season
+        if not current_stats or current_stats.get('GAMES_PLAYED', 0) < min_games_threshold:
+            fallback_stats = generate_team_stats(team_name, None, fallback_season=prior_season)
+            if fallback_stats:
+                # Add metadata to indicate this is a fallback
+                fallback_stats['FALLBACK_REASON'] = f'Insufficient current season games ({current_stats.get("GAMES_PLAYED", 0) if current_stats else 0} < {min_games_threshold})'
+                fallback_stats['USING_PRIOR_SEASON'] = True
+            return fallback_stats or {}
+        else:
+            # Sufficient current season games, use current stats
+            current_stats['USING_PRIOR_SEASON'] = False
+            return current_stats
+    
+    # Get stats for both teams using the threshold logic
+    home_stats = get_stats_with_threshold(home_team_full)
+    away_stats = get_stats_with_threshold(away_team_full)
     
     return {
         'home_team_stats': home_stats,
