@@ -6,6 +6,7 @@ from transform_player_stats import calculate_player_stats, get_distinct_players
 from generate_team_stats import generate_team_stats, get_available_teams
 from pca import get_player_pca_score
 from get_team_city import get_team_city
+from generate_lineup import get_lineup_by_game_id, load_all_player_boxscores
 
 # Configuration
 SEASON_YEAR = "2023-2024"  # Default season year
@@ -276,9 +277,9 @@ def determine_home_away_teams(df):
 
 def create_llm_training_data(df, n_total=5, filter_nan=True):
     """
-    Create LLM training data by concatenating descriptions with team stats, time, and score context.
+    Create LLM training data by concatenating descriptions with team stats, lineups, time, and score context.
     Only concatenates within the same game (respects game_id boundaries).
-    Format: "AWAY_TEAM (OEFF: x DEFF: y PACE: z REST_DAYS: w) HOME_TEAM (...) || XX:XX away_team: score home_team: score | description --> ..."
+    Format: "AWAY_TEAM (OEFF: x DEFF: y PACE: z REST_DAYS: w) HOME_TEAM (...) AWAY_LINEUP: [...] HOME_LINEUP: [...] || XX:XX away_team: score home_team: score | description --> ..."
     
     Args:
         df (pd.DataFrame): Play-by-play DataFrame with required columns
@@ -299,8 +300,16 @@ def create_llm_training_data(df, n_total=5, filter_nan=True):
     print("Determining home/away team mappings...")
     game_team_mapping = determine_home_away_teams(result_df)
     
-    # Get team stats for each game (cache to avoid repeated calls)
+    # Get team stats and lineups for each game (cache to avoid repeated calls)
     print("Loading team stats for games...")
+    print("Loading player boxscore data for lineups...")
+    try:
+        boxscore_data = load_all_player_boxscores()
+        print(f"Loaded boxscore data with {len(boxscore_data)} player records")
+    except Exception as e:
+        print(f"Warning: Could not load boxscore data for lineups: {e}")
+        boxscore_data = None
+    
     game_team_stats = {}
     unique_games = result_df['game_id'].unique()
     
@@ -309,6 +318,18 @@ def create_llm_training_data(df, n_total=5, filter_nan=True):
         # Use the game date for team stats context
         game_date = game_df.iloc[0].get('date', None)
         stats = get_team_stats_for_game(game_df, game_team_mapping, target_date=game_date)
+        
+        # Get lineups for this game
+        lineups = {}
+        if boxscore_data is not None:
+            try:
+                lineups = get_lineup_by_game_id(game_id, boxscore_data)
+            except Exception as e:
+                print(f"Warning: Could not get lineups for game {game_id}: {e}")
+                lineups = {}
+        
+        # Combine stats and lineups
+        stats['lineups'] = lineups
         game_team_stats[game_id] = stats
     
     concatenated_descriptions = []
@@ -317,12 +338,13 @@ def create_llm_training_data(df, n_total=5, filter_nan=True):
         current_game_id = result_df.iloc[i]['game_id']
         current_desc = result_df.iloc[i]['description']
         
-        # Get team stats for current game
+        # Get team stats and lineups for current game
         team_stats = game_team_stats.get(current_game_id, {})
         away_stats = team_stats.get('away_team_stats', {})
         home_stats = team_stats.get('home_team_stats', {})
         away_abbrev = team_stats.get('away_abbrev', 'Unknown')
         home_abbrev = team_stats.get('home_abbrev', 'Unknown')
+        lineups = team_stats.get('lineups', {})
         
         # Collect descriptions with enhanced context from the same game only
         descriptions_to_concat = []
@@ -356,7 +378,7 @@ def create_llm_training_data(df, n_total=5, filter_nan=True):
                 if collected_count >= n_total:
                     break
         
-        # Create team stats header (once per concatenated description)
+        # Create team stats header with lineups (once per concatenated description)
         # Handle None REST_DAYS by converting to 0
         away_rest_days = away_stats.get('REST_DAYS') if away_stats.get('REST_DAYS') is not None else 0
         home_rest_days = home_stats.get('REST_DAYS') if home_stats.get('REST_DAYS') is not None else 0
@@ -364,7 +386,33 @@ def create_llm_training_data(df, n_total=5, filter_nan=True):
         away_stats_str = f"OEFF: {away_stats.get('OEFF', 'N/A')} DEFF: {away_stats.get('DEFF', 'N/A')} PACE: {away_stats.get('PACE', 'N/A')} REST_DAYS: {away_rest_days}"
         home_stats_str = f"OEFF: {home_stats.get('OEFF', 'N/A')} DEFF: {home_stats.get('DEFF', 'N/A')} PACE: {home_stats.get('PACE', 'N/A')} REST_DAYS: {home_rest_days}"
         
-        team_stats_header = f"{away_abbrev} ({away_stats_str}) {home_abbrev} ({home_stats_str}) || "
+        # Format lineups
+        away_lineup = "N/A"
+        home_lineup = "N/A"
+        
+        # The lineups dict has team names as keys, we need to match them to away/home
+        # We need to convert abbreviations to full names to match lineup keys
+        abbrev_mapping = create_team_abbreviation_mapping()
+        away_full_name = abbrev_mapping.get(away_abbrev, away_abbrev)
+        home_full_name = abbrev_mapping.get(home_abbrev, home_abbrev)
+        
+        # Try to find matching lineup by checking if team name contains the full name or vice versa
+        for team_name, players in lineups.items():
+            # Check for away team match
+            if (away_full_name in team_name or team_name in away_full_name or 
+                any(part in team_name for part in away_full_name.split())):
+                away_lineup = ", ".join(players[:5])  # Limit to first 5 players for brevity
+                if len(players) > 5:
+                    away_lineup += f" (+{len(players)-5} more)"
+            
+            # Check for home team match  
+            if (home_full_name in team_name or team_name in home_full_name or
+                any(part in team_name for part in home_full_name.split())):
+                home_lineup = ", ".join(players[:5])  # Limit to first 5 players for brevity
+                if len(players) > 5:
+                    home_lineup += f" (+{len(players)-5} more)"
+        
+        team_stats_header = f"{away_abbrev} ({away_stats_str}) {home_abbrev} ({home_stats_str}) AWAY_LINEUP: [{away_lineup}] HOME_LINEUP: [{home_lineup}] || "
         
         # Join descriptions and prepend team stats header
         descriptions_part = " --> ".join(descriptions_to_concat)
