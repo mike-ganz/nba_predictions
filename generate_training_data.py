@@ -102,6 +102,129 @@ def test_data_loading():
     except Exception as e:
         print(f"Error testing imported functions: {e}")
 
+def calculate_game_time_remaining(period, remaining_time):
+    """
+    Calculate total game time remaining based on period and remaining time in current period.
+    
+    Args:
+        period (int): Current period (1-4)
+        remaining_time (str): Time remaining in current period (format: "0:MM:SS")
+        
+    Returns:
+        str: Total game time remaining (format: "MM:SS")
+    """
+    try:
+        # Parse remaining_time string (format: "0:MM:SS")
+        if pd.isna(remaining_time) or not remaining_time:
+            return "00:00"
+            
+        time_parts = str(remaining_time).split(':')
+        if len(time_parts) >= 2:
+            # Get minutes and seconds from the current period
+            minutes = int(time_parts[-2])  # Second to last part is minutes
+            seconds = int(time_parts[-1])   # Last part is seconds
+        else:
+            return "00:00"
+        
+        # Calculate total minutes remaining based on period
+        # NBA: 4 periods of 12 minutes each = 48 minutes total
+        if period == 1:
+            total_minutes_remaining = 36 + minutes  # 3 full periods + current period remaining
+        elif period == 2:
+            total_minutes_remaining = 24 + minutes  # 2 full periods + current period remaining
+        elif period == 3:
+            total_minutes_remaining = 12 + minutes  # 1 full period + current period remaining
+        elif period == 4:
+            total_minutes_remaining = minutes       # Only current period remaining
+        else:
+            # Handle overtime or invalid periods
+            total_minutes_remaining = minutes
+            
+        return f"{total_minutes_remaining:02d}:{seconds:02d}"
+        
+    except (ValueError, IndexError, TypeError):
+        return "00:00"
+
+def create_team_abbreviation_mapping():
+    """
+    Create mapping from 3-letter team abbreviations to full team names.
+    
+    Returns:
+        dict: Mapping from abbreviation to full team name
+    """
+    return {
+        'ATL': 'Atlanta Hawks',
+        'BKN': 'Brooklyn Nets', 
+        'BOS': 'Boston Celtics',
+        'CHA': 'Charlotte Hornets',
+        'CHI': 'Chicago Bulls',
+        'CLE': 'Cleveland Cavaliers',
+        'DAL': 'Dallas Mavericks',
+        'DEN': 'Denver Nuggets',
+        'DET': 'Detroit Pistons',
+        'GSW': 'Golden State Warriors',
+        'HOU': 'Houston Rockets',
+        'IND': 'Indiana Pacers',
+        'LAC': 'Los Angeles Clippers',
+        'LAL': 'Los Angeles Lakers',
+        'MEM': 'Memphis Grizzlies',
+        'MIA': 'Miami Heat',
+        'MIL': 'Milwaukee Bucks',
+        'MIN': 'Minnesota Timberwolves',
+        'NOP': 'New Orleans Pelicans',
+        'NYK': 'New York Knicks',
+        'OKC': 'Oklahoma City Thunder',
+        'ORL': 'Orlando Magic',
+        'PHI': 'Philadelphia 76ers',
+        'PHX': 'Phoenix Suns',
+        'POR': 'Portland Trail Blazers',
+        'SAC': 'Sacramento Kings',
+        'SAS': 'San Antonio Spurs',
+        'TOR': 'Toronto Raptors',
+        'UTA': 'Utah Jazz',
+        'WAS': 'Washington Wizards'
+    }
+
+def get_team_stats_for_game(game_df, team_mapping, target_date=None):
+    """
+    Get team stats for both teams in a game.
+    Falls back to season averages if date-filtered stats aren't available.
+    
+    Args:
+        game_df (pd.DataFrame): DataFrame for a single game
+        team_mapping (dict): Mapping of game_id to home/away teams
+        target_date (str, optional): Date for stats calculation
+        
+    Returns:
+        dict: Team stats for home and away teams
+    """
+    abbrev_mapping = create_team_abbreviation_mapping()
+    game_id = game_df.iloc[0]['game_id']
+    
+    # Get team abbreviations from mapping
+    home_abbrev = team_mapping.get(game_id, {}).get('home_team', 'Unknown')
+    away_abbrev = team_mapping.get(game_id, {}).get('away_team', 'Unknown')
+    
+    # Convert to full team names
+    home_team_full = abbrev_mapping.get(home_abbrev, home_abbrev)
+    away_team_full = abbrev_mapping.get(away_abbrev, away_abbrev)
+    
+    # Get team stats - try with date first, then fall back to season averages
+    home_stats = generate_team_stats(home_team_full, target_date)
+    if not home_stats:  # If no stats with date filter, use season averages
+        home_stats = generate_team_stats(home_team_full, None) or {}
+    
+    away_stats = generate_team_stats(away_team_full, target_date)
+    if not away_stats:  # If no stats with date filter, use season averages
+        away_stats = generate_team_stats(away_team_full, None) or {}
+    
+    return {
+        'home_team_stats': home_stats,
+        'away_team_stats': away_stats,
+        'home_abbrev': home_abbrev,
+        'away_abbrev': away_abbrev
+    }
+
 def determine_home_away_teams(df):
     """
     Determine which team is home and which is away for each game by tracking score increments.
@@ -153,9 +276,9 @@ def determine_home_away_teams(df):
 
 def create_llm_training_data(df, n_total=5, filter_nan=True):
     """
-    Create LLM training data by concatenating descriptions with score context.
+    Create LLM training data by concatenating descriptions with team stats, time, and score context.
     Only concatenates within the same game (respects game_id boundaries).
-    Format: "away_team: score home_team: score | description"
+    Format: "AWAY_TEAM (OEFF: x DEFF: y PACE: z REST_DAYS: w) HOME_TEAM (...) || XX:XX away_team: score home_team: score | description --> ..."
     
     Args:
         df (pd.DataFrame): Play-by-play DataFrame with required columns
@@ -176,16 +299,32 @@ def create_llm_training_data(df, n_total=5, filter_nan=True):
     print("Determining home/away team mappings...")
     game_team_mapping = determine_home_away_teams(result_df)
     
+    # Get team stats for each game (cache to avoid repeated calls)
+    print("Loading team stats for games...")
+    game_team_stats = {}
+    unique_games = result_df['game_id'].unique()
+    
+    for game_id in unique_games:
+        game_df = result_df[result_df['game_id'] == game_id]
+        # Use the game date for team stats context
+        game_date = game_df.iloc[0].get('date', None)
+        stats = get_team_stats_for_game(game_df, game_team_mapping, target_date=game_date)
+        game_team_stats[game_id] = stats
+    
     concatenated_descriptions = []
     
     for i in range(len(result_df)):
         current_game_id = result_df.iloc[i]['game_id']
         current_desc = result_df.iloc[i]['description']
         
-        # Get team mapping for current game
-        team_mapping = game_team_mapping.get(current_game_id, {'home_team': 'Unknown', 'away_team': 'Unknown'})
+        # Get team stats for current game
+        team_stats = game_team_stats.get(current_game_id, {})
+        away_stats = team_stats.get('away_team_stats', {})
+        home_stats = team_stats.get('home_team_stats', {})
+        away_abbrev = team_stats.get('away_abbrev', 'Unknown')
+        home_abbrev = team_stats.get('home_abbrev', 'Unknown')
         
-        # Collect descriptions with score context from the same game only
+        # Collect descriptions with enhanced context from the same game only
         descriptions_to_concat = []
         
         # Go backwards from current position to collect descriptions
@@ -201,19 +340,35 @@ def create_llm_training_data(df, n_total=5, filter_nan=True):
             if row_game_id != current_game_id:
                 break
             
-            # Add valid descriptions with score context
+            # Add valid descriptions with score and time context
             if pd.notna(row_desc):
-                # Format: "away_team: score home_team: score | description"
-                score_context = f"{team_mapping['away_team']}: {row_away_score} {team_mapping['home_team']}: {row_home_score} | {str(row_desc)}"
-                descriptions_to_concat.insert(0, score_context)  # Insert at beginning to maintain order
+                # Calculate game time remaining
+                row_period = result_df.iloc[j].get('period', 4)
+                row_remaining_time = result_df.iloc[j].get('remaining_time', '0:00:00')
+                game_time_remaining = calculate_game_time_remaining(row_period, row_remaining_time)
+                
+                # Format: "XX:XX away_team: score home_team: score | description"
+                time_score_context = f"{game_time_remaining} {away_abbrev}: {row_away_score} {home_abbrev}: {row_home_score} | {str(row_desc)}"
+                descriptions_to_concat.insert(0, time_score_context)  # Insert at beginning to maintain order
                 collected_count += 1
                 
                 # Stop if we've collected the desired total number of descriptions
                 if collected_count >= n_total:
                     break
         
-        # Join with delimiter
-        concatenated_desc = " --> ".join(descriptions_to_concat)
+        # Create team stats header (once per concatenated description)
+        # Handle None REST_DAYS by converting to 0
+        away_rest_days = away_stats.get('REST_DAYS') if away_stats.get('REST_DAYS') is not None else 0
+        home_rest_days = home_stats.get('REST_DAYS') if home_stats.get('REST_DAYS') is not None else 0
+        
+        away_stats_str = f"OEFF: {away_stats.get('OEFF', 'N/A')} DEFF: {away_stats.get('DEFF', 'N/A')} PACE: {away_stats.get('PACE', 'N/A')} REST_DAYS: {away_rest_days}"
+        home_stats_str = f"OEFF: {home_stats.get('OEFF', 'N/A')} DEFF: {home_stats.get('DEFF', 'N/A')} PACE: {home_stats.get('PACE', 'N/A')} REST_DAYS: {home_rest_days}"
+        
+        team_stats_header = f"{away_abbrev} ({away_stats_str}) {home_abbrev} ({home_stats_str}) || "
+        
+        # Join descriptions and prepend team stats header
+        descriptions_part = " --> ".join(descriptions_to_concat)
+        concatenated_desc = team_stats_header + descriptions_part
         concatenated_descriptions.append(concatenated_desc)
     
     # Add the concatenated descriptions as a new column
