@@ -6,6 +6,9 @@ import os
 # Configuration - Change this to the desired season year
 SEASON_YEAR = "2023-2024"  # Can be "2022-2023" or "2023-2024"
 
+# Cache for loaded team data to avoid repeated file loading
+_team_data_cache = {}
+
 def load_team_data(season_year):
     """Load team boxscore data for the specified season year."""
     # Map season year to file path
@@ -30,6 +33,8 @@ def load_team_data(season_year):
 
 # Load data for the configured season year
 df = load_team_data(SEASON_YEAR)
+# Cache the main season data
+_team_data_cache[SEASON_YEAR] = df
 
 def generate_team_stats(team_name, target_date=None, fallback_season=None):
     """
@@ -48,16 +53,24 @@ def generate_team_stats(team_name, target_date=None, fallback_season=None):
 
     # Determine which dataset to use
     if fallback_season and fallback_season != SEASON_YEAR:
-        # Load fallback season data
-        try:
-            fallback_df = load_team_data(fallback_season)
-            data_source = fallback_df
+        # Try to get fallback season data from cache first
+        if fallback_season in _team_data_cache:
+            data_source = _team_data_cache[fallback_season]
             season_label = fallback_season
-        except (ValueError, FileNotFoundError):
-            # If fallback season not available, use current season
-            data_source = df
-            season_label = SEASON_YEAR
-            print(f"Warning: Fallback season {fallback_season} not available, using {SEASON_YEAR}")
+            # print(f"✅ Using cached {fallback_season} data for {team_name}")
+        else:
+            # Load fallback season data and cache it
+            try:
+                fallback_df = load_team_data(fallback_season)
+                _team_data_cache[fallback_season] = fallback_df  # Cache for future use
+                data_source = fallback_df
+                season_label = fallback_season
+                print(f"📁 Loaded and cached {fallback_season} data for future use")
+            except (ValueError, FileNotFoundError):
+                # If fallback season not available, use current season
+                data_source = df
+                season_label = SEASON_YEAR
+                print(f"Warning: Fallback season {fallback_season} not available, using {SEASON_YEAR}")
     else:
         data_source = df
         season_label = SEASON_YEAR
@@ -109,6 +122,22 @@ def set_season_year(season_year):
 def get_available_teams():
     """Get all unique team names from the loaded dataset."""
     return df['TEAM'].unique()
+
+def clear_team_data_cache():
+    """Clear the cached team data to free memory."""
+    global _team_data_cache
+    cache_size = len(_team_data_cache)
+    _team_data_cache.clear()
+    print(f"🗑️ Cleared team data cache ({cache_size} seasons)")
+    return cache_size
+
+def get_cache_info():
+    """Get information about cached team data."""
+    return {
+        'cached_seasons': list(_team_data_cache.keys()),
+        'cache_size': len(_team_data_cache),
+        'memory_usage_mb': sum(df.memory_usage(deep=True).sum() for df in _team_data_cache.values()) / 1024**2
+    }
 
 # Example usage (uncomment to test):
 # stats = generate_team_stats("New York Knicks", "2024-12-01")

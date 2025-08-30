@@ -48,14 +48,14 @@ class PlayerAnalyzer:
                 scores = self._generate_dummy_pca_scores(player_name)
             elif force_real_mode:
                 # Explicitly requested real PCA (cache building mode)
-                from pca import get_player_pca_score
+                from pca_optimized import get_player_pca_score
                 scores = get_player_pca_score(player_name, game_date, season)
             elif self._should_use_fast_mode():
                 # Normal fast mode logic (small cache size)
                 scores = self._generate_dummy_pca_scores(player_name)
             else:
-                # Use real PCA computation
-                from pca import get_player_pca_score
+                # Use OPTIMIZED PCA computation with your 306K+ cache files
+                from pca_optimized import get_player_pca_score
                 scores = get_player_pca_score(player_name, game_date, season)
             
             # Cache the result
@@ -74,16 +74,13 @@ class PlayerAnalyzer:
         Determine if we should use fast test mode based on dataset size.
         Uses FAST_TEST_MODE_THRESHOLD to decide when to use dummy values.
         """
-        # If we're processing a small number of records, use fast mode
-        # This is determined by checking if we're likely in a test scenario
-        try:
-            # Check if we have few cached results (indicates small test)
-            if len(self._pca_cache) < FAST_TEST_MODE_THRESHOLD:
-                return True
-            return False
-        except:
-            # Default to fast mode if anything goes wrong
-            return True
+        # DISABLED: Always use real PCA values since user has pre-built cache
+        # The cache size detection was incorrectly triggering fast mode
+        return False
+        
+        # Old buggy logic that caused dummy values for full season runs:
+        # if len(self._pca_cache) < FAST_TEST_MODE_THRESHOLD:
+        #     return True  # This was incorrectly triggering for full seasons!
     
     def _generate_dummy_pca_scores(self, player_name: str) -> Tuple[float, float, float, float]:
         """
@@ -147,20 +144,23 @@ class PlayerAnalyzer:
         Returns:
             dict: Complete player object with stats
         """
-        # Get PCA scores
+        # Get PCA scores - USE FULL SEASON FORMAT for cache compatibility
+        # Convert "2024" back to "2023-2024" to match your cache files
+        full_season = f"2023-{season}" if season == "2024" else season
         offense, defense, shot_selection, efficiency = self.get_player_pca_scores(
-            player_name, game_date, season, force_fast_mode=fast_mode, force_real_mode=real_mode
+            player_name, game_date, full_season, force_fast_mode=fast_mode, force_real_mode=real_mode
         )
         
-        # Convert to integers for JSON
-        integer_stats = self.convert_pca_scores_to_integers(
-            offense, defense, shot_selection, efficiency
-        )
-        
+        # Keep decimal PCA scores (no integer conversion)
         return {
             "name": str(player_name),
             "team": str(team_abbrev),
-            "pca_scores": integer_stats
+            "pca_scores": {
+                'offense': round(offense, 4) if offense is not None else None,
+                'defense': round(defense, 4) if defense is not None else None,
+                'shot_selection': round(shot_selection, 4) if shot_selection is not None else None,
+                'efficiency': round(efficiency, 4) if efficiency is not None else None
+            }
         }
     
     def clear_pca_cache(self) -> int:

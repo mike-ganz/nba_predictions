@@ -8,6 +8,7 @@ and JSON formatting.
 
 import json
 import pandas as pd
+import re
 from typing import Dict, List, Optional, Any
 from config.settings import config, DEFAULT_N_TOTAL_PLAYS, DEFAULT_MIN_GAMES_THRESHOLD
 from data.loaders import data_loader
@@ -15,6 +16,32 @@ from game.time_utils import convert_to_quarter_time
 from game.team_utils import team_manager, get_team_stats_for_game, determine_home_away_teams
 from game.scoring_utils import determine_scoring_info
 from analysis.player_stats import player_analyzer, lineup_manager
+
+
+def remove_parentheses_content(text):
+    """
+    Remove content within parentheses (including the parentheses) from text.
+    
+    Args:
+        text (str): Input text that may contain parentheses
+        
+    Returns:
+        str: Text with parentheses content removed and extra spaces cleaned up
+    
+    Example:
+        "Lebron James 3-pt make (17 pts)" -> "Lebron James 3-pt make"
+    """
+    if not text or pd.isna(text):
+        return text
+    
+    # Remove content within parentheses using regex
+    # \([^)]*\) matches opening paren, any chars except closing paren, closing paren
+    cleaned_text = re.sub(r'\([^)]*\)', '', str(text))
+    
+    # Clean up extra whitespace that may result from removal
+    cleaned_text = ' '.join(cleaned_text.split())
+    
+    return cleaned_text
 
 
 class TrainingDataGenerator:
@@ -188,10 +215,18 @@ class TrainingDataGenerator:
         max_game_date = None
         if 'date' in df.columns:
             try:
-                max_game_date = pd.to_datetime(df['date']).max().strftime('%Y-%m-%d')
+                # Handle multiple date formats commonly found in NBA datasets (M/D/YYYY, YYYY-MM-DD, etc.)
+                max_game_date = pd.to_datetime(df['date'], format='mixed', dayfirst=False).max().strftime('%Y-%m-%d')
                 print(f"📅 Using max game date for filtering: {max_game_date}")
             except Exception as e:
-                print(f"Warning: Could not determine max game date: {e}")
+                try:
+                    # Fallback: Try inferring the format
+                    max_game_date = pd.to_datetime(df['date'], infer_datetime_format=True).max().strftime('%Y-%m-%d')
+                    print(f"📅 Using max game date for filtering (inferred format): {max_game_date}")
+                except Exception as e2:
+                    print(f"Warning: Could not determine max game date: {e}")
+                    print(f"Fallback also failed: {e2}")
+                    print("Continuing without date filtering optimization...")
         
         # Load player boxscore data for lineups (with date filtering optimization)
         boxscore_data = self._load_boxscore_data(unique_games, max_game_date)
@@ -238,7 +273,14 @@ class TrainingDataGenerator:
         Returns:
             pd.DataFrame or None: Player boxscore data if available
         """
-        print("Loading player boxscore data for lineups...")
+        # Check if we already have boxscore data cached (MAJOR PERFORMANCE IMPROVEMENT)
+        cache_key = f"boxscore_{max_game_date}_{config.season_year}"
+        if hasattr(self, '_boxscore_cache') and cache_key in self._boxscore_cache:
+            cached_data = self._boxscore_cache[cache_key]
+            print(f"🚀 Using cached boxscore data ({len(cached_data):,} records) - HUGE speedup!")
+            return cached_data
+        
+        print("📊 Loading player boxscore data for lineups (first time only)...")
         try:
             # Use date filtering to only load relevant data
             boxscore_data = data_loader.load_all_player_boxscores(
@@ -248,7 +290,7 @@ class TrainingDataGenerator:
             if boxscore_data is None:
                 return None
                 
-            print(f"Loaded boxscore data with {len(boxscore_data)} player records")
+            print(f"✅ Loaded {len(boxscore_data):,} player records (date-filtered)")
             
             # ADDITIONAL OPTIMIZATION: Filter to only games we need if testing with small dataset
             if len(unique_games) <= 5:  # Testing mode - filter data
@@ -257,6 +299,12 @@ class TrainingDataGenerator:
                 boxscore_data = boxscore_data[boxscore_data[game_id_column].isin(unique_games)]
                 filtered_size = len(boxscore_data)
                 print(f"🚀 FURTHER OPTIMIZED: Filtered from {original_size} to {filtered_size} records for target games")
+            
+            # Cache the loaded data to avoid repeated loading (HUGE PERFORMANCE GAIN)
+            if not hasattr(self, '_boxscore_cache'):
+                self._boxscore_cache = {}
+            self._boxscore_cache[cache_key] = boxscore_data
+            print(f"💾 Cached boxscore data for future batches - subsequent batches will be lightning fast!")
             
             return boxscore_data
             
@@ -371,11 +419,13 @@ class TrainingDataGenerator:
                 scoring_team = None
                 points_scored = 0
                 
-                if j < len(df) - 1:  # Not the last row
-                    next_j = j + 1
-                    if (next_j < len(df) and df.iloc[next_j]['game_id'] == current_game_id):
-                        prev_away_score = df.iloc[next_j].get('away_score', 0) or 0
-                        prev_home_score = df.iloc[next_j].get('home_score', 0) or 0
+                # To determine scoring, we need to compare this play with the chronologically previous play
+                # Since we're iterating backwards (j decreasing), the previous play chronologically is at j-1
+                if j > 0:  # Make sure we have a previous play
+                    prev_j = j - 1
+                    if (prev_j >= 0 and df.iloc[prev_j]['game_id'] == current_game_id):
+                        prev_away_score = df.iloc[prev_j].get('away_score', 0) or 0
+                        prev_home_score = df.iloc[prev_j].get('home_score', 0) or 0
                         
                         scoring_team, points_scored = determine_scoring_info(
                             prev_away_score, prev_home_score, 
@@ -387,7 +437,7 @@ class TrainingDataGenerator:
                 play_obj = {
                     "quarter": int(quarter),
                     "time_remaining": str(time_in_quarter),
-                    "description": str(row_desc),
+                    "description": remove_parentheses_content(row_desc),
                     "score": f"{away_abbrev} {int(row_away_score)} - {home_abbrev} {int(row_home_score)}",
                     "scoring_team": str(scoring_team) if scoring_team else None,
                     "points_scored": int(points_scored)
@@ -427,15 +477,14 @@ class TrainingDataGenerator:
         if config.season_year and '-' in config.season_year:
             season = config.season_year.split('-')[1]  # "2023-2024" -> "2024"
         
-        # Use fast mode for small test datasets to avoid expensive PCA calculations
-        # BUT never use fast mode if force_real_pca=True (for cache building)
+        # Always use real PCA since user has pre-built cache
+        # The old fast mode detection was incorrectly triggering dummy values
         if force_real_pca:
-            use_fast_mode = False  # Always use real PCA for cache building
+            use_fast_mode = False  # Cache building mode
             print(f"🔥 CACHE BUILDING MODE: Using REAL PCA values for {sum(len(players) for players in lineups.values()) if lineups else 0} players")
         else:
-            # Detect if this is a test scenario based on the number of lineups
-            total_players = sum(len(players) for players in lineups.values()) if lineups else 0
-            use_fast_mode = total_players <= 30  # Threshold for test mode
+            use_fast_mode = False  # Always use real cached PCA values
+            # Removed buggy player count detection that was causing dummy values
         
         return lineup_manager.process_lineups_for_training_data(
             lineups, away_abbrev, home_abbrev, away_full_name, home_full_name, 
@@ -451,11 +500,14 @@ class TrainingDataGenerator:
         """
         stats = {
             'team_stats_entries': len(self._team_stats_cache),
-            'lineup_entries': len(self._lineup_cache)
+            'lineup_entries': len(self._lineup_cache),
+            'boxscore_entries': len(getattr(self, '_boxscore_cache', {}))
         }
         
         self._team_stats_cache.clear()
         self._lineup_cache.clear()
+        if hasattr(self, '_boxscore_cache'):
+            self._boxscore_cache.clear()
         
         # Also clear player analyzer cache
         player_analyzer.clear_pca_cache()

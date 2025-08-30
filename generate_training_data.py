@@ -1,11 +1,12 @@
 import pandas as pd
 import os
 import json
+import re
 
 # Import required functions from other modules
 from transform_player_stats import calculate_player_stats, get_distinct_players
 from generate_team_stats import generate_team_stats, get_available_teams
-from pca import get_player_pca_score
+from pca_optimized import get_player_pca_score
 from get_team_city import get_team_city
 from generate_lineup import get_lineup_by_game_id, load_all_player_boxscores
 
@@ -229,6 +230,31 @@ def create_team_abbreviation_mapping():
         'UTA': 'Utah Jazz',
         'WAS': 'Washington Wizards'
     }
+
+def remove_parentheses_content(text):
+    """
+    Remove content within parentheses (including the parentheses) from text.
+    
+    Args:
+        text (str): Input text that may contain parentheses
+        
+    Returns:
+        str: Text with parentheses content removed and extra spaces cleaned up
+    
+    Example:
+        "Lebron James 3-pt make (17 pts)" -> "Lebron James 3-pt make"
+    """
+    if not text or pd.isna(text):
+        return text
+    
+    # Remove content within parentheses using regex
+    # \([^)]*\) matches opening paren, any chars except closing paren, closing paren
+    cleaned_text = re.sub(r'\([^)]*\)', '', str(text))
+    
+    # Clean up extra whitespace that may result from removal
+    cleaned_text = ' '.join(cleaned_text.split())
+    
+    return cleaned_text
 
 def get_prior_season(current_season):
     """
@@ -480,7 +506,7 @@ def create_llm_training_data(df, n_total=5, filter_nan=True):
                 play_obj = {
                     "quarter": int(quarter),
                     "time_remaining": str(time_in_quarter),
-                    "description": str(row_desc),
+                    "description": remove_parentheses_content(row_desc),
                     "score": f"{away_abbrev} {int(row_away_score)} - {home_abbrev} {int(row_home_score)}",
                     "scoring_team": str(scoring_team) if scoring_team else None,
                     "points_scored": int(points_scored)
@@ -536,21 +562,11 @@ def create_llm_training_data(df, n_total=5, filter_nan=True):
                         if i == 0 and len(players) == 0:
                             print(f"DEBUG: Passing date '{current_game_date}' to PCA for player '{player_name}'")
                         
-                        # FAST TEST MODE: Skip expensive PCA computation for small datasets
-                        if len(result_df) < 100:  # Testing mode - use dummy PCA values
-                            print(f"🚀 FAST TEST MODE: Using dummy PCA values for {player_name}")
-                            # Generate consistent dummy values based on player name hash
-                            import hashlib
-                            name_hash = int(hashlib.md5(player_name.encode()).hexdigest()[:8], 16)
-                            offense = (name_hash % 200 - 100) / 100.0  # -1.0 to 1.0 range
-                            defense = ((name_hash >> 8) % 200 - 100) / 100.0
-                            shot_selection = ((name_hash >> 16) % 200 - 100) / 100.0
-                            efficiency = ((name_hash >> 24) % 200 - 100) / 100.0
-                        else:
-                            # PRODUCTION MODE: Use real PCA computation
-                            offense, defense, shot_selection, efficiency = get_player_pca_score(
-                                player_name, current_game_date, current_season
-                            )
+                        # ALWAYS use OPTIMIZED PCA computation with your 306K+ cache files
+                        # This will use pca_optimized.py which loads from your pre-built cache
+                        offense, defense, shot_selection, efficiency = get_player_pca_score(
+                            player_name, current_game_date, current_season
+                        )
                         
                         # Convert to integers (scaling by 100 to match template format)
                         offense_score = int(round(offense * 100)) if offense is not None else None
@@ -781,7 +797,7 @@ def create_openai_training_data(df):
                     "next_play": {
                         "quarter": int(next_quarter),
                         "time_remaining": str(next_time),
-                        "description": str(next_row['description']),
+                        "description": remove_parentheses_content(next_row['description']),
                         "score": str(score),
                         "scoring_team": str(scoring_team) if scoring_team else None,
                         "points_scored": int(points_scored) if points_scored else 0

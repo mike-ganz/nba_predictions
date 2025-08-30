@@ -29,6 +29,7 @@ full_season_df = training_data_generator.generate_dataset(
     n_total=10,  # Number of plays in each sequence
     sample_size=None,  # None = process ALL games/rows in the season!
     # game_id_filter=None  # This is the default - processes ALL games
+    force_real_pca=True  # 🔥 FORCE real cached PCA values (not dummy values!)
 )
 
 end_time = time.time() 

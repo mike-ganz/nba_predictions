@@ -7,7 +7,7 @@ and team-related data processing.
 
 import pandas as pd
 from typing import Dict, Tuple, Optional
-from config.settings import TEAM_ABBREVIATIONS
+from config.settings import TEAM_ABBREVIATIONS, DEFAULT_MIN_GAMES_THRESHOLD
 
 
 class TeamManager:
@@ -215,7 +215,7 @@ class TeamStatsIntegrator:
     def get_team_stats_for_game(self, game_df: pd.DataFrame, 
                               team_mapping: Dict[int, Dict[str, str]], 
                               target_date: Optional[str] = None,
-                              min_games_threshold: int = 10) -> Dict[str, any]:
+                              min_games_threshold: int = DEFAULT_MIN_GAMES_THRESHOLD) -> Dict[str, any]:
         """
         Get team stats for both teams in a game.
         Falls back to prior season averages if insufficient current season data.
@@ -295,7 +295,7 @@ def determine_home_away_teams(df: pd.DataFrame) -> Dict[int, Dict[str, str]]:
 def get_team_stats_for_game(game_df: pd.DataFrame, 
                           team_mapping: Dict[int, Dict[str, str]], 
                           target_date: Optional[str] = None,
-                          min_games_threshold: int = 10) -> Dict[str, any]:
+                          min_games_threshold: int = DEFAULT_MIN_GAMES_THRESHOLD) -> Dict[str, any]:
     """Get team stats for both teams in a game."""
     return team_stats_integrator.get_team_stats_for_game(
         game_df, team_mapping, target_date, min_games_threshold

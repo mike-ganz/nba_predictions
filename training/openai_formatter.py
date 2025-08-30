@@ -8,9 +8,36 @@ creating user-assistant conversation pairs suitable for model training.
 import json
 from typing import List, Dict, Any, Tuple, Optional
 import pandas as pd
+import re
 from game.time_utils import convert_to_quarter_time
 from game.scoring_utils import determine_scoring_info
 from data.file_utils import file_manager
+
+
+def remove_parentheses_content(text):
+    """
+    Remove content within parentheses (including the parentheses) from text.
+    
+    Args:
+        text (str): Input text that may contain parentheses
+        
+    Returns:
+        str: Text with parentheses content removed and extra spaces cleaned up
+    
+    Example:
+        "Lebron James 3-pt make (17 pts)" -> "Lebron James 3-pt make"
+    """
+    if not text or pd.isna(text):
+        return text
+    
+    # Remove content within parentheses using regex
+    # \([^)]*\) matches opening paren, any chars except closing paren, closing paren
+    cleaned_text = re.sub(r'\([^)]*\)', '', str(text))
+    
+    # Clean up extra whitespace that may result from removal
+    cleaned_text = ' '.join(cleaned_text.split())
+    
+    return cleaned_text
 
 
 class OpenAIFormatter:
@@ -122,7 +149,7 @@ class OpenAIFormatter:
             "next_play": {
                 "quarter": int(next_quarter),
                 "time_remaining": str(next_time),
-                "description": str(next_row['description']),
+                "description": remove_parentheses_content(next_row['description']),
                 "score": str(score),
                 "scoring_team": str(scoring_team) if scoring_team else None,
                 "points_scored": int(points_scored) if points_scored else 0
