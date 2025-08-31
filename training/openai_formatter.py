@@ -59,7 +59,8 @@ class OpenAIFormatter:
         training_examples = []
         
         # Group by game to ensure we can find next plays
-        for game_id in df['game_id'].unique():
+        # CRITICAL FIX: Process games in sorted order to match ultra-optimized generator
+        for game_id in sorted(df['game_id'].unique()):
             game_df = df[df['game_id'] == game_id].sort_values('play_id').reset_index(drop=True)
             
             for i in range(len(game_df) - 1):  # -1 because we need a next play
@@ -140,6 +141,21 @@ class OpenAIFormatter:
             current_json['away_team']['name'], current_json['home_team']['name']
         )
         
+        # VALIDATION: Check for obvious mismatches (steal/turnover/miss with scoring)
+        next_desc = str(next_row['description']).upper()
+        is_non_scoring_play = any(word in next_desc for word in [
+            'STEAL', 'TURNOVER', 'MISS', 'REBOUND', 'FOUL', 'SUB:', 'TIMEOUT'
+        ])
+        
+        if is_non_scoring_play and points_scored > 0:
+            # This should not happen - debug log the issue
+            print(f"⚠️ Scoring mismatch detected:")
+            print(f"   Description: {next_row['description']}")
+            print(f"   Scores: {prev_away_score}-{prev_home_score} → {next_row['away_score']}-{next_row['home_score']}")
+            print(f"   Calculated: {scoring_team} +{points_scored}")
+            # Force correction for obvious non-scoring plays
+            scoring_team, points_scored = None, 0
+        
         # Format score
         score = (f"{current_json['away_team']['name']} {next_row['away_score']} - "
                 f"{current_json['home_team']['name']} {next_row['home_score']}")
@@ -158,20 +174,19 @@ class OpenAIFormatter:
     
     def _get_previous_scores(self, game_df: pd.DataFrame, current_index: int) -> Tuple[int, int]:
         """
-        Get the scores from the previous play for scoring calculation.
+        Get the scores from the current context play for next play scoring calculation.
         
         Args:
             game_df: DataFrame for the game
-            current_index: Index of current play
+            current_index: Index of current context play
             
         Returns:
-            tuple: (prev_away_score, prev_home_score)
+            tuple: (context_away_score, context_home_score)
         """
-        if current_index == 0:
-            return 0, 0
-        else:
-            prev_row = game_df.iloc[current_index - 1]
-            return prev_row['away_score'], prev_row['home_score']
+        # CRITICAL FIX: Get score from current_index (context play), not current_index - 1
+        # We want to compare: context_play_score → next_play_score to detect scoring
+        current_row = game_df.iloc[current_index]
+        return current_row['away_score'], current_row['home_score']
     
     def validate_training_examples(self, training_examples: List[Dict[str, Any]]) -> Dict[str, Any]:
         """

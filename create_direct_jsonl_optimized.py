@@ -147,8 +147,8 @@ def create_direct_jsonl_optimized(sample_size: int = None, batch_size: int = 500
 def main():
     """Main function to run the direct optimized JSONL conversion."""
     
-    # Test with 10K sample first
-    result_path = create_direct_jsonl_optimized(sample_size=10000)
+    # Generate full dataset (~594K examples)
+    result_path = create_direct_jsonl_optimized()  # Remove sample_size for full dataset
     
     print(f"\n🎉 Direct optimized conversion complete!")
     print(f"💾 Final output: {result_path}")
