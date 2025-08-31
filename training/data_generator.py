@@ -343,16 +343,20 @@ class TrainingDataGenerator:
         # Collect recent plays from the same game only
         recent_plays = self._collect_recent_plays(df, row_index, n_total, away_abbrev, home_abbrev)
         
-        # Create players array from lineups
-        players = self._create_player_objects(
+        # Create organized players array from lineups
+        organized_players = self._create_player_objects(
             lineups, away_abbrev, home_abbrev, game_date, force_real_pca=force_real_pca
         )
+        
+        # Extract organized players (already separated by team)
+        away_players = organized_players.get('away_players', [])
+        home_players = organized_players.get('home_players', [])
         
         # Handle None REST_DAYS by converting to 0
         away_rest_days = away_stats.get('REST_DAYS') if away_stats.get('REST_DAYS') is not None else 0
         home_rest_days = home_stats.get('REST_DAYS') if home_stats.get('REST_DAYS') is not None else 0
         
-        # Create JSON structure with proper type conversion
+        # Create JSON structure with proper type conversion and nested players
         json_obj = {
             "away_team": {
                 "name": str(away_abbrev) if away_abbrev else "Unknown",
@@ -361,7 +365,8 @@ class TrainingDataGenerator:
                     "DEFF": float(away_stats.get('DEFF')) if away_stats.get('DEFF') is not None else None,
                     "PACE": float(away_stats.get('PACE')) if away_stats.get('PACE') is not None else None,
                     "REST_DAYS": int(away_rest_days) if away_rest_days is not None else 0
-                }
+                },
+                "players": away_players  # NESTED: Players under their team
             },
             "home_team": {
                 "name": str(home_abbrev) if home_abbrev else "Unknown",
@@ -370,9 +375,9 @@ class TrainingDataGenerator:
                     "DEFF": float(home_stats.get('DEFF')) if home_stats.get('DEFF') is not None else None,
                     "PACE": float(home_stats.get('PACE')) if home_stats.get('PACE') is not None else None,
                     "REST_DAYS": int(home_rest_days) if home_rest_days is not None else 0
-                }
+                },
+                "players": home_players  # NESTED: Players under their team
             },
-            "players": players,
             "recent_plays": recent_plays
         }
         
@@ -433,14 +438,18 @@ class TrainingDataGenerator:
                             away_abbrev, home_abbrev
                         )
                 
-                # Create play object with proper type conversion
+                # Create play object with proper type conversion, restructured scoring and added player
+                row_player = df.iloc[j].get('player')
                 play_obj = {
                     "quarter": int(quarter),
                     "time_remaining": str(time_in_quarter),
-                    "description": remove_parentheses_content(row_desc),
                     "score": f"{away_abbrev} {int(row_away_score)} - {home_abbrev} {int(row_home_score)}",
-                    "scoring_team": str(scoring_team) if scoring_team else None,
-                    "points_scored": int(points_scored)
+                    "player": str(row_player) if pd.notna(row_player) else None,  # NEW: Player from original data
+                    "description": remove_parentheses_content(row_desc),
+                    "scoring": {  # RESTRUCTURED: Nested scoring object
+                        "team": str(scoring_team) if scoring_team else None,
+                        "points": int(points_scored)
+                    }
                 }
                 
                 recent_plays.insert(0, play_obj)  # Insert at beginning to maintain chronological order
@@ -454,7 +463,7 @@ class TrainingDataGenerator:
     
     def _create_player_objects(self, lineups: Dict[str, List[str]], away_abbrev: str, 
                              home_abbrev: str, game_date: Optional[str],
-                             force_real_pca: bool = False) -> List[Dict[str, Any]]:
+                             force_real_pca: bool = False) -> Dict[str, List[Dict[str, Any]]]:
         """
         Create player objects with PCA stats from lineup data.
         
@@ -466,7 +475,7 @@ class TrainingDataGenerator:
             force_real_pca: If True, always use real PCA calculations (for cache building)
             
         Returns:
-            list: List of player objects with stats
+            dict: Dictionary with 'away_players' and 'home_players' lists
         """
         # Get abbreviation to full name mapping for lineup matching
         away_full_name = team_manager.get_team_full_name(away_abbrev)

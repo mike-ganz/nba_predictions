@@ -259,6 +259,16 @@ class TeamStatsIntegrator:
                         f'({current_stats.get("GAMES_PLAYED", 0) if current_stats else 0} < {min_games_threshold})'
                     )
                     fallback_stats['USING_PRIOR_SEASON'] = True
+                    
+                    # FIX: Handle REST_DAYS properly for insufficient games
+                    games_played = current_stats.get('GAMES_PLAYED', 0) if current_stats else 0
+                    if games_played == 0:
+                        # First game of season: Default to well-rested value
+                        fallback_stats['REST_DAYS'] = 10
+                    else:
+                        # Has some games: Use current season's actual rest calculation
+                        fallback_stats['REST_DAYS'] = current_stats.get('REST_DAYS')
+                        
                 return fallback_stats or {}
             else:
                 # Sufficient current season games, use current stats

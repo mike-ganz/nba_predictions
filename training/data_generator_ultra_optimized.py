@@ -153,17 +153,17 @@ class UltraOptimizedTrainingDataGenerator(TrainingDataGenerator):
         lineups = game_context.get('lineups', {})
         game_date = game_context.get('game_date')
         
-        # Create player objects once for the entire game
-        players = self._create_player_objects(lineups, away_abbrev, home_abbrev, game_date, force_real_pca)
+        # Create player objects once for the entire game (now returns organized dict)
+        organized_players = self._create_player_objects(lineups, away_abbrev, home_abbrev, game_date, force_real_pca)
         
         # Process each play in the game
         for i in range(game_length):
             # Collect recent plays using fast dict access (no iloc!)
             recent_plays = self._collect_recent_plays_ultra_fast(plays, i, n_total, away_abbrev, home_abbrev)
             
-            # Create JSON object
+            # Create JSON object with organized players
             json_obj = self._create_json_ultra_fast(
-                away_abbrev, home_abbrev, away_stats, home_stats, players, recent_plays
+                away_abbrev, home_abbrev, away_stats, home_stats, organized_players, recent_plays
             )
             
             # Serialize to JSON string
@@ -210,14 +210,17 @@ class UltraOptimizedTrainingDataGenerator(TrainingDataGenerator):
                         away_abbrev, home_abbrev
                     )
                 
-                # Create play object
+                # Create play object with restructured scoring and added player
                 play_obj = {
                     "quarter": int(quarter),
                     "time_remaining": str(time_in_quarter),
-                    "description": remove_parentheses_content(play.get('description', '')),
                     "score": f"{away_abbrev} {int(play.get('away_score', 0) or 0)} - {home_abbrev} {int(play.get('home_score', 0) or 0)}",
-                    "scoring_team": str(scoring_team) if scoring_team else None,
-                    "points_scored": int(points_scored)
+                    "player": str(play.get('player')) if pd.notna(play.get('player')) else None,  # NEW: Player from original data
+                    "description": remove_parentheses_content(play.get('description', '')),
+                    "scoring": {  # RESTRUCTURED: Nested scoring object
+                        "team": str(scoring_team) if scoring_team else None,
+                        "points": int(points_scored)
+                    }
                 }
                 
                 recent_plays.insert(0, play_obj)
@@ -227,12 +230,16 @@ class UltraOptimizedTrainingDataGenerator(TrainingDataGenerator):
     
     def _create_json_ultra_fast(self, away_abbrev: str, home_abbrev: str, 
                               away_stats: Dict, home_stats: Dict,
-                              players: List[Dict], recent_plays: List[Dict]) -> Dict[str, Any]:
+                              organized_players: Dict[str, List[Dict]], recent_plays: List[Dict]) -> Dict[str, Any]:
         """Create JSON object with optimized structure assembly."""
         
         # Handle None REST_DAYS
         away_rest_days = away_stats.get('REST_DAYS') if away_stats.get('REST_DAYS') is not None else 0
         home_rest_days = home_stats.get('REST_DAYS') if home_stats.get('REST_DAYS') is not None else 0
+        
+        # Extract organized players (already separated by team)
+        away_players = organized_players.get('away_players', [])
+        home_players = organized_players.get('home_players', [])
         
         return {
             "away_team": {
@@ -242,7 +249,8 @@ class UltraOptimizedTrainingDataGenerator(TrainingDataGenerator):
                     "DEFF": float(away_stats.get('DEFF')) if away_stats.get('DEFF') is not None else None, 
                     "PACE": float(away_stats.get('PACE')) if away_stats.get('PACE') is not None else None,
                     "REST_DAYS": int(away_rest_days) if away_rest_days is not None else 0
-                }
+                },
+                "players": away_players  # NESTED: Players under their team
             },
             "home_team": {
                 "name": str(home_abbrev) if home_abbrev else "Unknown",
@@ -251,9 +259,9 @@ class UltraOptimizedTrainingDataGenerator(TrainingDataGenerator):
                     "DEFF": float(home_stats.get('DEFF')) if home_stats.get('DEFF') is not None else None,
                     "PACE": float(home_stats.get('PACE')) if home_stats.get('PACE') is not None else None,
                     "REST_DAYS": int(home_rest_days) if home_rest_days is not None else 0
-                }
+                },
+                "players": home_players  # NESTED: Players under their team
             },
-            "players": players,
             "recent_plays": recent_plays
         }
     

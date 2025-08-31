@@ -160,15 +160,19 @@ class OpenAIFormatter:
         score = (f"{current_json['away_team']['name']} {next_row['away_score']} - "
                 f"{current_json['home_team']['name']} {next_row['home_score']}")
         
-        # Create the assistant response
+        # Create the assistant response with restructured scoring and added player
+        next_player = next_row.get('player')
         return {
             "next_play": {
                 "quarter": int(next_quarter),
                 "time_remaining": str(next_time),
-                "description": remove_parentheses_content(next_row['description']),
                 "score": str(score),
-                "scoring_team": str(scoring_team) if scoring_team else None,
-                "points_scored": int(points_scored) if points_scored else 0
+                "player": str(next_player) if pd.notna(next_player) else None,  # NEW: Player from original data
+                "description": remove_parentheses_content(next_row['description']),
+                "scoring": {  # RESTRUCTURED: Nested scoring object
+                    "team": str(scoring_team) if scoring_team else None,
+                    "points": int(points_scored) if points_scored else 0
+                }
             }
         }
     

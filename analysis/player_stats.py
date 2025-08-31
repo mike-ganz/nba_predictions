@@ -152,10 +152,10 @@ class PlayerAnalyzer:
         )
         
         # Keep decimal PCA scores (no integer conversion)
+        # Note: Removed "team" field as players will be nested under team objects
         return {
             "name": str(player_name),
-            "team": str(team_abbrev),
-            "pca_scores": {
+            "profile": {  # Renamed from "pca_scores" to "profile"
                 'offense': round(offense, 4) if offense is not None else None,
                 'defense': round(defense, 4) if defense is not None else None,
                 'shot_selection': round(shot_selection, 4) if shot_selection is not None else None,
@@ -223,7 +223,7 @@ class LineupManager:
                                         away_full_name: str, home_full_name: str,
                                         game_date: Optional[str] = None,
                                         season: Optional[str] = None,
-                                        fast_mode: bool = False) -> List[Dict[str, Any]]:
+                                        fast_mode: bool = False) -> Dict[str, List[Dict[str, Any]]]:
         """
         Process lineups to create player objects with PCA stats for training data.
         
@@ -238,9 +238,10 @@ class LineupManager:
             fast_mode: If True, use dummy PCA values for faster processing
             
         Returns:
-            list: List of player objects with stats
+            dict: Dictionary with 'away_players' and 'home_players' lists
         """
-        players = []
+        away_players = []
+        home_players = []
         
         for team_name, player_list in lineups.items():
             # Determine if this lineup is for away or home team
@@ -253,9 +254,17 @@ class LineupManager:
                     player_obj = self.player_analyzer.create_player_object(
                         player_name, team_abbrev, game_date, season, fast_mode=fast_mode, real_mode=(not fast_mode)
                     )
-                    players.append(player_obj)
+                    
+                    # Organize players by team
+                    if team_abbrev == away_abbrev:
+                        away_players.append(player_obj)
+                    elif team_abbrev == home_abbrev:
+                        home_players.append(player_obj)
         
-        return players
+        return {
+            'away_players': away_players,
+            'home_players': home_players
+        }
     
     def _match_team_to_abbreviation(self, team_name: str, away_abbrev: str, home_abbrev: str,
                                   away_full_name: str, home_full_name: str) -> Optional[str]:
