@@ -43,30 +43,59 @@ def remove_parentheses_content(text):
 class OpenAIFormatter:
     """Handles conversion to OpenAI fine-tuning format."""
     
-    def create_training_data(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
+    def create_training_data(self, df: pd.DataFrame, generation_mode: str = "remaining_plays") -> List[Dict[str, Any]]:
         """
         Convert our JSON training data into OpenAI fine-tuning JSONL format.
-        Each row becomes a user-assistant pair where:
-        - User: Our JSON context (team stats, players, recent plays)  
-        - Assistant: The next play in the sequence
+        Handles two generation modes:
+        - remaining_plays: Standard user-assistant pairs with next play
+        - first_N_plays: Single entry per game with first N plays as targets
         
         Args:
             df: DataFrame with 'json_training_data' column
+            generation_mode: "remaining_plays" or "first_N_plays"
             
         Returns:
             list: List of training examples in OpenAI format
         """
         training_examples = []
         
-        # Group by game to ensure we can find next plays
-        # CRITICAL FIX: Process games in sorted order to match ultra-optimized generator
-        for game_id in sorted(df['game_id'].unique()):
-            game_df = df[df['game_id'] == game_id].sort_values('play_id').reset_index(drop=True)
-            
-            for i in range(len(game_df) - 1):  # -1 because we need a next play
-                example = self._create_training_example(game_df, i)
-                if example:
-                    training_examples.append(example)
+        if generation_mode == "first_N_plays":
+            # Mode 2: Single entry per game with first N plays as targets  
+            for game_id in sorted(df['game_id'].unique()):
+                game_df = df[df['game_id'] == game_id].sort_values('play_id').reset_index(drop=True)
+                
+                # Find the first row with valid JSON context (should be the first row)
+                context_row = None
+                for i in range(len(game_df)):
+                    json_data = game_df.iloc[i]['json_training_data']
+                    if json_data and json_data.strip() and json_data.strip() != "{}":
+                        try:
+                            # Test if it's valid JSON and has team data
+                            parsed = json.loads(json_data)
+                            if 'away_team' in parsed and 'home_team' in parsed:
+                                context_row = game_df.iloc[i]
+                                break
+                        except json.JSONDecodeError:
+                            continue
+                
+                if context_row is not None:
+                    example = self._create_first_n_plays_example(game_df, context_row)
+                    if example:
+                        training_examples.append(example)
+        else:
+            # Mode 1: Standard processing (remaining_plays)
+            for game_id in sorted(df['game_id'].unique()):
+                game_df = df[df['game_id'] == game_id].sort_values('play_id').reset_index(drop=True)
+                
+                for i in range(len(game_df) - 1):  # -1 because we need a next play
+                    # Skip rows with invalid JSON data
+                    current_json_data = game_df.iloc[i]['json_training_data']
+                    if not current_json_data or current_json_data.strip() == "" or current_json_data.strip() == "{}":
+                        continue
+                    
+                    example = self._create_training_example(game_df, i)
+                    if example:
+                        training_examples.append(example)
         
         return training_examples
     
@@ -112,6 +141,127 @@ class OpenAIFormatter:
         except (json.JSONDecodeError, KeyError, ValueError, IndexError) as e:
             print(f"Warning: Skipped training example due to error: {e}")
             return None
+    
+    def _create_first_n_plays_example(self, game_df: pd.DataFrame, context_row: pd.Series) -> Optional[Dict[str, Any]]:
+        """
+        Create a training example for first_N_plays mode.
+        
+        Args:
+            game_df: DataFrame for a single game, sorted by play_id
+            context_row: Row containing the JSON context (with empty recent_plays)
+            
+        Returns:
+            dict or None: OpenAI training example or None if creation failed
+        """
+        try:
+            # Use the context row's JSON context (which should have empty recent_plays)
+            current_json = json.loads(context_row['json_training_data'])
+            
+            # Get first 10 non-null plays from the game
+            first_n_plays = []
+            n_total = 10  # Number of plays to include
+            
+            for i in range(len(game_df)):
+                if len(first_n_plays) >= n_total:
+                    break
+                    
+                row = game_df.iloc[i]
+                if pd.notna(row.get('description')):
+                    # Create play object similar to recent_plays format
+                    play_obj = self._create_play_object(row, current_json, game_df)
+                    first_n_plays.append(play_obj)
+            
+            # Create assistant response with next_plays (plural)
+            assistant_response = {
+                "next_plays": first_n_plays
+            }
+            
+            # Create OpenAI training example
+            training_example = {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": context_row['json_training_data']  # Context without recent_plays
+                    },
+                    {
+                        "role": "assistant",
+                        "content": json.dumps(assistant_response, separators=(',', ':'))
+                    }
+                ]
+            }
+            
+            return training_example
+            
+        except (json.JSONDecodeError, KeyError, ValueError, IndexError) as e:
+            print(f"Warning: Skipped first_N_plays training example due to error: {e}")
+            return None
+    
+    def _create_play_object(self, row: pd.Series, current_json: Dict[str, Any], game_df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Create a play object from a DataFrame row.
+        
+        Args:
+            row: DataFrame row with play data
+            current_json: Current game context for team names
+            game_df: Full game DataFrame for scoring calculations
+            
+        Returns:
+            dict: Play object in the expected format
+        """
+        from game.time_utils import convert_to_quarter_time
+        from game.scoring_utils import determine_scoring_info
+        
+        # Get quarter and time
+        quarter, time_in_quarter = convert_to_quarter_time(
+            row['period'], row['remaining_time']
+        )
+        
+        # Calculate scoring by comparing with previous play in the game
+        scoring_team = None
+        points_scored = 0
+        
+        # Find the current row index in the game DataFrame using positional index
+        current_row_index = None
+        for pos_idx in range(len(game_df)):
+            game_row = game_df.iloc[pos_idx]
+            if (game_row['play_id'] == row['play_id'] and 
+                game_row['game_id'] == row['game_id']):
+                current_row_index = pos_idx
+                break
+        
+        # If we found the current row and it's not the first row, calculate scoring
+        if current_row_index is not None and current_row_index > 0:
+            prev_row = game_df.iloc[current_row_index - 1]
+            prev_away_score = prev_row.get('away_score', 0) or 0
+            prev_home_score = prev_row.get('home_score', 0) or 0
+            curr_away_score = row.get('away_score', 0) or 0
+            curr_home_score = row.get('home_score', 0) or 0
+            
+            scoring_team, points_scored = determine_scoring_info(
+                prev_away_score, prev_home_score,
+                curr_away_score, curr_home_score,
+                current_json['away_team']['name'], current_json['home_team']['name']
+            )
+        
+        # Format score
+        away_team_name = current_json['away_team']['name']
+        home_team_name = current_json['home_team']['name']
+        score = f"{away_team_name} {int(row.get('away_score', 0) or 0)} - {home_team_name} {int(row.get('home_score', 0) or 0)}"
+        
+        # Get player
+        player = row.get('player')
+        
+        return {
+            "quarter": int(quarter),
+            "time_remaining": str(time_in_quarter),
+            "score": score,
+            "player": str(player) if pd.notna(player) else None,
+            "description": remove_parentheses_content(row['description']),
+            "scoring": {
+                "team": str(scoring_team) if scoring_team else None,
+                "points": int(points_scored)
+            }
+        }
     
     def _create_next_play_response(self, game_df: pd.DataFrame, current_index: int, 
                                  next_row: pd.Series, current_json: Dict[str, Any]) -> Dict[str, Any]:

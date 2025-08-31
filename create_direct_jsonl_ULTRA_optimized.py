@@ -80,7 +80,8 @@ def validate_jsonl_file(file_path: str, max_lines: int = 100) -> bool:
         return False
 
 
-def create_direct_jsonl_ultra_optimized(sample_size: Optional[int] = None) -> str:
+def create_direct_jsonl_ultra_optimized(sample_size: Optional[int] = None, 
+                                        generation_mode: str = "remaining_plays") -> str:
     """
     Generate OpenAI JSONL training data with ultra-high performance optimizations.
     
@@ -92,12 +93,28 @@ def create_direct_jsonl_ultra_optimized(sample_size: Optional[int] = None) -> st
     
     Args:
         sample_size: If provided, limit to this many rows for testing
+        generation_mode: Training data generation mode:
+            - "remaining_plays": Skip first 10 plays of each game as targets
+            - "first_N_plays": One entry per game with first 10 plays as targets
         
     Returns:
         str: Path to generated JSONL file
     """
     print("🚀 Starting ULTRA-OPTIMIZED direct JSONL generation...")
     print("⚡ Expected performance: ~10x faster than previous versions")
+    
+    # Validate generation mode
+    valid_modes = ["remaining_plays", "first_N_plays"]
+    if generation_mode not in valid_modes:
+        raise ValueError(f"Invalid generation_mode '{generation_mode}'. Must be one of: {valid_modes}")
+    
+    print(f"🎯 Generation mode: {generation_mode}")
+    if generation_mode == "remaining_plays":
+        print("   • Skipping first 10 plays of each game as targets")
+        print("   • Normal training example quantity (~594K for full season)")
+    elif generation_mode == "first_N_plays":
+        print("   • One entry per game with first 10 plays as targets")
+        print("   • Reduced training examples (~1.2K for full season)")
     
     # Create output directory
     output_dir = Path("data/training")
@@ -125,7 +142,7 @@ def create_direct_jsonl_ultra_optimized(sample_size: Optional[int] = None) -> st
     
     # Setup incremental saving for full runs
     if not sample_size or sample_size > 50000:
-        incremental_path = output_dir / "ULTRA_OPTIMIZED_incremental.jsonl"
+        incremental_path = output_dir / f"ULTRA_OPTIMIZED_incremental_{generation_mode}.jsonl"
         ultra_optimized_training_data_generator.enable_incremental_save(
             str(incremental_path),
             save_every_n_batches=100  # Save every 100 games
@@ -139,7 +156,8 @@ def create_direct_jsonl_ultra_optimized(sample_size: Optional[int] = None) -> st
     full_season_df = ultra_optimized_training_data_generator.create_llm_training_data(
         df, 
         n_total=10,  # Recent plays to include
-        force_real_pca=False
+        force_real_pca=False,
+        generation_mode=generation_mode
     )
     
     print(f"\n✅ Ultra-optimized training data generated: {len(full_season_df):,} examples")
@@ -150,7 +168,7 @@ def create_direct_jsonl_ultra_optimized(sample_size: Optional[int] = None) -> st
     
     openai_formatter = OpenAIFormatter()
     try:
-        training_examples = openai_formatter.create_training_data(full_season_df)
+        training_examples = openai_formatter.create_training_data(full_season_df, generation_mode=generation_mode)
         print(f"📋 Created {len(training_examples):,} OpenAI training examples")
     except Exception as e:
         print(f"❌ Error during OpenAI format conversion: {e}")
@@ -158,9 +176,9 @@ def create_direct_jsonl_ultra_optimized(sample_size: Optional[int] = None) -> st
     
     # Save final JSONL file
     if sample_size:
-        output_file = output_dir / f"ULTRA_OPTIMIZED_sample_{sample_size}.jsonl"
+        output_file = output_dir / f"ULTRA_OPTIMIZED_sample_{sample_size}_{generation_mode}.jsonl"
     else:
-        output_file = output_dir / "ULTRA_OPTIMIZED_full_dataset.jsonl"
+        output_file = output_dir / f"ULTRA_OPTIMIZED_full_dataset_{generation_mode}.jsonl"
     
     # Warn about file overwriting
     if output_file.exists():
@@ -225,9 +243,12 @@ def create_direct_jsonl_ultra_optimized(sample_size: Optional[int] = None) -> st
 def main():
     """Main function to run ultra-optimized direct JSONL conversion."""
     
+    # Default generation mode (can be changed here)
+    generation_mode = "remaining_plays"  # Can be either "remaining_plays" or "first_N_plays"
+    
     # Check for existing files and warn user
-    incremental_path = "data/training/ULTRA_OPTIMIZED_incremental.jsonl"
-    final_path = "data/training/ULTRA_OPTIMIZED_full_dataset.jsonl"
+    incremental_path = f"data/training/ULTRA_OPTIMIZED_incremental_{generation_mode}.jsonl"
+    final_path = f"data/training/ULTRA_OPTIMIZED_full_dataset_{generation_mode}.jsonl"
     
     if os.path.exists(incremental_path):
         print("🔍 Found existing incremental file. Validating JSON format...")
@@ -253,7 +274,7 @@ def main():
     print()
     
     start_time = time.time()
-    result_path = create_direct_jsonl_ultra_optimized()  # No sample_size = full dataset
+    result_path = create_direct_jsonl_ultra_optimized(generation_mode=generation_mode)  # No sample_size = full dataset
     end_time = time.time()
     
     total_minutes = (end_time - start_time) / 60
@@ -274,14 +295,16 @@ if __name__ == "__main__":
             file_path = sys.argv[2]
             validate_jsonl_file(file_path, max_lines=200)
         else:
-            # Validate common files
-            files_to_check = [
-                "data/training/ULTRA_OPTIMIZED_full_dataset.jsonl",
-                "data/training/ULTRA_OPTIMIZED_incremental.jsonl"
-            ]
-            for file_path in files_to_check:
-                if os.path.exists(file_path):
-                    validate_jsonl_file(file_path, max_lines=100)
-                    print()
+            # Validate common files for both generation modes
+            generation_modes = ["remaining_plays", "first_N_plays"]
+            for mode in generation_modes:
+                files_to_check = [
+                    f"data/training/ULTRA_OPTIMIZED_full_dataset_{mode}.jsonl",
+                    f"data/training/ULTRA_OPTIMIZED_incremental_{mode}.jsonl"
+                ]
+                for file_path in files_to_check:
+                    if os.path.exists(file_path):
+                        validate_jsonl_file(file_path, max_lines=100)
+                        print()
     else:
         main()

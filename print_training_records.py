@@ -55,7 +55,7 @@ def read_jsonl(file_path, n, start=0):
 
 if __name__ == "__main__":
     # Example usage
-    file_path = "data/training/ULTRA_OPTIMIZED_incremental.jsonl"  # Replace with your file
+    file_path = "data/training/ULTRA_OPTIMIZED_incremental_remaining_plays.jsonl"  # Replace with your file
     n = 1  # Number of records to print
-    start = 128750  # Change this to the starting index you want (0-based)
+    start = 12751  # Change this to the starting index you want (0-based)
     read_jsonl(file_path, n, start)

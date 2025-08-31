@@ -39,7 +39,8 @@ class UltraOptimizedTrainingDataGenerator(TrainingDataGenerator):
         self._save_every_n_batches = 5
         
     def create_llm_training_data(self, df: pd.DataFrame, n_total: int = DEFAULT_N_TOTAL_PLAYS,
-                               filter_nan: bool = True, force_real_pca: bool = False) -> pd.DataFrame:
+                               filter_nan: bool = True, force_real_pca: bool = False,
+                               generation_mode: str = "remaining_plays") -> pd.DataFrame:
         """
         🚀 ULTRA-OPTIMIZED: Process games in groups for maximum performance.
         """
@@ -90,10 +91,12 @@ class UltraOptimizedTrainingDataGenerator(TrainingDataGenerator):
             
             # Ultra-fast recent plays collection for entire game
             game_json_data = self._process_game_ultra_fast(
-                game_dict, game_context, team_info, n_total, force_real_pca
+                game_dict, game_context, team_info, n_total, force_real_pca, generation_mode
             )
             
             all_json_data.extend(game_json_data)
+            
+            # Standard pairing for both modes (now both have full game data)
             game_batch_data.extend([(row, json_str) for row, json_str in zip(game_df.to_dict('records'), game_json_data)])
             games_processed += 1
             
@@ -124,8 +127,9 @@ class UltraOptimizedTrainingDataGenerator(TrainingDataGenerator):
         # Add JSON data to result DataFrame  
         result_df['json_training_data'] = all_json_data
         
-        # VALIDATION: Verify data alignment (helps catch future bugs)
-        self._validate_data_alignment(result_df)
+        # VALIDATION: Verify data alignment (helps catch future bugs) - skip for first_N_plays mode
+        if generation_mode != "first_N_plays":
+            self._validate_data_alignment(result_df)
         
         print(f"✅ Ultra-optimized processing complete: {len(result_df):,} records")
         return result_df
@@ -139,7 +143,8 @@ class UltraOptimizedTrainingDataGenerator(TrainingDataGenerator):
         }
     
     def _process_game_ultra_fast(self, game_dict: Dict[str, Any], game_context: Dict[str, Any], 
-                               team_info: Dict[str, str], n_total: int, force_real_pca: bool) -> List[str]:
+                               team_info: Dict[str, str], n_total: int, force_real_pca: bool,
+                               generation_mode: str) -> List[str]:
         """Process entire game at once using fast dict access."""
         plays = game_dict['plays']
         game_length = game_dict['length']
@@ -156,19 +161,47 @@ class UltraOptimizedTrainingDataGenerator(TrainingDataGenerator):
         # Create player objects once for the entire game (now returns organized dict)
         organized_players = self._create_player_objects(lineups, away_abbrev, home_abbrev, game_date, force_real_pca)
         
-        # Process each play in the game
-        for i in range(game_length):
-            # Collect recent plays using fast dict access (no iloc!)
-            recent_plays = self._collect_recent_plays_ultra_fast(plays, i, n_total, away_abbrev, home_abbrev)
+        if generation_mode == "first_N_plays":
+            # Mode 2: Create context for all plays, but mark only first play for processing
+            # We need all plays in the DataFrame for the OpenAI formatter to access
+            for i in range(game_length):
+                if i == 0:
+                    # Only create context for the first play WITHOUT recent_plays
+                    json_obj = self._create_json_ultra_fast_no_recent_plays(
+                        away_abbrev, home_abbrev, away_stats, home_stats, organized_players
+                    )
+                    json_string = json.dumps(json_obj, separators=(',', ':'))
+                else:
+                    # Use a placeholder that won't cause JSON parsing errors
+                    json_string = "{}"
+                
+                json_data.append(json_string)
             
-            # Create JSON object with organized players
-            json_obj = self._create_json_ultra_fast(
-                away_abbrev, home_abbrev, away_stats, home_stats, organized_players, recent_plays
-            )
+        else:
+            # Mode 1: Standard processing but skip first N plays as targets
+            # Find the first N non-null plays to determine skip threshold
+            first_n_plays_count = 0
+            skip_threshold = 0
+            for i in range(game_length):
+                if pd.notna(plays[i].get('description')):
+                    first_n_plays_count += 1
+                    if first_n_plays_count >= n_total:
+                        skip_threshold = i + 1  # Skip up to and including this index
+                        break
             
-            # Serialize to JSON string
-            json_string = json.dumps(json_obj, separators=(',', ':'))
-            json_data.append(json_string)
+            # Process each play starting after the skip threshold
+            for i in range(skip_threshold, game_length):
+                # Collect recent plays using fast dict access (no iloc!)
+                recent_plays = self._collect_recent_plays_ultra_fast(plays, i, n_total, away_abbrev, home_abbrev)
+                
+                # Create JSON object with organized players
+                json_obj = self._create_json_ultra_fast(
+                    away_abbrev, home_abbrev, away_stats, home_stats, organized_players, recent_plays
+                )
+                
+                # Serialize to JSON string
+                json_string = json.dumps(json_obj, separators=(',', ':'))
+                json_data.append(json_string)
         
         return json_data
     
@@ -227,6 +260,43 @@ class UltraOptimizedTrainingDataGenerator(TrainingDataGenerator):
                 collected_count += 1
         
         return recent_plays
+    
+    def _create_json_ultra_fast_no_recent_plays(self, away_abbrev: str, home_abbrev: str, 
+                                              away_stats: Dict, home_stats: Dict,
+                                              organized_players: Dict[str, List[Dict]]) -> Dict[str, Any]:
+        """Create JSON object WITHOUT recent_plays for first_N_plays mode."""
+        
+        # Handle None REST_DAYS
+        away_rest_days = away_stats.get('REST_DAYS') if away_stats.get('REST_DAYS') is not None else 0
+        home_rest_days = home_stats.get('REST_DAYS') if home_stats.get('REST_DAYS') is not None else 0
+        
+        # Extract organized players (already separated by team)
+        away_players = organized_players.get('away_players', [])
+        home_players = organized_players.get('home_players', [])
+        
+        return {
+            "away_team": {
+                "name": str(away_abbrev) if away_abbrev else "Unknown",
+                "stats": {
+                    "OEFF": float(away_stats.get('OEFF')) if away_stats.get('OEFF') is not None else None,
+                    "DEFF": float(away_stats.get('DEFF')) if away_stats.get('DEFF') is not None else None, 
+                    "PACE": float(away_stats.get('PACE')) if away_stats.get('PACE') is not None else None,
+                    "REST_DAYS": int(away_rest_days) if away_rest_days is not None else 0
+                },
+                "players": away_players  # NESTED: Players under their team
+            },
+            "home_team": {
+                "name": str(home_abbrev) if home_abbrev else "Unknown",
+                "stats": {
+                    "OEFF": float(home_stats.get('OEFF')) if home_stats.get('OEFF') is not None else None,
+                    "DEFF": float(home_stats.get('DEFF')) if home_stats.get('DEFF') is not None else None,
+                    "PACE": float(home_stats.get('PACE')) if home_stats.get('PACE') is not None else None,
+                    "REST_DAYS": int(home_rest_days) if home_rest_days is not None else 0
+                },
+                "players": home_players  # NESTED: Players under their team
+            }
+            # NOTE: No "recent_plays" field at all for first_N_plays mode
+        }
     
     def _create_json_ultra_fast(self, away_abbrev: str, home_abbrev: str, 
                               away_stats: Dict, home_stats: Dict,
