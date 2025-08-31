@@ -125,8 +125,9 @@ def build_all_player_stats_vectorized(df, target_dates):
         # 🚀 VECTORIZED: Group by player and sum all stats at once
         player_stats = filtered_df.groupby('PLAYER \nFULL NAME').agg({
             **{col: 'sum' for col in numeric_cols},
+            'USAGE \nRATE (%)': 'mean',  # Average usage rate (it's already a percentage)
             'DATE': 'count'  # Count games played
-        }).rename(columns={'DATE': 'GP'})
+        }).rename(columns={'DATE': 'GP', 'USAGE \nRATE (%)': 'USAGE_RATE'})
         
         # 🚀 VECTORIZED: Calculate advanced stats for all players at once
         for player_name in player_stats.index:
@@ -197,6 +198,12 @@ def calculate_player_stats(player_name, max_date=None, current_season=None):
     stats_sum = player_df[numeric_cols].sum().to_dict()
     stats_sum['PLAYER_NAME'] = player_name
     stats_sum['GP'] = len(player_df)
+    # Calculate average for percentage-based stats (usage rate)
+    usage_col = 'USAGE \nRATE (%)'
+    if usage_col in player_df.columns:
+        stats_sum['USAGE_RATE'] = player_df[usage_col].mean()
+    else:
+        stats_sum['USAGE_RATE'] = None
     
     advanced_stats = calculate_advanced_stats(stats_sum)
     

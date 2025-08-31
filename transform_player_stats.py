@@ -91,11 +91,14 @@ def calculate_player_stats(player_name, max_date=None, current_season=None):
     if max_date is not None:
         player_df = player_df[pd.to_datetime(player_df['DATE']) < pd.to_datetime(max_date)]
     
-    # Select only numeric columns
+    # Select only numeric columns for summing
     numeric_cols = ['MIN', 'FG', 'FGA', '3P', '3PA', 'FT', 'FTA', 'OR', 'DR', 'TOT', 'A', 'PF', 'ST', 'TO', 'BL', 'PTS']
     
     # Sum up all numeric columns
     stats_sum = player_df[numeric_cols].sum().to_dict()
+    
+    # Calculate average for percentage-based stats (usage rate)
+    stats_sum['USAGE_RATE'] = player_df['USAGE \nRATE (%)'].mean() if len(player_df) > 0 else None
     # Add player name to the beginning of the dictionary
     stats_sum = {
                 'PLAYER_NAME': player_name
@@ -121,6 +124,7 @@ def calculate_player_stats(player_name, max_date=None, current_season=None):
               , 'TPG': round(stats_sum['TO'] / len(player_df), 3) if len(player_df) != 0 else None
               , 'FPG': round(stats_sum['PF'] / len(player_df), 3) if len(player_df) != 0 else None
               , 'FPM': round(stats_sum['PF'] / stats_sum['MIN'], 3) if stats_sum['MIN'] != 0 else None
+              , 'USAGE_RATE': round(stats_sum['USAGE_RATE'], 3) if stats_sum['USAGE_RATE'] is not None else None
               , **{k: round(v, 3) if isinstance(v, (int, float)) else v for k, v in stats_sum.items()}}
     
     # Save the calculated stats to cache

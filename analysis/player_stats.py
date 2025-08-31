@@ -151,15 +151,28 @@ class PlayerAnalyzer:
             player_name, game_date, full_season, force_fast_mode=fast_mode, force_real_mode=real_mode
         )
         
+        # Get player stats for MPG and usage rate (from player stats cache, not PCA)
+        try:
+            from transform_player_stats_optimized import calculate_player_stats
+            player_stats = calculate_player_stats(player_name, game_date, full_season)
+            mpg = player_stats.get('MPG') if player_stats else None
+            usage = player_stats.get('USAGE_RATE') if player_stats else None
+        except Exception:
+            # Fallback if stats not available
+            mpg = None
+            usage = None
+        
         # Keep decimal PCA scores (no integer conversion)
         # Note: Removed "team" field as players will be nested under team objects
         return {
             "name": str(player_name),
             "profile": {  # Renamed from "pca_scores" to "profile"
-                'offense': round(offense, 4) if offense is not None else None,
-                'defense': round(defense, 4) if defense is not None else None,
-                'shot_selection': round(shot_selection, 4) if shot_selection is not None else None,
-                'efficiency': round(efficiency, 4) if efficiency is not None else None
+                'offense': round(offense, 2) if offense is not None else None,
+                'defense': round(defense, 2) if defense is not None else None,
+                'shot_selection': round(shot_selection, 2) if shot_selection is not None else None,
+                'efficiency': round(efficiency, 2) if efficiency is not None else None,
+                'MPG': round(mpg) if mpg is not None else None,  # NEW: Minutes per game (whole number)
+                'usage': round(usage) if usage is not None else None  # NEW: Usage rate (whole number)
             }
         }
     

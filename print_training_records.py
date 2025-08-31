@@ -57,5 +57,5 @@ if __name__ == "__main__":
     # Example usage
     file_path = "data/training/ULTRA_OPTIMIZED_incremental.jsonl"  # Replace with your file
     n = 1  # Number of records to print
-    start = 22750  # Change this to the starting index you want (0-based)
+    start = 128750  # Change this to the starting index you want (0-based)
     read_jsonl(file_path, n, start)
