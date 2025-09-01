@@ -81,7 +81,8 @@ def validate_jsonl_file(file_path: str, max_lines: int = 100) -> bool:
 
 
 def create_direct_jsonl_ultra_optimized(sample_size: Optional[int] = None, 
-                                        generation_mode: str = "remaining_plays") -> str:
+                                        generation_mode: str = "remaining_plays",
+                                        season_year: str = "2023-2024") -> str:
     """
     Generate OpenAI JSONL training data with ultra-high performance optimizations.
     
@@ -96,6 +97,7 @@ def create_direct_jsonl_ultra_optimized(sample_size: Optional[int] = None,
         generation_mode: Training data generation mode:
             - "remaining_plays": Skip first 10 plays of each game as targets
             - "first_N_plays": One entry per game with first 10 plays as targets
+        season_year: NBA season to process (e.g., "2022-2023", "2023-2024")
         
     Returns:
         str: Path to generated JSONL file
@@ -108,6 +110,10 @@ def create_direct_jsonl_ultra_optimized(sample_size: Optional[int] = None,
     if generation_mode not in valid_modes:
         raise ValueError(f"Invalid generation_mode '{generation_mode}'. Must be one of: {valid_modes}")
     
+    # Set global config season to ensure consistency across all data loading
+    from config.settings import config
+    config.season_year = season_year
+    print(f"📅 Season year: {season_year}")
     print(f"🎯 Generation mode: {generation_mode}")
     if generation_mode == "remaining_plays":
         print("   • Skipping first 10 plays of each game as targets")
@@ -125,9 +131,9 @@ def create_direct_jsonl_ultra_optimized(sample_size: Optional[int] = None,
     ultra_optimized_training_data_generator = UltraOptimizedTrainingDataGenerator()
     
     # Load data
-    print("📊 Loading 2023-24 NBA play-by-play data...")
+    print(f"📊 Loading {season_year} NBA play-by-play data...")
     try:
-        df = data_loader.load_play_by_play_data("2023-2024")
+        df = data_loader.load_play_by_play_data(season_year)
     except Exception as e:
         print(f"❌ Error loading data: {e}")
         print("💡 Make sure the data file exists and is accessible")
@@ -243,9 +249,10 @@ def create_direct_jsonl_ultra_optimized(sample_size: Optional[int] = None,
 def main():
     """Main function to run ultra-optimized direct JSONL conversion."""
     
-    # Default generation mode (can be changed here)
-    generation_mode = "remaining_plays"  # Can be either "remaining_plays" or "first_N_plays"
-    
+    # SINGLE PLACE TO CHANGE SETTINGS - modify these as needed
+    season_year = "2022-2023"  # Can be "2022-2023" or "2023-2024"
+    generation_mode = "first_N_plays"  # Can be either "remaining_plays" or "first_N_plays"
+     
     # Check for existing files and warn user
     incremental_path = f"data/training/ULTRA_OPTIMIZED_incremental_{generation_mode}.jsonl"
     final_path = f"data/training/ULTRA_OPTIMIZED_full_dataset_{generation_mode}.jsonl"
@@ -274,7 +281,7 @@ def main():
     print()
     
     start_time = time.time()
-    result_path = create_direct_jsonl_ultra_optimized(generation_mode=generation_mode)  # No sample_size = full dataset
+    result_path = create_direct_jsonl_ultra_optimized(generation_mode=generation_mode, season_year=season_year)  # No sample_size = full dataset
     end_time = time.time()
     
     total_minutes = (end_time - start_time) / 60

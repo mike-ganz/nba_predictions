@@ -48,7 +48,11 @@ def get_pca_metric_fields(metric_type):
     
     return metric_fields[metric_type]
 
-def load_all_player_stats_for_date(max_date, current_season="2023-2024", min_games=5):
+def load_all_player_stats_for_date(max_date, current_season=None, min_games=5):
+    """Load stats for ALL players for a specific date efficiently."""
+    if current_season is None:
+        from config.settings import config
+        current_season = config.season_year
     """
     🚀 OPTIMIZED: Load stats for ALL players for a specific date efficiently.
     
@@ -73,12 +77,30 @@ def load_all_player_stats_for_date(max_date, current_season="2023-2024", min_gam
                 all_stats.append(stats)
                 cache_hits += 1
             else:
-                # Fall back to previous season if not enough games
-                prev_season = str(int(current_season.split('-')[0]) - 1) + '-' + str(int(current_season.split('-')[1]) - 1)
-                fallback_stats = optimized_stats.calculate_player_stats(player, None, prev_season)
-                if fallback_stats:
-                    all_stats.append(fallback_stats)
-                    cache_misses += 1
+                # Fall back to previous season if not enough games (prevent infinite recursion)
+                try:
+                    year_parts = current_season.split('-')
+                    current_start_year = int(year_parts[0])
+                    current_end_year = int(year_parts[1])
+                    prev_season = f"{current_start_year-1}-{current_end_year-1}"
+                    
+                    # Only attempt fallback for known valid seasons
+                    if prev_season in ["2021-2022", "2020-2021", "2019-2020"]:
+                        print(f"🔄 {player}: Only {stats.get('GP', 0)} games in {current_season}, falling back to {prev_season}")
+                        
+                        # Use None for max_date to prevent recursion
+                        fallback_stats = optimized_stats.calculate_player_stats(player, None, prev_season)
+                        if fallback_stats and fallback_stats.get('GP', 0) >= min_games:
+                            fallback_stats['FALLBACK_FROM'] = current_season
+                            all_stats.append(fallback_stats)
+                            cache_misses += 1
+                            print(f"✅ {player}: Using {prev_season} data ({fallback_stats.get('GP', 0)} games)")
+                        else:
+                            print(f"⚠️ {player}: No sufficient fallback data in {prev_season} either")
+                    else:
+                        print(f"⚠️ {player}: Skipping fallback to invalid season: {prev_season}")
+                except Exception as e:
+                    print(f"⚠️ {player}: Fallback calculation failed: {e}")
     
     elapsed = time.time() - start_time
     print(f"✅ Loaded {len(all_stats)} player stats in {elapsed:.2f}s")
@@ -87,7 +109,11 @@ def load_all_player_stats_for_date(max_date, current_season="2023-2024", min_gam
     return all_stats
 
 @lru_cache(maxsize=128)
-def calculate_all_pca_scores_for_date(max_date, current_season="2023-2024"):
+def calculate_all_pca_scores_for_date(max_date, current_season=None):
+    """Calculate PCA scores for all players for a specific date."""
+    if current_season is None:
+        from config.settings import config
+        current_season = config.season_year
     """
     🚀 OPTIMIZED: Calculate PCA scores for ALL players for ALL metrics at once.
     
@@ -139,12 +165,19 @@ def calculate_all_pca_scores_for_date(max_date, current_season="2023-2024"):
         pca = PCA(n_components=1)
         pca_scores = pca.fit_transform(X_scaled)
         
-        # Create player mapping
-        for i, stats in enumerate(valid_stats):
-            player_name = stats['PLAYER_NAME']
-            if player_name not in all_pca_results:
-                all_pca_results[player_name] = {}
-            all_pca_results[player_name][metric_type] = float(pca_scores[i][0])
+        # Create player mapping with error handling
+        try:
+            for i, stats in enumerate(valid_stats):
+                player_name = stats['PLAYER_NAME']
+                if player_name not in all_pca_results:
+                    all_pca_results[player_name] = {}
+                if i < len(pca_scores) and len(pca_scores[i]) > 0:
+                    all_pca_results[player_name][metric_type] = float(pca_scores[i][0])
+                else:
+                    print(f"⚠️ PCA index issue for {player_name} in {metric_type}")
+                    all_pca_results[player_name][metric_type] = 0.0
+        except Exception as e:
+            print(f"⚠️ Error in PCA player mapping for {metric_type}: {e}")
     
     elapsed = time.time() - start_time
     print(f"✅ Calculated PCA for {len(all_pca_results)} players in {elapsed:.2f}s")
@@ -152,7 +185,11 @@ def calculate_all_pca_scores_for_date(max_date, current_season="2023-2024"):
     
     return all_pca_results
 
-def get_player_pca_score(player_name, max_date, current_season="2023-2024", log_queue=None):
+def get_player_pca_score(player_name, max_date, current_season=None, log_queue=None):
+    """Get PCA score for a player for a specific date."""
+    if current_season is None:
+        from config.settings import config
+        current_season = config.season_year
     """
     🚀 OPTIMIZED: Get PCA score for a single player using batch-calculated results.
     
@@ -196,7 +233,11 @@ def get_player_pca_score(player_name, max_date, current_season="2023-2024", log_
         cache_data['efficiency']
     )
 
-def batch_cache_pca_scores(max_date, current_season="2023-2024"):
+def batch_cache_pca_scores(max_date, current_season=None):
+    """Cache PCA scores for all players for a specific date."""
+    if current_season is None:
+        from config.settings import config
+        current_season = config.season_year
     """
     🚀 NEW: Build PCA cache for ALL players for a specific date at once.
     
@@ -227,7 +268,11 @@ def batch_cache_pca_scores(max_date, current_season="2023-2024"):
     
     return cached_count
 
-def batch_cache_pca_for_date_range(start_date, end_date, date_interval_days=7, current_season="2023-2024"):
+def batch_cache_pca_for_date_range(start_date, end_date, date_interval_days=7, current_season=None):
+    """Cache PCA scores for a date range."""
+    if current_season is None:
+        from config.settings import config
+        current_season = config.season_year
     """
     🚀 NEW: Build PCA cache for multiple dates efficiently.
     """

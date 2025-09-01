@@ -145,8 +145,15 @@ class PlayerAnalyzer:
             dict: Complete player object with stats
         """
         # Get PCA scores - USE FULL SEASON FORMAT for cache compatibility
-        # Convert "2024" back to "2023-2024" to match your cache files
-        full_season = f"2023-{season}" if season == "2024" else season
+        # Convert ending year back to full season format (e.g., "2024" -> "2023-2024", "2023" -> "2022-2023")
+        if season and len(season) == 4 and season.isdigit():
+            # Convert single year to full season format
+            end_year = int(season)
+            start_year = end_year - 1
+            full_season = f"{start_year}-{end_year}"
+        else:
+            # Already in full format or invalid, use as-is
+            full_season = season
         offense, defense, shot_selection, efficiency = self.get_player_pca_scores(
             player_name, game_date, full_season, force_fast_mode=fast_mode, force_real_mode=real_mode
         )
@@ -172,7 +179,7 @@ class PlayerAnalyzer:
                 'shot_selection': round(shot_selection, 2) if shot_selection is not None else None,
                 'efficiency': round(efficiency, 2) if efficiency is not None else None,
                 'MPG': round(mpg) if mpg is not None else None,  # NEW: Minutes per game (whole number)
-                'usage': round(usage) if usage is not None else None  # NEW: Usage rate (whole number)
+                'usage': round(usage) if usage is not None and not pd.isna(usage) else None  # NEW: Usage rate (whole number)
             }
         }
     

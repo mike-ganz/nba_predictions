@@ -7,11 +7,16 @@ import hashlib
 from concurrent.futures import ProcessPoolExecutor
 import time
 
-# Configuration
-SEASON_YEAR = "2023-2024"
+# Configuration (will be set dynamically by config.settings)
+SEASON_YEAR = "2023-2024"  # Default, overridden by global config
 CACHE_DIR = 'data/cache/player_stats'
 
-def load_player_data(season_year):
+def load_player_data(season_year=None):
+    """Load player boxscore data for the specified season year."""
+    # Use global config if no season_year provided
+    if season_year is None:
+        from config.settings import config
+        season_year = config.season_year
     """Load player boxscore data for the specified season year."""
     file_mapping = {
         "2021-2022": "data/player_boxscores/historical/NBA-2021-2022-Player-BoxScore-Dataset.xlsx",
@@ -170,13 +175,18 @@ def batch_save_to_cache(results, current_season):
     
     print(f"✅ Saved {saved_count} cache files!")
 
-# Load data once for the season
-df = load_player_data(SEASON_YEAR)
+# Data will be loaded dynamically when needed based on global config
+# Use a dictionary to cache multiple seasons instead of single global df
+_season_data_cache = {}
 
 # Backwards compatibility functions
 def calculate_player_stats(player_name, max_date=None, current_season=None):
     """Backwards compatible function - tries cache first, falls back to old method."""
-    season_to_use = current_season if current_season else SEASON_YEAR
+    if current_season:
+        season_to_use = current_season
+    else:
+        from config.settings import config
+        season_to_use = config.season_year
     
     # Try cache first
     cached_data = load_from_cache(player_name, max_date, season_to_use)
@@ -186,18 +196,79 @@ def calculate_player_stats(player_name, max_date=None, current_season=None):
     # Fall back to single calculation (slower)
     print(f"⚠️ Cache miss for {player_name} on {max_date} - calculating individually")
     
+    # Load data using season cache to avoid repeated loading
+    global _season_data_cache
+    if season_to_use not in _season_data_cache:
+        print(f"📊 Loading {season_to_use} data (first time for this session)...")
+        df = load_player_data(season_to_use)
+        _season_data_cache[season_to_use] = df
+        print(f"💾 Cached {season_to_use} data for future use")
+    else:
+        df = _season_data_cache[season_to_use]
+        # print(f"✅ Using cached {season_to_use} data")
+    
     player_df = df[df['PLAYER \nFULL NAME'] == player_name]
     
     if len(player_df) == 0:
         return None
         
-    if max_date is not None:
+    # Handle special full season cache key
+    if max_date is not None and not str(max_date).endswith('_FULL_SEASON'):
         player_df = player_df[player_df['DATE'] <= pd.to_datetime(max_date)]
+    # If max_date is None or ends with '_FULL_SEASON', use all games (no date filtering)
+    
+    # Check if we have sufficient games after date filtering
+    games_played = len(player_df)
+    min_games_threshold = 5  # Minimum games needed
+    
+    # If insufficient games, try fallback to previous season (avoid infinite recursion)
+    # Don't fallback if this is already a fallback call (indicated by _FULL_SEASON suffix)
+    if (games_played < min_games_threshold and max_date is not None and 
+        not str(max_date).endswith('_FULL_SEASON')):  # Only fallback if we have a date filter and not already a fallback
+        # Calculate previous season correctly
+        try:
+            year_parts = season_to_use.split('-')
+            current_start_year = int(year_parts[0])
+            current_end_year = int(year_parts[1])
+            prev_season = f"{current_start_year-1}-{current_end_year-1}"
+            
+            # Avoid infinite recursion - only go back to certain known seasons
+            if prev_season in ["2021-2022", "2020-2021", "2019-2020"]:
+                print(f"🔄 {player_name}: Only {games_played} games in {season_to_use}, falling back to {prev_season}")
+                
+                # Try to get previous season data WITHOUT recursion (use full season stats)
+                # Use special cache key for full season to avoid confusion with partial season
+                fallback_stats = calculate_player_stats(player_name, f"{prev_season}_FULL_SEASON", prev_season)
+                if fallback_stats and fallback_stats.get('GP', 0) >= min_games_threshold:
+                    # Add metadata to indicate fallback was used
+                    fallback_stats['FALLBACK_FROM'] = season_to_use
+                    fallback_stats['ORIGINAL_GAMES'] = games_played
+                    return fallback_stats
+                else:
+                    print(f"⚠️ {player_name}: No sufficient fallback data in {prev_season} either")
+            else:
+                print(f"⚠️ {player_name}: Preventing infinite recursion, skipping fallback to {prev_season}")
+        except Exception as e:
+            import traceback
+            print(f"⚠️ {player_name}: Fallback calculation failed: {e}")
+            print(f"🔎 Full traceback: {traceback.format_exc()[:200]}...")  # First 200 chars of traceback
     
     numeric_cols = ['MIN', 'FG', 'FGA', '3P', '3PA', 'FT', 'FTA', 'OR', 'DR', 'TOT', 'A', 'PF', 'ST', 'TO', 'BL', 'PTS']
-    stats_sum = player_df[numeric_cols].sum().to_dict()
+    
+    # Only use columns that actually exist in the dataframe
+    available_cols = [col for col in numeric_cols if col in player_df.columns]
+    if len(available_cols) != len(numeric_cols):
+        missing_cols = set(numeric_cols) - set(available_cols)
+        print(f"⚠️ {player_name}: Missing columns {missing_cols} in {season_to_use} data")
+    
+    stats_sum = player_df[available_cols].sum().to_dict()
+    
+    # Fill in missing columns with 0
+    for col in numeric_cols:
+        if col not in stats_sum:
+            stats_sum[col] = 0
     stats_sum['PLAYER_NAME'] = player_name
-    stats_sum['GP'] = len(player_df)
+    stats_sum['GP'] = games_played
     # Calculate average for percentage-based stats (usage rate)
     usage_col = 'USAGE \nRATE (%)'
     if usage_col in player_df.columns:
@@ -214,6 +285,17 @@ def calculate_player_stats(player_name, max_date=None, current_season=None):
 
 def get_distinct_players():
     """Get all distinct player names from the loaded dataset."""
+    from config.settings import config
+    season_year = config.season_year
+    
+    global _season_data_cache
+    if season_year not in _season_data_cache:
+        print(f"📊 Loading {season_year} data to get distinct players...")
+        df = load_player_data(season_year)
+        _season_data_cache[season_year] = df
+    else:
+        df = _season_data_cache[season_year]
+    
     return df['PLAYER \nFULL NAME'].unique()
 
 def get_current_season():
@@ -221,11 +303,16 @@ def get_current_season():
     return SEASON_YEAR
 
 def set_season_year(season_year):
-    """Change the season year and reload the data."""
-    global SEASON_YEAR, df
+    """Change the season year and load the data into cache if not already loaded."""
+    global SEASON_YEAR, _season_data_cache
     SEASON_YEAR = season_year
-    df = load_player_data(SEASON_YEAR)
-    print(f"Loaded data for season: {SEASON_YEAR}")
+    
+    if season_year not in _season_data_cache:
+        df = load_player_data(season_year)
+        _season_data_cache[season_year] = df
+        print(f"Loaded and cached data for season: {season_year}")
+    else:
+        print(f"Season {season_year} already cached")
 
 # 🚀 NEW: Batch cache builder
 def build_cache_for_date_range(start_date, end_date, date_interval_days=7):
@@ -244,6 +331,17 @@ def build_cache_for_date_range(start_date, end_date, date_interval_days=7):
     target_dates = [date.strftime('%Y-%m-%d') for date in date_range]
     
     print(f"📅 Target dates ({len(target_dates)}): {target_dates[:3]} ... {target_dates[-3:]}")
+    
+    # Get current season data
+    from config.settings import config
+    current_season = config.season_year
+    
+    global _season_data_cache
+    if current_season not in _season_data_cache:
+        df = load_player_data(current_season)
+        _season_data_cache[current_season] = df
+    else:
+        df = _season_data_cache[current_season]
     
     # 🚀 VECTORIZED: Calculate all stats in batch
     all_results = build_all_player_stats_vectorized(df, target_dates)

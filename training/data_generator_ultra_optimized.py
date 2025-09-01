@@ -189,18 +189,23 @@ class UltraOptimizedTrainingDataGenerator(TrainingDataGenerator):
                         skip_threshold = i + 1  # Skip up to and including this index
                         break
             
-            # Process each play starting after the skip threshold
-            for i in range(skip_threshold, game_length):
-                # Collect recent plays using fast dict access (no iloc!)
-                recent_plays = self._collect_recent_plays_ultra_fast(plays, i, n_total, away_abbrev, home_abbrev)
+            # CRITICAL FIX: Process ALL plays to maintain DataFrame alignment
+            for i in range(game_length):
+                if i < skip_threshold:
+                    # For skipped plays, use empty placeholder to maintain alignment
+                    json_string = "{}"
+                else:
+                    # For target plays, create proper context
+                    recent_plays = self._collect_recent_plays_ultra_fast(plays, i, n_total, away_abbrev, home_abbrev)
+                    
+                    # Create JSON object with organized players
+                    json_obj = self._create_json_ultra_fast(
+                        away_abbrev, home_abbrev, away_stats, home_stats, organized_players, recent_plays
+                    )
+                    
+                    # Serialize to JSON string
+                    json_string = json.dumps(json_obj, separators=(',', ':'))
                 
-                # Create JSON object with organized players
-                json_obj = self._create_json_ultra_fast(
-                    away_abbrev, home_abbrev, away_stats, home_stats, organized_players, recent_plays
-                )
-                
-                # Serialize to JSON string
-                json_string = json.dumps(json_obj, separators=(',', ':'))
                 json_data.append(json_string)
         
         return json_data

@@ -3,16 +3,22 @@ from get_team_city import get_team_city
 from datetime import datetime, timedelta
 import os
 
-# Configuration - Change this to the desired season year
-SEASON_YEAR = "2023-2024"  # Can be "2022-2023" or "2023-2024"
+# Configuration (will be set dynamically by config.settings)
+SEASON_YEAR = "2023-2024"  # Default, overridden by global config
 
 # Cache for loaded team data to avoid repeated file loading
 _team_data_cache = {}
 
-def load_team_data(season_year):
+def load_team_data(season_year=None):
+    """Load team boxscore data for the specified season year."""
+    # Use global config if no season_year provided
+    if season_year is None:
+        from config.settings import config
+        season_year = config.season_year
     """Load team boxscore data for the specified season year."""
     # Map season year to file path
     file_mapping = {
+        "2021-2022": "data/team_boxscores/historical/2021-2022_NBA_Box_Score_Team-Stats.xlsx",
         "2022-2023": "data/team_boxscores/historical/2022-2023_NBA_Box_Score_Team-Stats.xlsx",
         "2023-2024": "data/team_boxscores/historical/2023-2024_NBA_Box_Score_Team-Stats.xlsx"
     }
@@ -31,12 +37,20 @@ def load_team_data(season_year):
     df['DATE'] = pd.to_datetime(df['DATE'])
     return df
 
-# Load data for the configured season year
-df = load_team_data(SEASON_YEAR)
-# Cache the main season data
-_team_data_cache[SEASON_YEAR] = df
+# Data will be loaded dynamically when needed based on global config
+df = None
+_team_data_cache = {}
 
 def generate_team_stats(team_name, target_date=None, fallback_season=None):
+    """Generate team stats for a given team and date."""
+    global df
+    
+    # Load data if not already loaded
+    if df is None:
+        from config.settings import config
+        season_to_use = fallback_season or config.season_year
+        df = load_team_data(season_to_use)
+        _team_data_cache[season_to_use] = df
     """
     Calculate average PACE, OEFF, and DEFF for a team up to a specific date.
     Uses the configured season data, or fallback season if specified.
@@ -67,10 +81,19 @@ def generate_team_stats(team_name, target_date=None, fallback_season=None):
                 season_label = fallback_season
                 print(f"📁 Loaded and cached {fallback_season} data for future use")
             except (ValueError, FileNotFoundError):
-                # If fallback season not available, use current season
-                data_source = df
-                season_label = SEASON_YEAR
-                print(f"Warning: Fallback season {fallback_season} not available, using {SEASON_YEAR}")
+                # If fallback season not available, create reasonable default stats
+                print(f"🔄 Fallback season {fallback_season} not available, using estimated defaults for early season")
+                return {
+                    'TEAM_NAME': team_name,
+                    'SEASON': fallback_season, 
+                    'GAMES_PLAYED': 0,
+                    'OEFF': 110.0,  # League average estimates
+                    'DEFF': 110.0,
+                    'PACE': 100.0,
+                    'REST_DAYS': 10,  # Well-rested at season start
+                    'USING_PRIOR_SEASON': True,
+                    'FALLBACK_REASON': f'No {fallback_season} team data available - using league averages'
+                }
     else:
         data_source = df
         season_label = SEASON_YEAR
