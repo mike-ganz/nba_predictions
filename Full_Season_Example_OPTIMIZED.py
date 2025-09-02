@@ -12,6 +12,7 @@ HIGH-PERFORMANCE version with major speed optimizations:
 
 # %%
 from config import set_season_year
+from config.settings import DEFAULT_N_TOTAL_PLAYS
 from training import training_data_generator, openai_formatter  
 from training.data_generator_optimized import (
     optimized_training_data_generator, 
@@ -77,7 +78,7 @@ if SAMPLE_FIRST:
         
         sample_df = optimized_training_data_generator.generate_dataset(
             season_year="2023-2024",
-            n_total=10,
+            n_total=DEFAULT_N_TOTAL_PLAYS,
             sample_size=None,  # None = process ALL games/rows in the season!
             force_real_pca=False  # ← Use existing cache instead of rebuilding
         )
@@ -85,7 +86,7 @@ if SAMPLE_FIRST:
         
         sample_df = training_data_generator.generate_dataset(
             season_year="2023-2024",
-            n_total=10,
+            n_total=DEFAULT_N_TOTAL_PLAYS,
             sample_size=None,  # None = process ALL games/rows in the season!
             force_real_pca=True
         )
@@ -139,14 +140,14 @@ if USE_OPTIMIZED:
     
     full_season_df = optimized_training_data_generator.generate_dataset(
         season_year="2023-2024",
-        n_total=10,
+        n_total=DEFAULT_N_TOTAL_PLAYS,
         sample_size=None,  # Full dataset
         force_real_pca=False  # ← Use existing cache instead of rebuilding
     )
 else:
     full_season_df = training_data_generator.generate_dataset(
         season_year="2023-2024",
-        n_total=10,
+        n_total=DEFAULT_N_TOTAL_PLAYS,
         sample_size=None,  # Full dataset
         force_real_pca=False  # ← Use existing cache instead of rebuilding
     )

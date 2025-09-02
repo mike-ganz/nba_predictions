@@ -157,9 +157,10 @@ class OpenAIFormatter:
             # Use the context row's JSON context (which should have empty recent_plays)
             current_json = json.loads(context_row['json_training_data'])
             
-            # Get first 10 non-null plays from the game
+            # Get first N non-null plays from the game  
+            from config.settings import DEFAULT_N_TOTAL_PLAYS
             first_n_plays = []
-            n_total = 10  # Number of plays to include
+            n_total = DEFAULT_N_TOTAL_PLAYS  # Number of plays to include (configurable)
             
             for i in range(len(game_df)):
                 if len(first_n_plays) >= n_total:
@@ -310,6 +311,9 @@ class OpenAIFormatter:
         score = (f"{current_json['away_team']['name']} {next_row['away_score']} - "
                 f"{current_json['home_team']['name']} {next_row['home_score']}")
         
+        # Import enhanced description processing
+        from training.data_generator import process_play_description
+        
         # Create the assistant response with restructured scoring and added player
         next_player = next_row.get('player')
         return {
@@ -318,7 +322,7 @@ class OpenAIFormatter:
                 "time_remaining": str(next_time),
                 "score": str(score),
                 "player": str(next_player) if pd.notna(next_player) else None,  # NEW: Player from original data
-                "description": remove_parentheses_content(next_row['description']),
+                "description": process_play_description(next_row),
                 "scoring": {  # RESTRUCTURED: Nested scoring object
                     "team": str(scoring_team) if scoring_team else None,
                     "points": int(points_scored) if points_scored else 0

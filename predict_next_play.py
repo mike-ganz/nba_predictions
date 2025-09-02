@@ -207,7 +207,8 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                     # Add new play to the END
                     working_context["recent_plays"].append(next_play)
                     # Remove first play (maintain window size)
-                    if len(working_context["recent_plays"]) > 10:
+                    from config.settings import DEFAULT_N_TOTAL_PLAYS
+                    if len(working_context["recent_plays"]) > DEFAULT_N_TOTAL_PLAYS:
                         removed_play = working_context["recent_plays"].pop(0)
                         print(f"🔄 Sliding window: Added new play, removed: {removed_play.get('description', 'No description')}")
                     else:

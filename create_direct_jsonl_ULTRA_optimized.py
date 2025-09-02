@@ -95,8 +95,8 @@ def create_direct_jsonl_ultra_optimized(sample_size: Optional[int] = None,
     Args:
         sample_size: If provided, limit to this many rows for testing
         generation_mode: Training data generation mode:
-            - "remaining_plays": Skip first 10 plays of each game as targets
-            - "first_N_plays": One entry per game with first 10 plays as targets
+            - "remaining_plays": Skip first N plays of each game as targets
+            - "first_N_plays": One entry per game with first N plays as targets
         season_year: NBA season to process (e.g., "2022-2023", "2023-2024")
         
     Returns:
@@ -111,15 +111,15 @@ def create_direct_jsonl_ultra_optimized(sample_size: Optional[int] = None,
         raise ValueError(f"Invalid generation_mode '{generation_mode}'. Must be one of: {valid_modes}")
     
     # Set global config season to ensure consistency across all data loading
-    from config.settings import config
+    from config.settings import config, DEFAULT_N_TOTAL_PLAYS
     config.season_year = season_year
     print(f"📅 Season year: {season_year}")
     print(f"🎯 Generation mode: {generation_mode}")
     if generation_mode == "remaining_plays":
-        print("   • Skipping first 10 plays of each game as targets")
+        print(f"   • Skipping first {DEFAULT_N_TOTAL_PLAYS} plays of each game as targets")
         print("   • Normal training example quantity (~594K for full season)")
     elif generation_mode == "first_N_plays":
-        print("   • One entry per game with first 10 plays as targets")
+        print(f"   • One entry per game with first {DEFAULT_N_TOTAL_PLAYS} plays as targets")
         print("   • Reduced training examples (~1.2K for full season)")
     
     # Create output directory
@@ -161,7 +161,7 @@ def create_direct_jsonl_ultra_optimized(sample_size: Optional[int] = None,
     
     full_season_df = ultra_optimized_training_data_generator.create_llm_training_data(
         df, 
-        n_total=10,  # Recent plays to include
+        n_total=DEFAULT_N_TOTAL_PLAYS,  # Recent plays to include (configurable)
         force_real_pca=False,
         generation_mode=generation_mode
     )
@@ -252,7 +252,7 @@ def main():
     # SINGLE PLACE TO CHANGE SETTINGS - modify these as needed
     season_year = "2023-2024"  # Can be "2022-2023" or "2023-2024"
     generation_mode = "remaining_plays"  # Can be either "remaining_plays" or "first_N_plays"
-    sample_size = 5000
+    sample_size = 1000
      
     # Check for existing files and warn user
     incremental_path = f"data/training/ULTRA_OPTIMIZED_incremental_{generation_mode}.jsonl"

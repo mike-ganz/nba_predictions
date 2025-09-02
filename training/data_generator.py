@@ -44,6 +44,42 @@ def remove_parentheses_content(text):
     return cleaned_text
 
 
+def process_play_description(row_data):
+    """
+    Process play description with enhanced formatting for fouls.
+    
+    Args:
+        row_data: Dictionary or pandas Series containing play data with keys:
+                  - 'description': The play description
+                  - 'event_type': The type of event (e.g., 'foul')
+                  - 'opponent': The opponent player (for fouls)
+        
+    Returns:
+        str: Processed description with parentheses removed and foul opponent info added
+        
+    Example:
+        Input: description="Jokic S.FOUL (P1.T1)", event_type="foul", opponent="Anthony Davis"
+        Output: "Jokic S.FOUL on Anthony Davis"
+    """
+    description = row_data.get('description', '')
+    if not description or pd.isna(description):
+        return description
+    
+    # First remove parentheses content
+    cleaned_description = remove_parentheses_content(description)
+    
+    # Enhanced formatting for fouls
+    if (row_data.get('event_type') == 'foul' and 
+        row_data.get('opponent') and 
+        pd.notna(row_data.get('opponent'))):
+        
+        opponent = str(row_data.get('opponent')).strip()
+        if opponent:
+            cleaned_description = f"{cleaned_description} on {opponent}"
+    
+    return cleaned_description
+
+
 class TrainingDataGenerator:
     """Main class for generating NBA training data."""
     
@@ -440,12 +476,13 @@ class TrainingDataGenerator:
                 
                 # Create play object with proper type conversion, restructured scoring and added player
                 row_player = df.iloc[j].get('player')
+                row_data = df.iloc[j]  # Get full row for enhanced description processing
                 play_obj = {
                     "quarter": int(quarter),
                     "time_remaining": str(time_in_quarter),
                     "score": f"{away_abbrev} {int(row_away_score)} - {home_abbrev} {int(row_home_score)}",
                     "player": str(row_player) if pd.notna(row_player) else None,  # NEW: Player from original data
-                    "description": remove_parentheses_content(row_desc),
+                    "description": process_play_description(row_data),
                     "scoring": {  # RESTRUCTURED: Nested scoring object
                         "team": str(scoring_team) if scoring_team else None,
                         "points": int(points_scored)

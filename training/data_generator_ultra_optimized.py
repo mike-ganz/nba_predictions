@@ -15,7 +15,7 @@ import numpy as np
 from typing import Dict, List, Optional, Any
 from collections import defaultdict
 from config.settings import DEFAULT_N_TOTAL_PLAYS, DEFAULT_MIN_GAMES_THRESHOLD
-from training.data_generator import TrainingDataGenerator, remove_parentheses_content
+from training.data_generator import TrainingDataGenerator, remove_parentheses_content, process_play_description
 from game.time_utils import convert_to_quarter_time
 from game.scoring_utils import determine_scoring_info
 from game.team_utils import determine_home_away_teams
@@ -258,7 +258,7 @@ class UltraOptimizedTrainingDataGenerator(TrainingDataGenerator):
                     "time_remaining": str(time_in_quarter),
                     "score": f"{away_abbrev} {int(play.get('away_score', 0) or 0)} - {home_abbrev} {int(play.get('home_score', 0) or 0)}",
                     "player": str(play.get('player')) if pd.notna(play.get('player')) else None,  # NEW: Player from original data
-                    "description": remove_parentheses_content(play.get('description', '')),
+                    "description": process_play_description(play),
                     "scoring": {  # RESTRUCTURED: Nested scoring object
                         "team": str(scoring_team) if scoring_team else None,
                         "points": int(points_scored)

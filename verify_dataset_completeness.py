@@ -176,8 +176,13 @@ def analyze_date_coverage(original_df: pd.DataFrame, csv_df: pd.DataFrame, jsonl
     
     return results
 
-def calculate_expected_training_examples(original_count: int, n_total: int = 10) -> Tuple[int, int]:
+def calculate_expected_training_examples(original_count: int, n_total: int = None) -> Tuple[int, int]:
     """Calculate expected number of training examples based on original data."""
+    
+    # Use default if not specified
+    if n_total is None:
+        from config.settings import DEFAULT_N_TOTAL_PLAYS
+        n_total = DEFAULT_N_TOTAL_PLAYS
     
     # Each game needs at least n_total plays to start generating training examples
     # Assume average game has ~400-500 plays, so we lose ~n_total plays per game for context

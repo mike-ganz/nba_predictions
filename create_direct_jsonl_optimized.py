@@ -23,6 +23,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from training.data_generator_optimized import optimized_training_data_generator
 from training import openai_formatter
 from config import set_season_year
+from config.settings import DEFAULT_N_TOTAL_PLAYS
 import pandas as pd
 import time
 
@@ -63,7 +64,7 @@ def create_direct_jsonl_optimized(sample_size: int = None, batch_size: int = 500
         
         sample_df = optimized_training_data_generator.generate_dataset(
             season_year="2023-2024",
-            n_total=10,  # Recent plays count
+            n_total=DEFAULT_N_TOTAL_PLAYS,  # Recent plays count
             sample_size=sample_size,
             force_real_pca=False  # Use existing cache - this is key for speed!
         )
@@ -97,7 +98,7 @@ def create_direct_jsonl_optimized(sample_size: int = None, batch_size: int = 500
     
     full_season_df = optimized_training_data_generator.generate_dataset(
         season_year="2023-2024",
-        n_total=10,  # Recent plays count  
+        n_total=DEFAULT_N_TOTAL_PLAYS,  # Recent plays count  
         sample_size=None,  # Full dataset
         force_real_pca=False  # Critical: Use existing cache for speed!
     )

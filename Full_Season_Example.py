@@ -8,6 +8,7 @@ Generate training data for an entire season using the optimized system.
 
 # %%
 from config import set_season_year
+from config.settings import DEFAULT_N_TOTAL_PLAYS
 from training import training_data_generator, openai_formatter  
 from data import file_manager, data_preview
 import time
@@ -26,7 +27,7 @@ start_time = time.time()
 # Generate for entire season (no game_id_filter = all games)
 full_season_df = training_data_generator.generate_dataset(
     season_year="2023-2024",
-    n_total=10,  # Number of plays in each sequence
+    n_total=DEFAULT_N_TOTAL_PLAYS,  # Number of plays in each sequence
     sample_size=None,  # None = process ALL games/rows in the season!
     # game_id_filter=None  # This is the default - processes ALL games
     force_real_pca=True  # 🔥 FORCE real cached PCA values (not dummy values!)

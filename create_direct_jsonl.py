@@ -224,7 +224,7 @@ def create_player_team_mapping(game_plays: pd.DataFrame) -> Dict[str, str]:
     
     return player_team_map
 
-def create_training_example_direct(game_plays: pd.DataFrame, play_index: int, recent_plays_count: int = 10) -> Dict[str, Any]:
+def create_training_example_direct(game_plays: pd.DataFrame, play_index: int, recent_plays_count: int = None) -> Dict[str, Any]:
     """
     Create a training example directly from play-by-play data.
     
@@ -233,6 +233,11 @@ def create_training_example_direct(game_plays: pd.DataFrame, play_index: int, re
         play_index: Index of the "next play" we're trying to predict
         recent_plays_count: Number of recent plays to include in context
     """
+    
+    # Use default if not specified
+    if recent_plays_count is None:
+        from config.settings import DEFAULT_N_TOTAL_PLAYS
+        recent_plays_count = DEFAULT_N_TOTAL_PLAYS
     
     if play_index == 0:
         return None  # Can't create example for first play (no recent plays)
@@ -303,7 +308,7 @@ def convert_playbyplay_to_jsonl_direct(
     playbyplay_path: str, 
     output_path: str, 
     sample_size: int = None,
-    recent_plays_count: int = 10
+    recent_plays_count: int = None
 ) -> int:
     """
     Convert play-by-play data directly to JSONL format.
@@ -314,6 +319,11 @@ def convert_playbyplay_to_jsonl_direct(
         sample_size: Optional sample size for testing
         recent_plays_count: Number of recent plays to include in context
     """
+    
+    # Use default if not specified
+    if recent_plays_count is None:
+        from config.settings import DEFAULT_N_TOTAL_PLAYS
+        recent_plays_count = DEFAULT_N_TOTAL_PLAYS
     
     print("📊 Loading play-by-play data from:", playbyplay_path)
     df = pd.read_csv(playbyplay_path)
