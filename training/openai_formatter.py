@@ -13,6 +13,7 @@ from game.time_utils import convert_to_quarter_time
 from game.scoring_utils import determine_scoring_info
 from data.file_utils import file_manager
 from training.data_generator import extract_players_on_court
+from training.base_formatter import BaseFormatter, FormatterFactory
 
 
 def remove_parentheses_content(text):
@@ -41,8 +42,13 @@ def remove_parentheses_content(text):
     return cleaned_text
 
 
-class OpenAIFormatter:
+class OpenAIFormatter(BaseFormatter):
     """Handles conversion to OpenAI fine-tuning format."""
+    
+    @property
+    def platform_name(self) -> str:
+        """Return the platform name."""
+        return "OpenAI"
     
     def create_training_data(self, df: pd.DataFrame, generation_mode: str = "remaining_plays") -> List[Dict[str, Any]]:
         """
@@ -564,3 +570,11 @@ def generate_openai_training_for_game(game_id: int, season_year: str = "2023-202
                                     n_total: int = 5, max_plays: Optional[int] = None) -> Tuple[List[Dict[str, Any]], str]:
     """Generate OpenAI fine-tuning data for a specific game."""
     return openai_dataset_generator.generate_for_game(game_id, season_year, n_total, max_plays)
+
+
+# Global instances for backward compatibility
+openai_formatter = OpenAIFormatter()
+openai_dataset_generator = OpenAIDatasetGenerator()
+
+# Register OpenAI formatter with the factory
+FormatterFactory.register_formatter("openai", OpenAIFormatter)

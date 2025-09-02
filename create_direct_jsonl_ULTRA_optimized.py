@@ -247,51 +247,169 @@ def create_direct_jsonl_ultra_optimized(sample_size: Optional[int] = None,
 
 
 def main():
-    """Main function to run ultra-optimized direct JSONL conversion."""
+    """Enhanced main function with multi-platform support."""
     
-    # SINGLE PLACE TO CHANGE SETTINGS - modify these as needed
-    season_year = "2023-2024"  # Can be "2022-2023" or "2023-2024"
-    generation_mode = "remaining_plays"  # Can be either "remaining_plays" or "first_N_plays"
-    sample_size = 1000
-     
-    # Check for existing files and warn user
-    incremental_path = f"data/training/ULTRA_OPTIMIZED_incremental_{generation_mode}.jsonl"
-    final_path = f"data/training/ULTRA_OPTIMIZED_full_dataset_{generation_mode}.jsonl"
+    print("🚀 NBA Training Data Generator - ULTRA OPTIMIZED")
+    print("=" * 60)
     
-    if os.path.exists(incremental_path):
-        print("🔍 Found existing incremental file. Validating JSON format...")
-        is_valid = validate_jsonl_file(incremental_path, max_lines=50)
-        if not is_valid:
-            print("⚠️ Existing incremental file has JSON formatting issues.")
-            print("💡 This will be overwritten with corrected format during generation.")
-        print()
+    # Import platform support
+    from training.multi_platform_generator import get_available_platforms, generate_dataset
     
-    if os.path.exists(final_path):
-        file_size_mb = os.path.getsize(final_path) / (1024 * 1024)
-        print(f"⚠️ Final output file already exists: {final_path} ({file_size_mb:.1f} MB)")
-        print("🔄 This will be overwritten with new data.")
-        print()
+    available_platforms = get_available_platforms()
     
-    # Generate full dataset with ultra-optimization (~594K examples)
-    print("🎯 Starting generation process:")
-    print("   1️⃣ Load 2023-2024 NBA play-by-play data")
-    print("   2️⃣ Generate JSON training contexts (game-grouped processing)")
-    print("   3️⃣ Convert to OpenAI JSONL format")
+    # Platform selection
+    print("🤖 PLATFORM FORMAT SELECTION:")
+    for i, platform in enumerate(available_platforms, 1):
+        print(f"   {i}. {platform.upper()} format")
+    
+    while True:
+        try:
+            platform_choice = input(f"\nSelect platform (1-{len(available_platforms)}): ").strip()
+            try:
+                choice_idx = int(platform_choice) - 1
+                if 0 <= choice_idx < len(available_platforms):
+                    platform = available_platforms[choice_idx]
+                    break
+                else:
+                    print(f"❌ Invalid choice. Please select 1-{len(available_platforms)}.")
+            except ValueError:
+                print(f"❌ Invalid choice. Please select 1-{len(available_platforms)}.")
+        except KeyboardInterrupt:
+            print("\n👋 Generation cancelled by user.")
+            return
+    
+    # Sample size selection
+    print(f"\n📊 SAMPLE SIZE SELECTION:")
+    print("   1. Ultra tiny (3 games) - ~10-15 seconds")
+    print("   2. Tiny sample (10 games) - ~30-45 seconds")
+    print("   3. Small sample (100 games) - ~2-3 minutes")
+    print("   4. Full dataset (all games) - ~50-60 minutes")
+    
+    while True:
+        try:
+            choice = input("\nSelect option (1-4): ").strip()
+            if choice == "1":
+                sample_size = 1350  # ~3 games (450 plays per game average)
+                break
+            elif choice == "2":
+                sample_size = 4500  # ~10 games 
+                break
+            elif choice == "3":
+                sample_size = 45000  # ~100 games
+                break
+            elif choice == "4":
+                sample_size = None  # Full dataset
+                break
+            else:
+                print("❌ Invalid choice. Please select 1-4.")
+        except KeyboardInterrupt:
+            print("\n👋 Generation cancelled by user.")
+            return
+    
+    # Generation mode selection
+    print(f"\n🎯 GENERATION MODE SELECTION:")
+    print("   1. Remaining plays mode - Standard next-play prediction training")
+    print("   2. First N plays mode - Sequence generation training") 
+    
+    while True:
+        try:
+            mode_choice = input("\nSelect mode (1-2): ").strip()
+            if mode_choice == "1":
+                generation_mode = "remaining_plays"
+                break
+            elif mode_choice == "2":
+                generation_mode = "first_N_plays"
+                break
+            else:
+                print("❌ Invalid choice. Please select 1 or 2.")
+        except KeyboardInterrupt:
+            print("\n👋 Generation cancelled by user.")
+            return
+    
+    # Season selection
+    print(f"\n📅 SEASON SELECTION:")
+    print("   1. 2023-2024 season (default)")
+    print("   2. 2022-2023 season")
+    print("   3. Custom season")
+    
+    while True:
+        try:
+            season_choice = input("\nSelect season (1-3): ").strip()
+            if season_choice == "1" or season_choice == "":
+                season_year = "2023-2024"
+                break
+            elif season_choice == "2":
+                season_year = "2022-2023"
+                break
+            elif season_choice == "3":
+                season_year = input("Enter custom season (e.g., 2021-2022): ").strip()
+                if season_year and len(season_year) == 9 and season_year[4] == '-':
+                    break
+                else:
+                    print("❌ Invalid season format. Use YYYY-YYYY format.")
+                    continue
+            else:
+                print("❌ Invalid choice. Please select 1-3.")
+        except KeyboardInterrupt:
+            print("\n👋 Generation cancelled by user.")
+            return
+    
+    # Summary and confirmation
+    print(f"\n📋 GENERATION SUMMARY:")
+    print(f"   🤖 Platform: {platform.upper()}")
+    if sample_size is None:
+        sample_display = "Full dataset"
+    else:
+        games_estimate = sample_size // 450
+        sample_display = f"{sample_size:,} rows (~{games_estimate} games)"
+    
+    print(f"   📊 Sample size: {sample_display}")
+    print(f"   🎯 Mode: {generation_mode.replace('_', ' ').title()}")
+    print(f"   📅 Season: {season_year}")
+    print()
+    
+    try:
+        confirm = input("Proceed with generation? (y/N): ").strip().lower()
+        if confirm not in ['y', 'yes']:
+            print("👋 Generation cancelled by user.")
+            return
+    except KeyboardInterrupt:
+        print("\n👋 Generation cancelled by user.")
+        return
+    
+    # Generate the data
+    print(f"\n🎯 Starting {platform.upper()} training data generation...")
+    print("   1️⃣ Load NBA play-by-play data")
+    print("   2️⃣ Generate JSON training contexts")
+    print(f"   3️⃣ Convert to {platform.upper()} format")
     print("   4️⃣ Save final dataset with validation")
-    print("   ⏱️ Estimated time: 15-30 minutes")
     print()
     
     start_time = time.time()
-    result_path = create_direct_jsonl_ultra_optimized(sample_size=sample_size, generation_mode=generation_mode, season_year=season_year)  # No sample_size = full dataset
-    end_time = time.time()
     
-    total_minutes = (end_time - start_time) / 60
-    
-    print(f"\n🎉 Ultra-optimized direct conversion complete!")
-    print(f"💾 Final output: {result_path}")
-    print(f"⏱️ Total time: {total_minutes:.1f} minutes")
-    print(f"⚡ Performance improvement: ~10x faster than previous versions!")
-    print(f"🚀 Ready for OpenAI fine-tuning!")
+    try:
+        from config.settings import DEFAULT_N_TOTAL_PLAYS
+        training_examples, result_path = generate_dataset(
+            platform=platform,
+            season_year=season_year,
+            n_total=DEFAULT_N_TOTAL_PLAYS,
+            sample_size=sample_size,
+            generation_mode=generation_mode
+        )
+        
+        end_time = time.time()
+        total_minutes = (end_time - start_time) / 60
+        
+        print(f"\n🎉 {platform.upper()} training data generation complete!")
+        print(f"💾 Final output: {result_path}")
+        print(f"📊 Examples generated: {len(training_examples):,}")
+        print(f"⏱️ Total time: {total_minutes:.1f} minutes")
+        print(f"🚀 Ready for {platform.upper()} fine-tuning!")
+        
+    except Exception as e:
+        print(f"\n❌ Generation failed: {e}")
+        print("🔧 Please check the error details above and try again.")
+        raise
 
 
 if __name__ == "__main__":
