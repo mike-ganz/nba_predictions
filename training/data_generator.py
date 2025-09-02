@@ -46,20 +46,24 @@ def remove_parentheses_content(text):
 
 def process_play_description(row_data):
     """
-    Process play description with enhanced formatting for fouls.
+    Process play description with enhanced formatting for fouls and rebounds.
     
     Args:
         row_data: Dictionary or pandas Series containing play data with keys:
                   - 'description': The play description
-                  - 'event_type': The type of event (e.g., 'foul')
+                  - 'event_type': The type of event (e.g., 'foul', 'rebound')
                   - 'opponent': The opponent player (for fouls)
+                  - 'type': The sub-type of event (e.g., 'rebound defensive', 'rebound offensive')
         
     Returns:
-        str: Processed description with parentheses removed and foul opponent info added
+        str: Processed description with parentheses removed and enhanced formatting
         
-    Example:
+    Examples:
         Input: description="Jokic S.FOUL (P1.T1)", event_type="foul", opponent="Anthony Davis"
         Output: "Jokic S.FOUL on Anthony Davis"
+        
+        Input: description="Jokic REBOUND (Off:0 Def:1)", event_type="rebound", type="rebound defensive"
+        Output: "JOKIC DEF.REBOUND"
     """
     description = row_data.get('description', '')
     if not description or pd.isna(description):
@@ -68,10 +72,22 @@ def process_play_description(row_data):
     # First remove parentheses content
     cleaned_description = remove_parentheses_content(description)
     
+    # Enhanced formatting for rebounds
+    if row_data.get('event_type') == 'rebound':
+        rebound_type = row_data.get('type', '')
+        if rebound_type == 'rebound defensive':
+            # Replace "REBOUND" with "DEF.REBOUND" and convert to uppercase
+            cleaned_description = re.sub(r'\bREBOUND\b', 'DEF.REBOUND', cleaned_description, flags=re.IGNORECASE)
+            cleaned_description = cleaned_description.upper()
+        elif rebound_type == 'rebound offensive':
+            # Replace "REBOUND" with "OFF.REBOUND" and convert to uppercase
+            cleaned_description = re.sub(r'\bREBOUND\b', 'OFF.REBOUND', cleaned_description, flags=re.IGNORECASE)
+            cleaned_description = cleaned_description.upper()
+    
     # Enhanced formatting for fouls
-    if (row_data.get('event_type') == 'foul' and 
-        row_data.get('opponent') and 
-        pd.notna(row_data.get('opponent'))):
+    elif (row_data.get('event_type') == 'foul' and 
+          row_data.get('opponent') and 
+          pd.notna(row_data.get('opponent'))):
         
         opponent = str(row_data.get('opponent')).strip()
         if opponent:
