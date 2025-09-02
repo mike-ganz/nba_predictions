@@ -15,7 +15,7 @@ import numpy as np
 from typing import Dict, List, Optional, Any
 from collections import defaultdict
 from config.settings import DEFAULT_N_TOTAL_PLAYS, DEFAULT_MIN_GAMES_THRESHOLD
-from training.data_generator import TrainingDataGenerator, remove_parentheses_content, process_play_description
+from training.data_generator import TrainingDataGenerator, remove_parentheses_content, process_play_description, normalize_shot_coordinates, extract_players_on_court
 from game.time_utils import convert_to_quarter_time
 from game.scoring_utils import determine_scoring_info
 from game.team_utils import determine_home_away_teams
@@ -252,17 +252,40 @@ class UltraOptimizedTrainingDataGenerator(TrainingDataGenerator):
                         away_abbrev, home_abbrev
                     )
                 
-                # Create play object with restructured scoring and added player
+                # Create shot_details object - populated only for shots
+                play_event_type = play.get('event_type', '')
+                if play_event_type == 'shot':
+                    # For shots, determine the shooting team from the play data
+                    shooting_team = play.get('team', '')  # Get team that took the shot
+                    
+                    # Apply coordinate normalization for shots
+                    raw_x = play.get('converted_x')
+                    raw_y = play.get('converted_y')
+                    x_norm, y_norm = normalize_shot_coordinates(raw_x, raw_y)
+                    
+                    shot_details = {
+                        "team": str(shooting_team) if shooting_team else None,
+                        "points": int(points_scored),
+                        "x_coord": x_norm,
+                        "y_coord": y_norm
+                    }
+                else:
+                    shot_details = {
+                        "team": None,
+                        "points": None,
+                        "x_coord": None,
+                        "y_coord": None
+                    }
+                
+                # Create play object with restructured shot_details and added player
                 play_obj = {
                     "quarter": int(quarter),
                     "time_remaining": str(time_in_quarter),
                     "score": f"{away_abbrev} {int(play.get('away_score', 0) or 0)} - {home_abbrev} {int(play.get('home_score', 0) or 0)}",
+                    "players_on_court": extract_players_on_court(play, away_abbrev, home_abbrev),
                     "player": str(play.get('player')) if pd.notna(play.get('player')) else None,  # NEW: Player from original data
                     "description": process_play_description(play),
-                    "scoring": {  # RESTRUCTURED: Nested scoring object
-                        "team": str(scoring_team) if scoring_team else None,
-                        "points": int(points_scored)
-                    }
+                    "shot_details": shot_details  # RENAMED: scoring -> shot_details with additional fields
                 }
                 
                 recent_plays.insert(0, play_obj)

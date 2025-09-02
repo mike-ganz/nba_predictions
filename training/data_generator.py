@@ -44,6 +44,93 @@ def remove_parentheses_content(text):
     return cleaned_text
 
 
+def normalize_shot_coordinates(x, y):
+    """
+    Transform NBA shot coordinates to away-side normalized system.
+    
+    Court dimensions: 50' wide x 94' long
+    Court split at y = 47: away side [0,47], home side (47,94]
+    
+    Transformation:
+    - Away side (y <= 47): no change
+    - Home side (y > 47): mirror x around centerline (x' = 50-x) and shift y down (y' = y-47)
+    
+    Args:
+        x (float): X coordinate [0, 50]
+        y (float): Y coordinate [0, 94]
+        
+    Returns:
+        tuple: (x_normalized, y_normalized) or (None, None) if invalid input
+        
+    Examples:
+        normalize_shot_coordinates(4, 90) -> (46.0, 43.0)    # Home right corner -> Away right corner
+        normalize_shot_coordinates(46, 90) -> (4.0, 43.0)    # Home left corner -> Away left corner  
+        normalize_shot_coordinates(40, 20) -> (40.0, 20.0)   # Away side -> unchanged
+        normalize_shot_coordinates(25, 47) -> (25.0, 47.0)   # Midcourt -> unchanged
+    """
+    # Validate input coordinates
+    if x is None or y is None:
+        return None, None
+    
+    try:
+        x_val = float(x)
+        y_val = float(y)
+    except (ValueError, TypeError):
+        return None, None
+    
+    # Validate bounds: 0 <= x <= 50, 0 <= y <= 94
+    if not (0 <= x_val <= 50) or not (0 <= y_val <= 94):
+        return None, None
+    
+    # Apply transformation
+    if y_val <= 47:
+        # Away side: no transformation
+        x_norm = x_val
+        y_norm = y_val
+    else:
+        # Home side: mirror x and shift y
+        x_norm = 50 - x_val
+        y_norm = y_val - 47
+    
+    # Round to 1 decimal place for cleaner data
+    x_norm = round(x_norm, 1)
+    y_norm = round(y_norm, 1)
+    
+    return x_norm, y_norm
+
+
+def extract_players_on_court(row_data, away_abbrev: str, home_abbrev: str) -> List[Dict[str, Any]]:
+    """
+    Extract players on court from a1-a5 (away) and h1-h5 (home) fields.
+    
+    Args:
+        row_data: Row data containing lineup fields
+        away_abbrev: Away team abbreviation
+        home_abbrev: Home team abbreviation
+        
+    Returns:
+        list: Players on court formatted as [{"team": "...", "players": [...]}, ...]
+    """
+    # Extract away team players (a1-a5)
+    away_players = []
+    for i in range(1, 6):
+        player = row_data.get(f'a{i}')
+        if player and pd.notna(player):
+            away_players.append(str(player))
+    
+    # Extract home team players (h1-h5)  
+    home_players = []
+    for i in range(1, 6):
+        player = row_data.get(f'h{i}')
+        if player and pd.notna(player):
+            home_players.append(str(player))
+    
+    return [
+        {"team": away_abbrev, "players": away_players},
+        {"team": home_abbrev, "players": home_players}
+    ]
+
+
 def process_play_description(row_data):
     """
     Process play description with enhanced formatting for fouls and rebounds.
@@ -493,16 +580,40 @@ class TrainingDataGenerator:
                 # Create play object with proper type conversion, restructured scoring and added player
                 row_player = df.iloc[j].get('player')
                 row_data = df.iloc[j]  # Get full row for enhanced description processing
+                row_event_type = row_data.get('event_type', '')
+                
+                # Create shot_details object - populated only for shots
+                if row_event_type == 'shot':
+                    # For shots, determine the shooting team from the row data
+                    shooting_team = row_data.get('team', '')  # Get team that took the shot
+                    
+                    # Apply coordinate normalization for shots
+                    raw_x = row_data.get('converted_x')
+                    raw_y = row_data.get('converted_y')
+                    x_norm, y_norm = normalize_shot_coordinates(raw_x, raw_y)
+                    
+                    shot_details = {
+                        "team": str(shooting_team) if shooting_team else None,
+                        "points": int(points_scored),
+                        "x_coord": x_norm,
+                        "y_coord": y_norm
+                    }
+                else:
+                    shot_details = {
+                        "team": None,
+                        "points": None,
+                        "x_coord": None,
+                        "y_coord": None
+                    }
+                
                 play_obj = {
                     "quarter": int(quarter),
                     "time_remaining": str(time_in_quarter),
                     "score": f"{away_abbrev} {int(row_away_score)} - {home_abbrev} {int(row_home_score)}",
+                    "players_on_court": extract_players_on_court(row_data, away_abbrev, home_abbrev),
                     "player": str(row_player) if pd.notna(row_player) else None,  # NEW: Player from original data
                     "description": process_play_description(row_data),
-                    "scoring": {  # RESTRUCTURED: Nested scoring object
-                        "team": str(scoring_team) if scoring_team else None,
-                        "points": int(points_scored)
-                    }
+                    "shot_details": shot_details  # RENAMED: scoring -> shot_details with additional fields
                 }
                 
                 recent_plays.insert(0, play_obj)  # Insert at beginning to maintain chronological order

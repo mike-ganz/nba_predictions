@@ -12,6 +12,7 @@ import re
 from game.time_utils import convert_to_quarter_time
 from game.scoring_utils import determine_scoring_info
 from data.file_utils import file_manager
+from training.data_generator import extract_players_on_court
 
 
 def remove_parentheses_content(text):
@@ -256,6 +257,7 @@ class OpenAIFormatter:
             "quarter": int(quarter),
             "time_remaining": str(time_in_quarter),
             "score": score,
+            "players_on_court": extract_players_on_court(row, current_json['away_team']['name'], current_json['home_team']['name']),
             "player": str(player) if pd.notna(player) else None,
             "description": remove_parentheses_content(row['description']),
             "scoring": {
@@ -312,21 +314,45 @@ class OpenAIFormatter:
                 f"{current_json['home_team']['name']} {next_row['home_score']}")
         
         # Import enhanced description processing
-        from training.data_generator import process_play_description
+        from training.data_generator import process_play_description, extract_players_on_court
         
-        # Create the assistant response with restructured scoring and added player
+        # Create shot_details object - populated only for shots
+        next_event_type = next_row.get('event_type', '')
+        if next_event_type == 'shot':
+            # For shots, determine the shooting team from the row data
+            shooting_team = next_row.get('team', '')  # Get team that took the shot
+            
+            # Apply coordinate normalization for shots
+            from training.data_generator import normalize_shot_coordinates
+            raw_x = next_row.get('converted_x')
+            raw_y = next_row.get('converted_y')
+            x_norm, y_norm = normalize_shot_coordinates(raw_x, raw_y)
+            
+            shot_details = {
+                "team": str(shooting_team) if shooting_team else None,
+                "points": int(points_scored) if points_scored else 0,
+                "x_coord": x_norm,
+                "y_coord": y_norm
+            }
+        else:
+            shot_details = {
+                "team": None,
+                "points": None,
+                "x_coord": None,
+                "y_coord": None
+            }
+        
+        # Create the assistant response with restructured shot_details and added player
         next_player = next_row.get('player')
         return {
             "next_play": {
                 "quarter": int(next_quarter),
                 "time_remaining": str(next_time),
                 "score": str(score),
+                "players_on_court": extract_players_on_court(next_row, current_json['away_team']['name'], current_json['home_team']['name']),
                 "player": str(next_player) if pd.notna(next_player) else None,  # NEW: Player from original data
                 "description": process_play_description(next_row),
-                "scoring": {  # RESTRUCTURED: Nested scoring object
-                    "team": str(scoring_team) if scoring_team else None,
-                    "points": int(points_scored) if points_scored else 0
-                }
+                "shot_details": shot_details  # RENAMED: scoring -> shot_details with additional fields
             }
         }
     
