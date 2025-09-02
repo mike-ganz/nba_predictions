@@ -59,6 +59,10 @@ class UltraOptimizedTrainingDataGenerator(TrainingDataGenerator):
         print("🔧 Sorting data by game_id and play_id for consistent processing...")
         result_df = result_df.sort_values(['game_id', 'play_id']).reset_index(drop=True)
         
+        # 🆕 Collapse consecutive substitutions to prevent cascade patterns
+        print("🔄 Collapsing consecutive substitutions...")
+        result_df = self._collapse_consecutive_substitutions(result_df)
+        
         # Pre-group by game_id for ultra-fast processing  
         print("📊 Pre-grouping data by game_id...")
         game_groups = result_df.groupby('game_id')
@@ -339,6 +343,93 @@ class UltraOptimizedTrainingDataGenerator(TrainingDataGenerator):
             },
             "recent_plays": recent_plays
         }
+    
+    def _collapse_consecutive_substitutions(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Collapse consecutive substitutions with same remaining_time into single plays.
+        
+        This prevents substitution cascade patterns in training data by combining
+        multiple simultaneous subs into one play with format:
+        "SUBS: desc1, desc2, desc3, ..."
+        
+        Args:
+            df: DataFrame sorted by game_id and play_id
+            
+        Returns:
+            DataFrame with consecutive substitutions collapsed
+        """
+        result_rows = []
+        i = 0
+        total_collapsed = 0
+        
+        while i < len(df):
+            current_row = df.iloc[i]
+            
+            # Check if this is a substitution
+            if current_row.get('event_type') == 'substitution':
+                # Collect consecutive substitutions with same game_id and remaining_time
+                sub_group = [current_row]
+                current_game_id = current_row['game_id']
+                current_time = current_row.get('remaining_time')
+                
+                # Look ahead for more consecutive substitutions
+                j = i + 1
+                while j < len(df):
+                    next_row = df.iloc[j]
+                    
+                    # Stop if different game, different time, or not a substitution
+                    if (next_row['game_id'] != current_game_id or
+                        next_row.get('remaining_time') != current_time or
+                        next_row.get('event_type') != 'substitution'):
+                        break
+                    
+                    sub_group.append(next_row)
+                    j += 1
+                
+                # Create collapsed row if we have multiple substitutions
+                if len(sub_group) > 1:
+                    # Start with the first substitution row
+                    collapsed_row = current_row.copy()
+                    
+                    # Combine descriptions (remove "SUB:" prefixes)
+                    descriptions = []
+                    for sub_row in sub_group:
+                        desc = str(sub_row.get('description', ''))
+                        # Remove "SUB:" prefix if present
+                        if desc.startswith('SUB:'):
+                            desc = desc[4:].strip()
+                        descriptions.append(desc)
+                    
+                    # Create new description with "SUBS:" prefix
+                    collapsed_row['description'] = f"SUBS: {', '.join(descriptions)}"
+                    
+                    # Set player field to None since multiple players are involved
+                    collapsed_row['player'] = None
+                    
+                    result_rows.append(collapsed_row)
+                    total_collapsed += len(sub_group) - 1  # Count eliminated rows
+                    i = j  # Skip past all the substitutions we just collapsed
+                else:
+                    # Single substitution - keep as is
+                    result_rows.append(current_row)
+                    i += 1
+            else:
+                # Not a substitution - keep as is
+                result_rows.append(current_row)
+                i += 1
+        
+        # Create new DataFrame
+        result_df = pd.DataFrame(result_rows).reset_index(drop=True)
+        
+        if total_collapsed > 0:
+            original_count = len(df)
+            new_count = len(result_df)
+            print(f"   ✅ Collapsed {total_collapsed} consecutive substitutions")
+            print(f"   📉 Reduced from {original_count:,} to {new_count:,} rows ({original_count - new_count:,} removed)")
+        else:
+            print(f"   ℹ️  No consecutive substitutions found to collapse")
+            
+        return result_df
     
     def enable_incremental_save(self, save_path: str, save_every_n_batches: int = 5):
         """Enable incremental saving for ultra-optimized generator."""

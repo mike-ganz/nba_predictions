@@ -250,8 +250,9 @@ def main():
     """Main function to run ultra-optimized direct JSONL conversion."""
     
     # SINGLE PLACE TO CHANGE SETTINGS - modify these as needed
-    season_year = "2022-2023"  # Can be "2022-2023" or "2023-2024"
-    generation_mode = "first_N_plays"  # Can be either "remaining_plays" or "first_N_plays"
+    season_year = "2023-2024"  # Can be "2022-2023" or "2023-2024"
+    generation_mode = "remaining_plays"  # Can be either "remaining_plays" or "first_N_plays"
+    sample_size = 5000
      
     # Check for existing files and warn user
     incremental_path = f"data/training/ULTRA_OPTIMIZED_incremental_{generation_mode}.jsonl"
@@ -281,7 +282,7 @@ def main():
     print()
     
     start_time = time.time()
-    result_path = create_direct_jsonl_ultra_optimized(generation_mode=generation_mode, season_year=season_year)  # No sample_size = full dataset
+    result_path = create_direct_jsonl_ultra_optimized(sample_size=sample_size, generation_mode=generation_mode, season_year=season_year)  # No sample_size = full dataset
     end_time = time.time()
     
     total_minutes = (end_time - start_time) / 60
