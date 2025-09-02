@@ -1,8 +1,10 @@
 """
 Google Gemini training data formatting utilities.
 
-This module handles conversion of NBA training data to Gemini fine-tuning format,
-creating input-output pairs suitable for Gemini model training.
+This module handles conversion of NBA training data to the official Google Cloud 
+Vertex AI Gemini fine-tuning format using the "messages" structure with user/model roles.
+
+Format: {"messages": [{"role": "user", "content": "..."}, {"role": "model", "content": "..."}]}
 """
 
 import json
@@ -28,7 +30,7 @@ class GeminiFormatter(BaseFormatter):
         """
         Convert our JSON training data into Gemini fine-tuning JSONL format.
         Handles two generation modes:
-        - remaining_plays: Standard input-output pairs with next play
+        - remaining_plays: Skip first N plays, then create input-output pairs with full context
         - first_N_plays: Single entry per game with first N plays as targets
         
         Args:
@@ -54,11 +56,16 @@ class GeminiFormatter(BaseFormatter):
                         training_examples.append(example)
         else:
             # Mode 1: Standard remaining_plays pairs
-            for game_id in df['game_id'].unique():
-                game_df = df[df['game_id'] == game_id].sort_values('play_id').copy()
+            for game_id in sorted(df['game_id'].unique()):
+                game_df = df[df['game_id'] == game_id].sort_values('play_id').reset_index(drop=True)
                 
-                # Create training examples for consecutive plays
-                for i in range(len(game_df) - 1):
+                # Create training examples for consecutive plays  
+                for i in range(len(game_df) - 1):  # -1 because we need a next play
+                    # Skip rows with invalid JSON data (placeholders from first N plays)
+                    current_json_data = game_df.iloc[i]['json_training_data']
+                    if not current_json_data or current_json_data.strip() == "" or current_json_data.strip() == "{}":
+                        continue
+                    
                     example = self._create_training_example(game_df, i)
                     if example:
                         training_examples.append(example)
@@ -88,10 +95,18 @@ class GeminiFormatter(BaseFormatter):
                 game_df, current_index, next_row, current_json
             )
             
-            # Create Gemini training example with input_text and output_text
+            # Create Gemini training example using official Google format
             training_example = {
-                "input_text": current_row['json_training_data'],  # Our JSON context
-                "output_text": json.dumps(assistant_response, separators=(',', ':'))
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": current_row['json_training_data']  # Our JSON context
+                    },
+                    {
+                        "role": "model",
+                        "content": json.dumps(assistant_response, separators=(',', ':'))
+                    }
+                ]
             }
             
             return training_example
@@ -131,10 +146,18 @@ class GeminiFormatter(BaseFormatter):
                 "first_N_plays": first_plays
             }
             
-            # Create Gemini training example
+            # Create Gemini training example using official Google format
             training_example = {
-                "input_text": context_row['json_training_data'],  # Context without recent_plays
-                "output_text": json.dumps(assistant_response, separators=(',', ':'))
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": context_row['json_training_data']  # Context without recent_plays
+                    },
+                    {
+                        "role": "model",
+                        "content": json.dumps(assistant_response, separators=(',', ':'))
+                    }
+                ]
             }
             
             return training_example
@@ -264,35 +287,56 @@ class GeminiFormatter(BaseFormatter):
         
         for i, example in enumerate(training_examples):
             try:
-                # Check required fields for Gemini format
-                if 'input_text' not in example:
-                    validation_results['errors'].append(f"Example {i}: Missing 'input_text' field")
-                    continue
-                    
-                if 'output_text' not in example:
-                    validation_results['errors'].append(f"Example {i}: Missing 'output_text' field")
+                # Check required fields for Gemini format (official Google Cloud structure)
+                if 'messages' not in example:
+                    validation_results['errors'].append(f"Example {i}: Missing 'messages' field")
                     continue
                 
-                # Validate input_text is valid JSON
+                messages = example['messages']
+                if not isinstance(messages, list) or len(messages) != 2:
+                    validation_results['errors'].append(f"Example {i}: 'messages' must be a list with exactly 2 entries")
+                    continue
+                
+                # Validate user message
+                user_msg = messages[0]
+                if user_msg.get('role') != 'user':
+                    validation_results['errors'].append(f"Example {i}: First message must have role 'user'")
+                    continue
+                
+                if 'content' not in user_msg:
+                    validation_results['errors'].append(f"Example {i}: User message missing 'content' field")
+                    continue
+                
+                # Validate model message
+                model_msg = messages[1]
+                if model_msg.get('role') != 'model':
+                    validation_results['errors'].append(f"Example {i}: Second message must have role 'model'")
+                    continue
+                
+                if 'content' not in model_msg:
+                    validation_results['errors'].append(f"Example {i}: Model message missing 'content' field")
+                    continue
+                
+                # Validate user content is valid JSON with team info
                 try:
-                    input_content = json.loads(example['input_text'])
+                    input_content = json.loads(user_msg['content'])
                     if 'away_team' not in input_content or 'home_team' not in input_content:
                         validation_results['warnings'].append(
-                            f"Example {i}: Input text missing team information"
+                            f"Example {i}: User content missing team information"
                         )
                 except json.JSONDecodeError:
-                    validation_results['errors'].append(f"Example {i}: Input text is not valid JSON")
+                    validation_results['errors'].append(f"Example {i}: User content is not valid JSON")
                     continue
                 
-                # Validate output_text is valid JSON
+                # Validate model content is valid JSON
                 try:
-                    output_content = json.loads(example['output_text'])
+                    output_content = json.loads(model_msg['content'])
                     if 'next_play' not in output_content and 'first_N_plays' not in output_content:
                         validation_results['warnings'].append(
-                            f"Example {i}: Output text missing expected keys"
+                            f"Example {i}: Model content missing expected keys"
                         )
                 except json.JSONDecodeError:
-                    validation_results['errors'].append(f"Example {i}: Output text is not valid JSON")
+                    validation_results['errors'].append(f"Example {i}: Model content is not valid JSON")
                     continue
                 
                 validation_results['valid_examples'] += 1

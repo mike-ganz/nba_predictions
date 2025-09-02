@@ -113,7 +113,8 @@ class MultiPlatformGenerator:
         if platform and platform.lower() != self.platform:
             self.set_platform(platform)
         
-        from training.data_generator import training_data_generator
+        from training.data_generator_ultra_optimized import UltraOptimizedTrainingDataGenerator
+        ultra_optimized_training_data_generator = UltraOptimizedTrainingDataGenerator()
         from data.loaders import data_loader
         
         print(f"Generating {self.formatter.platform_name} dataset for season {season_year}...")
@@ -146,13 +147,36 @@ class MultiPlatformGenerator:
             
             print(f"🎮 Selected games: {game_id_filter[:5]}{'...' if len(game_id_filter) > 5 else ''}")
         
-        # Generate structured JSON data
-        df = training_data_generator.generate_dataset(
-            season_year=season_year,
+        # Load and preprocess data first
+        from config.settings import config
+        if season_year:
+            config.season_year = season_year
+        
+        df = data_loader.load_play_by_play_data(season_year)
+        
+        # Apply game filtering if specified
+        if game_id_filter:
+            df = df[df['game_id'].isin(game_id_filter)]
+            print(f"Filtered to {len(df)} rows from {len(game_id_filter)} games")
+        
+        # Sort by game_id and play sequence for proper order
+        df = df.sort_values(['game_id', 'play_id']).reset_index(drop=True)
+        
+        # Generate structured JSON data using ultra-optimized generator with generation_mode support
+        df = ultra_optimized_training_data_generator.create_llm_training_data(
+            df,
             n_total=n_total,
-            sample_size=sample_size,
-            game_id_filter=game_id_filter
+            force_real_pca=False,
+            generation_mode=generation_mode  # 🔧 CRITICAL FIX: Pass generation_mode directly!
         )
+        
+        # Apply sampling if specified (after generation to avoid sampling raw plays)
+        if sample_size and sample_size < len(df):
+            df = df.sample(n=sample_size, random_state=42).reset_index(drop=True)
+            print(f"Sampled {sample_size} rows from dataset")
+        
+        print(f"Generated dataset with {len(df)} rows")
+        print(f"Each row contains up to {n_total} descriptions concatenated together")
         
         # Convert to platform-specific format
         training_examples = self.formatter.create_training_data(df, generation_mode)
