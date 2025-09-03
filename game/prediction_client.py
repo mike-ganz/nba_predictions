@@ -11,7 +11,7 @@ from typing import Dict, Any, Optional, Tuple
 import json
 import os
 from dotenv import load_dotenv
-from .response_validator import NBAResponseValidator
+from .response_validator import NBAResponseValidator, ValidationResult
 
 
 class BasePredictionClient(ABC):
@@ -61,7 +61,7 @@ class BasePredictionClient(ABC):
     
     def predict_with_validation(self, context: Dict[str, Any], model_id: str, 
                                max_tokens: int = 1500, temperature: float = 0.1,
-                               max_retries: int = 3) -> Tuple[str, Dict[str, Any]]:
+                               max_retries: int = 3) -> Tuple[str, Dict[str, Any], bool]:
         """
         Make a prediction with validation and retry logic.
         
@@ -73,7 +73,7 @@ class BasePredictionClient(ABC):
             max_retries: Maximum number of retries on validation failure
             
         Returns:
-            tuple: (response_content, usage_stats)
+            tuple: (response_content, usage_stats, is_game_ended)
             
         Raises:
             ValueError: If validation fails after all retries
@@ -85,28 +85,37 @@ class BasePredictionClient(ABC):
                 # Make prediction
                 response_content, usage_stats = self.predict(context, model_id, max_tokens, temperature)
                 
-                # Validate response
-                is_valid, validation_errors = self.validator.validate_response(response_content, context)
+                # Validate response with advanced game flow logic
+                validation_result, validation_errors, reason = self.validator.validate_response(response_content, context)
                 
-                if is_valid:
+                if validation_result == ValidationResult.VALID:
                     if attempt > 0:
                         print(f"✅ Validation successful on attempt {attempt + 1}")
-                    return response_content, usage_stats
+                    return response_content, usage_stats, False
                 
-                # Log validation errors
-                validation_attempts.append({
-                    'attempt': attempt + 1,
-                    'errors': validation_errors,
-                    'response_preview': response_content[:200] + "..." if len(response_content) > 200 else response_content
-                })
+                elif validation_result == ValidationResult.END_GAME:
+                    print(f"🏁 Game ending condition detected: {reason}")
+                    print(f"🎮 Returning final play and ending game loop")
+                    return response_content, usage_stats, True
                 
-                print(f"❌ Validation failed on attempt {attempt + 1}/{max_retries + 1}")
-                print(f"   Errors: {len(validation_errors)} validation issues")
-                
-                if attempt < max_retries:
-                    print(f"🔄 Retrying prediction...")
-                else:
-                    print(f"💥 Max retries ({max_retries}) exceeded")
+                elif validation_result == ValidationResult.RETRY:
+                    # Log validation retry reason
+                    validation_attempts.append({
+                        'attempt': attempt + 1,
+                        'reason': reason,
+                        'errors': validation_errors,
+                        'response_preview': response_content[:200] + "..." if len(response_content) > 200 else response_content
+                    })
+                    
+                    print(f"🔄 Validation requires retry on attempt {attempt + 1}/{max_retries + 1}")
+                    print(f"   Reason: {reason}")
+                    if validation_errors:
+                        print(f"   Additional errors: {len(validation_errors)} validation issues")
+                    
+                    if attempt < max_retries:
+                        print(f"🔄 Retrying prediction...")
+                    else:
+                        print(f"💥 Max retries ({max_retries}) exceeded")
                 
             except Exception as e:
                 print(f"❌ Prediction attempt {attempt + 1} failed with error: {str(e)}")
@@ -118,11 +127,13 @@ class BasePredictionClient(ABC):
         for attempt_info in validation_attempts:
             error_details.append(f"\nAttempt {attempt_info['attempt']}:")
             error_details.append(f"  Response preview: {attempt_info['response_preview']}")
-            error_details.append(f"  Validation errors ({len(attempt_info['errors'])}):")
-            for error in attempt_info['errors'][:3]:  # Show first 3 errors
-                error_details.append(f"    - {error.field_path}: {error.message}")
-            if len(attempt_info['errors']) > 3:
-                error_details.append(f"    - ... and {len(attempt_info['errors']) - 3} more errors")
+            error_details.append(f"  Retry reason: {attempt_info['reason']}")
+            if attempt_info['errors']:
+                error_details.append(f"  Additional validation errors ({len(attempt_info['errors'])}):")
+                for error in attempt_info['errors'][:3]:  # Show first 3 errors
+                    error_details.append(f"    - {error.field_path}: {error.message}")
+                if len(attempt_info['errors']) > 3:
+                    error_details.append(f"    - ... and {len(attempt_info['errors']) - 3} more errors")
         
         full_error_message = f"Response validation failed after {max_retries + 1} attempts:{''.join(error_details)}"
         raise ValueError(full_error_message)

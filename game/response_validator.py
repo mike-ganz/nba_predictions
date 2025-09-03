@@ -5,8 +5,9 @@ Ensures all model responses adhere to the expected JSON format and data constrai
 
 import json
 import re
-from typing import Dict, Any, List, Optional, Set
+from typing import Dict, Any, List, Optional, Set, Tuple
 from dataclasses import dataclass
+from enum import Enum
 
 
 @dataclass
@@ -19,22 +20,37 @@ class ValidationError:
     message: str
 
 
+class ValidationResult(Enum):
+    """Possible validation results."""
+    VALID = "valid"
+    RETRY = "retry"
+    END_GAME = "end_game"
+
+
 class NBAResponseValidator:
     """Validates NBA prediction model responses for format consistency."""
     
     def __init__(self):
         self.errors: List[ValidationError] = []
+        
+        # State tracking for advanced validations
+        self.response_history: List[str] = []  # Track raw responses for duplicate detection
+        self.consecutive_subs: int = 0  # Track consecutive substitution responses
+        self.consecutive_endgame: int = 0  # Track consecutive end-game scenarios
+        self.consecutive_same_time: int = 0  # Track consecutive same time_remaining values
+        self.last_time_remaining: Optional[str] = None  # Track the last time_remaining value
+        self.max_history_size: int = 10  # Limit history size for memory management
     
-    def validate_response(self, response_text: str, context: Dict[str, Any]) -> tuple[bool, List[ValidationError]]:
+    def validate_response(self, response_text: str, context: Dict[str, Any]) -> Tuple[ValidationResult, List[ValidationError], str]:
         """
-        Validate a model response against expected format.
+        Validate a model response against expected format with advanced game flow logic.
         
         Args:
             response_text: Raw response text from the model
             context: Original game context for validation reference
             
         Returns:
-            (is_valid, validation_errors)
+            (validation_result, validation_errors, reason)
         """
         self.errors = []
         
@@ -49,23 +65,30 @@ class NBAResponseValidator:
                 actual=f"JSON parse error: {str(e)}",
                 message=f"Response is not valid JSON: {str(e)}"
             ))
-            return False, self.errors
+            return ValidationResult.RETRY, self.errors, "JSON parse error"
         
         # Step 2: Validate top-level structure
         if not self._validate_top_level_structure(response_data):
-            return False, self.errors
+            return ValidationResult.RETRY, self.errors, "Invalid top-level structure"
         
         next_play = response_data["next_play"]
         
         # Step 3: Validate next_play structure and types
         if not self._validate_next_play_structure(next_play):
-            return False, self.errors
+            return ValidationResult.RETRY, self.errors, "Invalid next_play structure"
         
         # Step 4: Validate content against context
         if not self._validate_content_consistency(next_play, context):
-            return False, self.errors
+            return ValidationResult.RETRY, self.errors, "Content inconsistency with context"
         
-        return len(self.errors) == 0, self.errors
+        # Step 5: Advanced game flow validations
+        if len(self.errors) == 0:  # Only proceed if basic validation passed
+            advanced_result, reason = self._validate_advanced_game_flow(response_text, next_play)
+            if advanced_result != ValidationResult.VALID:
+                return advanced_result, self.errors, reason
+        
+        # If we get here, all validations passed
+        return ValidationResult.VALID, self.errors, "Response is valid"
     
     def _validate_top_level_structure(self, data: Any) -> bool:
         """Validate top-level response structure."""
@@ -359,6 +382,156 @@ class NBAResponseValidator:
                 ))
         
         return len(self.errors) == 0
+    
+    def _validate_advanced_game_flow(self, response_text: str, next_play: Dict[str, Any]) -> Tuple[ValidationResult, str]:
+        """
+        Advanced game flow validations based on response patterns and game state.
+        
+        Args:
+            response_text: Raw response text for duplicate detection
+            next_play: Parsed next_play object
+            
+        Returns:
+            (validation_result, reason)
+        """
+        # Update response history
+        self._update_response_history(response_text)
+        
+        # Check for duplicate responses (3rd time getting same response)
+        if self._check_duplicate_response(response_text):
+            return ValidationResult.RETRY, "Received same response 3 times - requesting new response"
+        
+        # Check for consecutive same time_remaining
+        if self._check_consecutive_same_time(next_play):
+            return ValidationResult.RETRY, "Same time_remaining for 4 consecutive responses - requesting time progression"
+        
+        # Check for excessive substitutions
+        if self._check_excessive_substitutions(next_play):
+            return ValidationResult.RETRY, "Too many consecutive substitutions - requesting different play type"
+        
+        # Check for game ending conditions
+        game_end_result = self._check_game_ending_conditions(next_play)
+        if game_end_result != ValidationResult.VALID:
+            return game_end_result, "Game ending condition met"
+        
+        return ValidationResult.VALID, "Advanced validations passed"
+    
+    def _update_response_history(self, response_text: str) -> None:
+        """Update the response history with size management."""
+        self.response_history.append(response_text.strip())
+        if len(self.response_history) > self.max_history_size:
+            self.response_history.pop(0)
+    
+    def _check_duplicate_response(self, response_text: str) -> bool:
+        """Check if we've received the same response 3 times."""
+        if len(self.response_history) < 3:
+            return False
+        
+        # Check if the last 3 responses are identical
+        recent_responses = self.response_history[-3:]
+        return all(r == response_text.strip() for r in recent_responses)
+    
+    def _check_consecutive_same_time(self, next_play: Dict[str, Any]) -> bool:
+        """Check for 4 consecutive responses with the same time_remaining."""
+        current_time = next_play.get("time_remaining")
+        
+        # Skip validation if time_remaining is not a string (invalid format)
+        if not isinstance(current_time, str):
+            return False
+        
+        if self.last_time_remaining == current_time:
+            self.consecutive_same_time += 1
+            if self.consecutive_same_time >= 4:
+                # Reset counter and return retry
+                self.consecutive_same_time = 0
+                self.last_time_remaining = None
+                return True
+        else:
+            # Reset counter if time changed
+            self.consecutive_same_time = 1  # Start count with current time
+            self.last_time_remaining = current_time
+        
+        return False
+    
+    def _check_excessive_substitutions(self, next_play: Dict[str, Any]) -> bool:
+        """Check for 3 consecutive substitution plays."""
+        description = next_play.get("description", "").upper()
+        
+        if "SUB" in description:
+            self.consecutive_subs += 1
+            if self.consecutive_subs >= 3:
+                # Reset counter and return retry
+                self.consecutive_subs = 0
+                return True
+        else:
+            # Reset counter if not a substitution
+            self.consecutive_subs = 0
+        
+        return False
+    
+    def _check_game_ending_conditions(self, next_play: Dict[str, Any]) -> ValidationResult:
+        """Check for game ending conditions."""
+        quarter = next_play.get("quarter")
+        time_remaining = next_play.get("time_remaining", "")
+        
+        # Immediate end: Quarter 4 with 00:00 or negative time
+        if quarter == 4 and self._is_time_expired(time_remaining):
+            return ValidationResult.END_GAME
+        
+        # Track consecutive end-game scenarios
+        if quarter == 4 and self._is_time_very_low(time_remaining):
+            self.consecutive_endgame += 1
+            if self.consecutive_endgame >= 5:
+                return ValidationResult.END_GAME
+        else:
+            # Reset counter if not in end-game scenario
+            self.consecutive_endgame = 0
+        
+        return ValidationResult.VALID
+    
+    def _is_time_expired(self, time_remaining: str) -> bool:
+        """Check if time is 00:00 or less."""
+        if not isinstance(time_remaining, str):
+            return False
+        
+        try:
+            parts = time_remaining.split(':')
+            if len(parts) != 2:
+                return False
+            
+            minutes = int(parts[0])
+            seconds = int(parts[1])
+            
+            return minutes <= 0 and seconds <= 0
+        except (ValueError, IndexError):
+            return False
+    
+    def _is_time_very_low(self, time_remaining: str) -> bool:
+        """Check if time is less than 00:05."""
+        if not isinstance(time_remaining, str):
+            return False
+        
+        try:
+            parts = time_remaining.split(':')
+            if len(parts) != 2:
+                return False
+            
+            minutes = int(parts[0])
+            seconds = int(parts[1])
+            
+            # Less than 5 seconds total
+            total_seconds = minutes * 60 + seconds
+            return total_seconds < 5
+        except (ValueError, IndexError):
+            return False
+    
+    def reset_state(self) -> None:
+        """Reset all state tracking (useful for new games)."""
+        self.response_history.clear()
+        self.consecutive_subs = 0
+        self.consecutive_endgame = 0
+        self.consecutive_same_time = 0
+        self.last_time_remaining = None
     
     def _validate_time_format(self, time_str: str) -> bool:
         """Validate time format (MM:SS)."""
