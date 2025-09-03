@@ -2,9 +2,9 @@
 Google Gemini training data formatting utilities.
 
 This module handles conversion of NBA training data to the official Google Cloud 
-Vertex AI Gemini fine-tuning format using the "messages" structure with user/model roles.
+Vertex AI Gemini fine-tuning format using the "GenerateContent" structure with user/model roles.
 
-Format: {"messages": [{"role": "user", "content": "..."}, {"role": "model", "content": "..."}]}
+Format: {"contents": [{"role": "user", "parts": [{"text": "..."}]}, {"role": "model", "parts": [{"text": "..."}]}]}
 """
 
 import json
@@ -95,16 +95,31 @@ class GeminiFormatter(BaseFormatter):
                 game_df, current_index, next_row, current_json
             )
             
-            # Create Gemini training example using official Google format
+            # Create Gemini training example using GenerateContent format
+            # OLD (messages format - commented out for easy revert):
+            # training_example = {
+            #     "messages": [
+            #         {
+            #             "role": "user",
+            #             "content": current_row['json_training_data']  # Our JSON context
+            #         },
+            #         {
+            #             "role": "model",
+            #             "content": json.dumps(assistant_response, separators=(',', ':'))
+            #         }
+            #     ]
+            # }
+            
+            # NEW (GenerateContent format):
             training_example = {
-                "messages": [
+                "contents": [
                     {
                         "role": "user",
-                        "content": current_row['json_training_data']  # Our JSON context
+                        "parts": [{"text": current_row['json_training_data']}]  # Our JSON context
                     },
                     {
-                        "role": "model",
-                        "content": json.dumps(assistant_response, separators=(',', ':'))
+                        "role": "model", 
+                        "parts": [{"text": json.dumps(assistant_response, separators=(',', ':'))}]
                     }
                 ]
             }
@@ -146,16 +161,31 @@ class GeminiFormatter(BaseFormatter):
                 "first_N_plays": first_plays
             }
             
-            # Create Gemini training example using official Google format
+            # Create Gemini training example using GenerateContent format
+            # OLD (messages format - commented out for easy revert):
+            # training_example = {
+            #     "messages": [
+            #         {
+            #             "role": "user",
+            #             "content": context_row['json_training_data']  # Context without recent_plays
+            #         },
+            #         {
+            #             "role": "model",
+            #             "content": json.dumps(assistant_response, separators=(',', ':'))
+            #         }
+            #     ]
+            # }
+            
+            # NEW (GenerateContent format):
             training_example = {
-                "messages": [
+                "contents": [
                     {
                         "role": "user",
-                        "content": context_row['json_training_data']  # Context without recent_plays
+                        "parts": [{"text": context_row['json_training_data']}]  # Context without recent_plays
                     },
                     {
                         "role": "model",
-                        "content": json.dumps(assistant_response, separators=(',', ':'))
+                        "parts": [{"text": json.dumps(assistant_response, separators=(',', ':'))}]
                     }
                 ]
             }
@@ -287,39 +317,79 @@ class GeminiFormatter(BaseFormatter):
         
         for i, example in enumerate(training_examples):
             try:
-                # Check required fields for Gemini format (official Google Cloud structure)
-                if 'messages' not in example:
-                    validation_results['errors'].append(f"Example {i}: Missing 'messages' field")
+                # Check required fields for Gemini GenerateContent format
+                # OLD (messages format - commented out for easy revert):
+                # if 'messages' not in example:
+                #     validation_results['errors'].append(f"Example {i}: Missing 'messages' field")
+                #     continue
+                # 
+                # messages = example['messages']
+                # if not isinstance(messages, list) or len(messages) != 2:
+                #     validation_results['errors'].append(f"Example {i}: 'messages' must be a list with exactly 2 entries")
+                #     continue
+                # 
+                # # Validate user message
+                # user_msg = messages[0]
+                # if user_msg.get('role') != 'user':
+                #     validation_results['errors'].append(f"Example {i}: First message must have role 'user'")
+                #     continue
+                # 
+                # if 'content' not in user_msg:
+                #     validation_results['errors'].append(f"Example {i}: User message missing 'content' field")
+                #     continue
+                # 
+                # # Validate model message
+                # model_msg = messages[1]
+                # if model_msg.get('role') != 'model':
+                #     validation_results['errors'].append(f"Example {i}: Second message must have role 'model'")
+                #     continue
+                # 
+                # if 'content' not in model_msg:
+                #     validation_results['errors'].append(f"Example {i}: Model message missing 'content' field")
+                #     continue
+                
+                # NEW (GenerateContent format):
+                if 'contents' not in example:
+                    validation_results['errors'].append(f"Example {i}: Missing 'contents' field")
                     continue
                 
-                messages = example['messages']
-                if not isinstance(messages, list) or len(messages) != 2:
-                    validation_results['errors'].append(f"Example {i}: 'messages' must be a list with exactly 2 entries")
+                contents = example['contents']
+                if not isinstance(contents, list) or len(contents) != 2:
+                    validation_results['errors'].append(f"Example {i}: 'contents' must be a list with exactly 2 entries")
                     continue
                 
-                # Validate user message
-                user_msg = messages[0]
-                if user_msg.get('role') != 'user':
-                    validation_results['errors'].append(f"Example {i}: First message must have role 'user'")
+                # Validate user content
+                user_content = contents[0]
+                if user_content.get('role') != 'user':
+                    validation_results['errors'].append(f"Example {i}: First content must have role 'user'")
                     continue
                 
-                if 'content' not in user_msg:
-                    validation_results['errors'].append(f"Example {i}: User message missing 'content' field")
+                if 'parts' not in user_content or not isinstance(user_content['parts'], list):
+                    validation_results['errors'].append(f"Example {i}: User content missing 'parts' array")
                     continue
                 
-                # Validate model message
-                model_msg = messages[1]
-                if model_msg.get('role') != 'model':
-                    validation_results['errors'].append(f"Example {i}: Second message must have role 'model'")
+                if len(user_content['parts']) != 1 or 'text' not in user_content['parts'][0]:
+                    validation_results['errors'].append(f"Example {i}: User content 'parts' must contain single 'text' entry")
                     continue
                 
-                if 'content' not in model_msg:
-                    validation_results['errors'].append(f"Example {i}: Model message missing 'content' field")
+                # Validate model content
+                model_content = contents[1]
+                if model_content.get('role') != 'model':
+                    validation_results['errors'].append(f"Example {i}: Second content must have role 'model'")
+                    continue
+                
+                if 'parts' not in model_content or not isinstance(model_content['parts'], list):
+                    validation_results['errors'].append(f"Example {i}: Model content missing 'parts' array")
+                    continue
+                
+                if len(model_content['parts']) != 1 or 'text' not in model_content['parts'][0]:
+                    validation_results['errors'].append(f"Example {i}: Model content 'parts' must contain single 'text' entry")
                     continue
                 
                 # Validate user content is valid JSON with team info
                 try:
-                    input_content = json.loads(user_msg['content'])
+                    input_text = user_content['parts'][0]['text']
+                    input_content = json.loads(input_text)
                     if 'away_team' not in input_content or 'home_team' not in input_content:
                         validation_results['warnings'].append(
                             f"Example {i}: User content missing team information"
@@ -330,7 +400,8 @@ class GeminiFormatter(BaseFormatter):
                 
                 # Validate model content is valid JSON
                 try:
-                    output_content = json.loads(model_msg['content'])
+                    output_text = model_content['parts'][0]['text']
+                    output_content = json.loads(output_text)
                     if 'next_play' not in output_content and 'first_N_plays' not in output_content:
                         validation_results['warnings'].append(
                             f"Example {i}: Model content missing expected keys"
