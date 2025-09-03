@@ -11,6 +11,7 @@ from typing import Dict, Any, Optional, Tuple
 import json
 import os
 from dotenv import load_dotenv
+from .response_validator import NBAResponseValidator
 
 
 class BasePredictionClient(ABC):
@@ -19,6 +20,7 @@ class BasePredictionClient(ABC):
     def __init__(self):
         """Initialize the prediction client."""
         self._initialize_client()
+        self.validator = NBAResponseValidator()
     
     @property
     @abstractmethod
@@ -56,6 +58,74 @@ class BasePredictionClient(ABC):
             dict: Dictionary with 'model_1_id' and 'model_2_id' keys
         """
         return self._get_default_models()
+    
+    def predict_with_validation(self, context: Dict[str, Any], model_id: str, 
+                               max_tokens: int = 1500, temperature: float = 0.1,
+                               max_retries: int = 3) -> Tuple[str, Dict[str, Any]]:
+        """
+        Make a prediction with validation and retry logic.
+        
+        Args:
+            context: Game context dictionary
+            model_id: Model identifier for the platform
+            max_tokens: Maximum tokens to generate
+            temperature: Temperature for generation
+            max_retries: Maximum number of retries on validation failure
+            
+        Returns:
+            tuple: (response_content, usage_stats)
+            
+        Raises:
+            ValueError: If validation fails after all retries
+        """
+        validation_attempts = []
+        
+        for attempt in range(max_retries + 1):
+            try:
+                # Make prediction
+                response_content, usage_stats = self.predict(context, model_id, max_tokens, temperature)
+                
+                # Validate response
+                is_valid, validation_errors = self.validator.validate_response(response_content, context)
+                
+                if is_valid:
+                    if attempt > 0:
+                        print(f"✅ Validation successful on attempt {attempt + 1}")
+                    return response_content, usage_stats
+                
+                # Log validation errors
+                validation_attempts.append({
+                    'attempt': attempt + 1,
+                    'errors': validation_errors,
+                    'response_preview': response_content[:200] + "..." if len(response_content) > 200 else response_content
+                })
+                
+                print(f"❌ Validation failed on attempt {attempt + 1}/{max_retries + 1}")
+                print(f"   Errors: {len(validation_errors)} validation issues")
+                
+                if attempt < max_retries:
+                    print(f"🔄 Retrying prediction...")
+                else:
+                    print(f"💥 Max retries ({max_retries}) exceeded")
+                
+            except Exception as e:
+                print(f"❌ Prediction attempt {attempt + 1} failed with error: {str(e)}")
+                if attempt == max_retries:
+                    raise e
+        
+        # All attempts failed - create detailed error message
+        error_details = []
+        for attempt_info in validation_attempts:
+            error_details.append(f"\nAttempt {attempt_info['attempt']}:")
+            error_details.append(f"  Response preview: {attempt_info['response_preview']}")
+            error_details.append(f"  Validation errors ({len(attempt_info['errors'])}):")
+            for error in attempt_info['errors'][:3]:  # Show first 3 errors
+                error_details.append(f"    - {error.field_path}: {error.message}")
+            if len(attempt_info['errors']) > 3:
+                error_details.append(f"    - ... and {len(attempt_info['errors']) - 3} more errors")
+        
+        full_error_message = f"Response validation failed after {max_retries + 1} attempts:{''.join(error_details)}"
+        raise ValueError(full_error_message)
     
     @abstractmethod
     def _get_default_models(self) -> Dict[str, str]:
