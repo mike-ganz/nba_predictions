@@ -2,31 +2,77 @@
 """
 NBA Play Prediction Script
 
-Simple script to test predictions using a fine-tuned OpenAI model.
+Multi-platform script to test predictions using fine-tuned models.
+Supports OpenAI and Gemini platforms.
 Takes team and player data and predicts the next play using the trained model.
+
+CONFIGURATION:
+=============
+
+Platform Selection:
+- Set PREDICTION_PLATFORM environment variable to "openai" or "gemini"
+- Defaults to "openai" if not specified
+
+OpenAI Setup:
+1. Set OPENAI_API_KEY environment variable
+2. Default model IDs are preconfigured for the provided fine-tuned models
+
+Gemini Setup:
+1. Install: pip install google-cloud-aiplatform
+2. Authenticate: gcloud auth login
+3. Set project: gcloud config set project YOUR_PROJECT_ID
+4. Set environment variables:
+   - GEMINI_MODEL_1_ENDPOINT=your_model_1_endpoint_id
+   - GEMINI_MODEL_2_ENDPOINT=your_model_2_endpoint_id
+   - GOOGLE_CLOUD_PROJECT=your_project_id (optional)
+   - GOOGLE_CLOUD_LOCATION=us-central1 (optional)
+
+USAGE:
+======
+python predict_next_play.py
+
+The script will automatically detect your platform configuration and run
+the appropriate prediction client.
 """
 
 import json
-from dotenv import load_dotenv
 import os
-from typing import Dict, Any, Tuple
-from openai import OpenAI
+from typing import Dict, Any
+from dotenv import load_dotenv
+from game.prediction_client import PredictionClientFactory, BasePredictionClient
 
-# Fine-tuned model IDs
-MODEL_1_ID = "ft:gpt-4.1-nano-2025-04-14:personal:first-n-plays:CAieHHyW"  # First model
-MODEL_2_ID = "ft:gpt-4.1-nano-2025-04-14:personal:part-1:CAoc9Uw6"  # Second model
-
-def init_openai_client() -> OpenAI:
-    """Initialize OpenAI client with API key."""
-    load_dotenv()  # this loads the .env file
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise ValueError(
-            "OPENAI_API_KEY environment variable not found. "
-            "Please set your OpenAI API key as an environment variable."
-        )
+def get_prediction_platform() -> str:
+    """Get the prediction platform from environment variable or default to OpenAI."""
+    load_dotenv()
+    platform = os.getenv("PREDICTION_PLATFORM", "gemini").lower()
     
-    return OpenAI(api_key=api_key)
+    # Validate platform
+    if not PredictionClientFactory.is_platform_supported(platform):
+        available = PredictionClientFactory.get_available_platforms()
+        print(f"⚠️  Warning: Unsupported platform '{platform}'. Using 'openai' instead.")
+        print(f"   Available platforms: {available}")
+        platform = "openai"
+    
+    return platform
+
+def init_prediction_client() -> tuple[BasePredictionClient, Dict[str, str]]:
+    """Initialize prediction client based on platform configuration."""
+    platform = get_prediction_platform()
+    print(f"🤖 Initializing {platform.upper()} client...")
+    
+    try:
+        client = PredictionClientFactory.create_client(platform)
+        model_config = client.get_model_config()
+        
+        print(f"✅ {platform.upper()} client initialized successfully")
+        print(f"📋 Model 1: {model_config['model_1_id']}")
+        print(f"📋 Model 2: {model_config['model_2_id']}")
+        
+        return client, model_config
+        
+    except Exception as e:
+        print(f"❌ Failed to initialize {platform.upper()} client: {e}")
+        raise
 
 def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5, skip_stage1: bool = False) -> Dict[str, Any]:
     """
@@ -45,8 +91,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
     Returns:
         Dict containing all stages and iterations
     """
-    print("🤖 Initializing OpenAI client...")
-    client = init_openai_client()
+    client, model_config = init_prediction_client()
     
     # Results storage
     results = {
@@ -70,25 +115,19 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
         # === STAGE 1: Get initial predictions ===
         print("\n🎯 STAGE 1: Getting initial next_plays from first model...")
         context_json = json.dumps(game_context, separators=(',', ':'))
-        print(f"📡 Sending to model: {MODEL_1_ID}")
+        print(f"📡 Sending to model: {model_config['model_1_id']}")
         print(f"📊 Context size: {len(context_json)} characters")
         
         try:
             # Stage 1 API call
-            stage1_response = client.chat.completions.create(
-                model=MODEL_1_ID,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": context_json
-                    }
-                ],
+            stage1_content, stage1_usage = client.predict(
+                context=game_context,
+                model_id=model_config['model_1_id'],
                 max_tokens=1500,
                 temperature=0.1
             )
             
-            stage1_content = stage1_response.choices[0].message.content
-            print(f"📊 Stage 1 tokens: {stage1_response.usage.completion_tokens} / 1500")
+            print(f"📊 Stage 1 tokens: {stage1_usage.get('completion_tokens', 'N/A')} / 1500")
             print("✅ Stage 1 completed!")
             
             results["stage1_response"] = stage1_content
@@ -122,13 +161,13 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
             
             # Convert current context to JSON
             iteration_json = json.dumps(working_context, separators=(',', ':'))
-            print(f"📡 Sending to model: {MODEL_2_ID}")
+            print(f"📡 Sending to model: {model_config['model_2_id']}")
             print(f"📊 Context size: {len(iteration_json)} characters")
             print(f"📋 Current recent_plays count: {len(working_context.get('recent_plays', []))}")
             
-            # 🔍 LOG: Show the input context being sent to OpenAI
+            # 🔍 LOG: Show the input context being sent to the model
             print("\n" + "="*60)
-            print(f"📤 INPUT TO OPENAI (Iteration {iteration + 1}):")
+            print(f"📤 INPUT TO MODEL (Iteration {iteration + 1}):")
             print("="*60)
             print("📋 RECENT_PLAYS being sent:")
             if "recent_plays" in working_context:
@@ -144,24 +183,18 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
             print("="*60 + "\n")
             
             # Stage 2 API call
-            stage2_response = client.chat.completions.create(
-                model=MODEL_2_ID,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": iteration_json
-                    }
-                ],
+            stage2_content, stage2_usage = client.predict(
+                context=working_context,
+                model_id=model_config['model_2_id'],
                 max_tokens=1500,
                 temperature=0.1
             )
             
-            stage2_content = stage2_response.choices[0].message.content
-            print(f"📊 Stage 2 tokens: {stage2_response.usage.completion_tokens} / 1500")
+            print(f"📊 Stage 2 tokens: {stage2_usage.get('completion_tokens', 'N/A')} / 1500")
             
-            # 📝 LOG: Print full OpenAI response for debugging
+            # 📝 LOG: Print full model response for debugging
             print("\n" + "="*60)
-            print(f"🔍 FULL OPENAI RESPONSE (Iteration {iteration + 1}):")
+            print(f"🔍 FULL MODEL RESPONSE (Iteration {iteration + 1}):")
             print("="*60)
             print(stage2_content)
             print("="*60 + "\n")
@@ -258,8 +291,27 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
 def main():
     """Main function to test the prediction system."""
     
-    print("🏀 NBA Play Prediction Test")
-    print("=" * 50)
+    print("🏀 NBA Multi-Platform Play Prediction Test")
+    print("=" * 60)
+    
+    # Display platform information
+    platform = get_prediction_platform()
+    available_platforms = PredictionClientFactory.get_available_platforms()
+    print(f"📱 Platform: {platform.upper()}")
+    print(f"🔧 Available platforms: {', '.join(available_platforms)}")
+    
+    if platform == "gemini":
+        print("\n💡 Gemini Configuration Notes:")
+        print("   • Ensure you've run: gcloud auth login")
+        print("   • Set project: gcloud config set project YOUR_PROJECT_ID")
+        print("   • Update model endpoint IDs in GEMINI_MODEL_1_ENDPOINT and GEMINI_MODEL_2_ENDPOINT")
+        print("   • Or modify the _get_default_models() method in GeminiPredictionClient")
+    elif platform == "openai":
+        print("\n💡 OpenAI Configuration Notes:")
+        print("   • Ensure OPENAI_API_KEY environment variable is set")
+        print("   • Default model IDs are configured for the provided fine-tuned models")
+    
+    print("\n" + "=" * 60)
     
     # ==================================================================================
     # 🎯 TESTING MODE SELECTION - Change this to switch between modes
@@ -281,8 +333,11 @@ def main():
     elif TEST_MODE == "skip_stage1":
         print("⚡ Mode: SKIP STAGE 1 (Direct to Rolling Iterations)")
         
-        # Pre-built context with recent_plays already included (from your example)
-        game_context = {"away_team":{"name":"GSW","stats":{"OEFF":118.6,"DEFF":115.5,"PACE":99.2,"REST_DAYS":1},"players":[{"name":"Andrew Wiggins","profile":{"offense":0.54,"defense":0.72,"shot_selection":0.42,"efficiency":-0.02,"MPG":27,"usage":20}},{"name":"Jonathan Kuminga","profile":{"offense":1.39,"defense":0.69,"shot_selection":1.23,"efficiency":-1.03,"MPG":26,"usage":24}},{"name":"Draymond Green","profile":{"offense":1.91,"defense":2.34,"shot_selection":0.15,"efficiency":-1.04,"MPG":27,"usage":16}},{"name":"Brandin Podziemski","profile":{"offense":1.01,"defense":0.42,"shot_selection":-0.3,"efficiency":-0.34,"MPG":26,"usage":19}},{"name":"Stephen Curry","profile":{"offense":4.34,"defense":0.58,"shot_selection":-0.44,"efficiency":-1.89,"MPG":33,"usage":31}},{"name":"Klay Thompson","profile":{"offense":1.39,"defense":0.41,"shot_selection":-1.02,"efficiency":-0.5,"MPG":31,"usage":23}},{"name":"Gary Payton II","profile":{"offense":-0.74,"defense":0.79,"shot_selection":-0.41,"efficiency":-0.36,"MPG":16,"usage":15}},{"name":"Kevon Looney","profile":{"offense":0.01,"defense":0.38,"shot_selection":1.79,"efficiency":-1.03,"MPG":18,"usage":12}},{"name":"Lester Quinones","profile":{"offense":-0.85,"defense":-0.77,"shot_selection":-0.6,"efficiency":0.27,"MPG":13,"usage":18}},{"name":"Trayce Jackson-Davis","profile":{"offense":-0.28,"defense":0.18,"shot_selection":2.22,"efficiency":-1.64,"MPG":13,"usage":17}},{"name":"Dario Saric","profile":{"offense":0.73,"defense":0.2,"shot_selection":-0.17,"efficiency":-0.95,"MPG":19,"usage":19}}]},"home_team":{"name":"UTA","stats":{"OEFF":118.1,"DEFF":120.1,"PACE":99.0,"REST_DAYS":1},"players":[{"name":"Lauri Markkanen","profile":{"offense":1.77,"defense":0.81,"shot_selection":0.07,"efficiency":-1.16,"MPG":33,"usage":25}},{"name":"John Collins","profile":{"offense":0.9,"defense":1.55,"shot_selection":0.28,"efficiency":-0.96,"MPG":28,"usage":20}},{"name":"Walker Kessler","profile":{"offense":0.14,"defense":3.41,"shot_selection":1.31,"efficiency":-1.52,"MPG":23,"usage":13}},{"name":"Collin Sexton","profile":{"offense":2.69,"defense":0.3,"shot_selection":0.92,"efficiency":-1.19,"MPG":25,"usage":28}},{"name":"Keyonte George","profile":{"offense":1.8,"defense":-0.75,"shot_selection":-0.13,"efficiency":-0.36,"MPG":25,"usage":21}},{"name":"Kris Dunn","profile":{"offense":0.75,"defense":1.04,"shot_selection":-0.41,"efficiency":-0.48,"MPG":18,"usage":15}},{"name":"Taylor Hendricks","profile":{"offense":-1.14,"defense":-0.0,"shot_selection":-1.22,"efficiency":0.57,"MPG":15,"usage":19}},{"name":"Jordan Clarkson","profile":{"offense":2.76,"defense":-0.43,"shot_selection":0.24,"efficiency":-0.41,"MPG":30,"usage":26}},{"name":"Talen Horton-Tucker","profile":{"offense":0.89,"defense":0.78,"shot_selection":0.18,"efficiency":0.27,"MPG":20,"usage":24}}]},"recent_plays":[{"quarter":3,"time_remaining":"10:31","score":"GSW 90 - UTA 71","player":"Keyonte George","description":"George OFF.Foul","scoring":{"team":None,"points":0}},{"quarter":3,"time_remaining":"10:31","score":"GSW 90 - UTA 71","player":"Keyonte George","description":"George Offensive Foul Turnover","scoring":{"team":None,"points":0}},{"quarter":3,"time_remaining":"10:22","score":"GSW 90 - UTA 71","player":"Stephen Curry","description":"MISS Curry 24' 3PT Pullup Jump Shot","scoring":{"team":None,"points":0}},{"quarter":3,"time_remaining":"10:19","score":"GSW 90 - UTA 71","player":"Brandin Podziemski","description":"Podziemski REBOUND","scoring":{"team":None,"points":0}},{"quarter":3,"time_remaining":"10:17","score":"GSW 90 - UTA 71","player":"Andrew Wiggins","description":"George STEAL : Wiggins Bad Pass Turnover","scoring":{"team":None,"points":0}},{"quarter":3,"time_remaining":"10:11","score":"GSW 90 - UTA 74","player":"Collin Sexton","description":"Sexton 24' 3PT Running Jump Shot","scoring":{"team":"UTA","points":3}},{"quarter":3,"time_remaining":"09:57","score":"GSW 90 - UTA 74","player":"Stephen Curry","description":"Curry Traveling Turnover","scoring":{"team":None,"points":0}},{"quarter":3,"time_remaining":"09:45","score":"GSW 90 - UTA 74","player":"Collin Sexton","description":"Sexton Bad Pass Turnover : Green STEAL","scoring":{"team":None,"points":0}},{"quarter":3,"time_remaining":"09:41","score":"GSW 92 - UTA 74","player":"Jonathan Kuminga","description":"Kuminga 3' Running Alley Oop Dunk Shot","scoring":{"team":"GSW","points":2}},{"quarter":3,"time_remaining":"09:15","score":"GSW 92 - UTA 76","player":"Collin Sexton","description":"Sexton 11' Pullup Jump Shot","scoring":{"team":"UTA","points":2}}]}
+        # Pre-built context with recent_plays already included (MIN vs POR game)
+        # Load your JSON data and convert null to None
+        import json
+        json_data = """{"away_team":{"name":"MIN","stats":{"OEFF":116.5,"DEFF":108.1,"PACE":98.3,"REST_DAYS":2},"players":[{"name":"Jaden McDaniels","profile":{"offense":0.39,"defense":1.78,"shot_selection":-0.58,"efficiency":-0.75,"MPG":29,"usage":17}},{"name":"Karl-Anthony Towns","profile":{"offense":3.29,"defense":1.86,"shot_selection":0.65,"efficiency":-1.94,"MPG":33,"usage":28}},{"name":"Rudy Gobert","profile":{"offense":1.17,"defense":3.33,"shot_selection":2.75,"efficiency":-1.8,"MPG":33,"usage":16}},{"name":"Anthony Edwards","profile":{"offense":4.38,"defense":1.4,"shot_selection":0.7,"efficiency":-1.5,"MPG":35,"usage":32}},{"name":"Mike Conley","profile":{"offense":1.85,"defense":0.6,"shot_selection":-1.06,"efficiency":-0.95,"MPG":29,"usage":15}},{"name":"Naz Reid","profile":{"offense":0.62,"defense":1.01,"shot_selection":-0.56,"efficiency":-1.01,"MPG":22,"usage":22}},{"name":"Nickeil Alexander-Walker","profile":{"offense":0.34,"defense":0.83,"shot_selection":-1.29,"efficiency":-0.47,"MPG":23,"usage":14}},{"name":"Kyle Anderson","profile":{"offense":0.79,"defense":0.48,"shot_selection":1.51,"efficiency":0.08,"MPG":22,"usage":14}},{"name":"Monte Morris","profile":{"offense":-1.1,"defense":-1.28,"shot_selection":-0.85,"efficiency":1.37,"MPG":13,"usage":21}},{"name":"Jordan McLaughlin","profile":{"offense":-1.03,"defense":-0.91,"shot_selection":-1.08,"efficiency":0.46,"MPG":9,"usage":11}},{"name":"Daishen Nix","profile":{"offense":-1.55,"defense":-2.08,"shot_selection":-0.9,"efficiency":0.18,"MPG":4,"usage":28}},{"name":"Josh Minott","profile":{"offense":-1.4,"defense":-1.73,"shot_selection":1.92,"efficiency":0.01,"MPG":3,"usage":24}},{"name":"Leonard Miller","profile":{"offense":-1.13,"defense":-1.73,"shot_selection":-0.84,"efficiency":-1.39,"MPG":4,"usage":18}}]},"home_team":{"name":"POR","stats":{"OEFF":108.9,"DEFF":117.8,"PACE":97.5,"REST_DAYS":2},"players":[{"name":"Toumani Camara","profile":{"offense":-0.06,"defense":1.5,"shot_selection":0.09,"efficiency":-0.03,"MPG":24,"usage":14}},{"name":"Jerami Grant","profile":{"offense":2.2,"defense":1.13,"shot_selection":0.92,"efficiency":-0.71,"MPG":34,"usage":26}},{"name":"Deandre Ayton","profile":{"offense":0.83,"defense":1.77,"shot_selection":0.71,"efficiency":-0.66,"MPG":32,"usage":19}},{"name":"Anfernee Simons","profile":{"offense":2.83,"defense":0.08,"shot_selection":-0.21,"efficiency":-0.59,"MPG":34,"usage":29}},{"name":"Scoot Henderson","profile":{"offense":2.28,"defense":0.93,"shot_selection":0.56,"efficiency":0.06,"MPG":27,"usage":26}},{"name":"Matisse Thybulle","profile":{"offense":-0.61,"defense":1.89,"shot_selection":-1.87,"efficiency":0.11,"MPG":23,"usage":10}},{"name":"Jabari Walker","profile":{"offense":-0.15,"defense":0.7,"shot_selection":0.89,"efficiency":-0.13,"MPG":22,"usage":17}},{"name":"Duop Reath","profile":{"offense":-0.17,"defense":0.76,"shot_selection":-0.45,"efficiency":-0.55,"MPG":17,"usage":21}},{"name":"Dalano Banton","profile":{"offense":-1.16,"defense":-1.23,"shot_selection":1.26,"efficiency":1.17,"MPG":9,"usage":21}},{"name":"Kris Murray","profile":{"offense":-1.12,"defense":-0.54,"shot_selection":-0.71,"efficiency":0.58,"MPG":13,"usage":13}},{"name":"Ibou Badji","profile":{"offense":-1.03,"defense":1.02,"shot_selection":2.42,"efficiency":-0.87,"MPG":12,"usage":7}},{"name":"Justin Minaya","profile":{"offense":-1.95,"defense":-1.2,"shot_selection":-0.57,"efficiency":2.4,"MPG":9,"usage":7}},{"name":"Ashton Hagans","profile":{"offense":-0.27,"defense":0.59,"shot_selection":0.27,"efficiency":0.53,"MPG":15,"usage":9}}]},"recent_plays":[{"quarter":1,"time_remaining":"07:32","score":"MIN 18 - POR 7","players_on_court":[{"team":"MIN","players":["Rudy Gobert","Mike Conley","Jaden McDaniels","Anthony Edwards","Karl-Anthony Towns"]},{"team":"POR","players":["Deandre Ayton","Jerami Grant","Toumani Camara","Anfernee Simons","Scoot Henderson"]}],"player":"Anfernee Simons","description":"MISS Simons 3PT Step Back Jump Shot","shot_details":{"team":"POR","points":0,"x_coord":47.8,"y_coord":37.8}},{"quarter":1,"time_remaining":"07:29","score":"MIN 18 - POR 7","players_on_court":[{"team":"MIN","players":["Rudy Gobert","Mike Conley","Jaden McDaniels","Anthony Edwards","Karl-Anthony Towns"]},{"team":"POR","players":["Deandre Ayton","Jerami Grant","Toumani Camara","Anfernee Simons","Scoot Henderson"]}],"player":"Rudy Gobert","description":"GOBERT DEF.REBOUND","shot_details":{"team":null,"points":null,"x_coord":null,"y_coord":null}},{"quarter":1,"time_remaining":"07:21","score":"MIN 18 - POR 7","players_on_court":[{"team":"MIN","players":["Rudy Gobert","Mike Conley","Jaden McDaniels","Anthony Edwards","Karl-Anthony Towns"]},{"team":"POR","players":["Deandre Ayton","Jerami Grant","Toumani Camara","Anfernee Simons","Scoot Henderson"]}],"player":"Anthony Edwards","description":"MISS Edwards 27' 3PT Pullup Jump Shot","shot_details":{"team":"MIN","points":0,"x_coord":13.0,"y_coord":28.7}},{"quarter":1,"time_remaining":"07:19","score":"MIN 18 - POR 7","players_on_court":[{"team":"MIN","players":["Rudy Gobert","Mike Conley","Jaden McDaniels","Anthony Edwards","Karl-Anthony Towns"]},{"team":"POR","players":["Deandre Ayton","Jerami Grant","Toumani Camara","Anfernee Simons","Scoot Henderson"]}],"player":"Deandre Ayton","description":"AYTON DEF.REBOUND","shot_details":{"team":null,"points":null,"x_coord":null,"y_coord":null}},{"quarter":1,"time_remaining":"07:11","score":"MIN 18 - POR 7","players_on_court":[{"team":"MIN","players":["Rudy Gobert","Mike Conley","Jaden McDaniels","Anthony Edwards","Karl-Anthony Towns"]},{"team":"POR","players":["Deandre Ayton","Jerami Grant","Toumani Camara","Anfernee Simons","Scoot Henderson"]}],"player":"Anfernee Simons","description":"MISS Simons 12' Driving Floating Jump Shot: Edwards BLOCK","shot_details":{"team":"POR","points":0,"x_coord":36.5,"y_coord":38.4}},{"quarter":1,"time_remaining":"07:11","score":"MIN 18 - POR 7","players_on_court":[{"team":"MIN","players":["Rudy Gobert","Mike Conley","Jaden McDaniels","Anthony Edwards","Karl-Anthony Towns"]},{"team":"POR","players":["Deandre Ayton","Jerami Grant","Toumani Camara","Anfernee Simons","Scoot Henderson"]}],"player":null,"description":"TRAIL BLAZERS OFF.REBOUND","shot_details":{"team":null,"points":null,"x_coord":null,"y_coord":null}},{"quarter":1,"time_remaining":"07:11","score":"MIN 18 - POR 7","players_on_court":[{"team":"MIN","players":["Rudy Gobert","Mike Conley","Jaden McDaniels","Anthony Edwards","Karl-Anthony Towns"]},{"team":"POR","players":["Deandre Ayton","Jerami Grant","Toumani Camara","Anfernee Simons","Scoot Henderson"]}],"player":"Anfernee Simons","description":"Simons T.FOUL","shot_details":{"team":null,"points":null,"x_coord":null,"y_coord":null}},{"quarter":1,"time_remaining":"07:11","score":"MIN 19 - POR 7","players_on_court":[{"team":"MIN","players":["Rudy Gobert","Mike Conley","Jaden McDaniels","Anthony Edwards","Karl-Anthony Towns"]},{"team":"POR","players":["Deandre Ayton","Jerami Grant","Toumani Camara","Anfernee Simons","Scoot Henderson"]}],"player":"Mike Conley","description":"Conley Free Throw Technical","shot_details":{"team":null,"points":null,"x_coord":null,"y_coord":null}},{"quarter":1,"time_remaining":"07:09","score":"MIN 19 - POR 7","players_on_court":[{"team":"MIN","players":["Rudy Gobert","Mike Conley","Jaden McDaniels","Anthony Edwards","Karl-Anthony Towns"]},{"team":"POR","players":["Deandre Ayton","Jerami Grant","Toumani Camara","Anfernee Simons","Scoot Henderson"]}],"player":"Scoot Henderson","description":"Henderson Bad Pass Turnover : Towns STEAL","shot_details":{"team":null,"points":null,"x_coord":null,"y_coord":null}},{"quarter":1,"time_remaining":"07:02","score":"MIN 22 - POR 7","players_on_court":[{"team":"MIN","players":["Rudy Gobert","Mike Conley","Jaden McDaniels","Anthony Edwards","Karl-Anthony Towns"]},{"team":"POR","players":["Deandre Ayton","Jerami Grant","Toumani Camara","Anfernee Simons","Scoot Henderson"]}],"player":"Anthony Edwards","description":"Edwards 26' 3PT Jump Shot","shot_details":{"team":"MIN","points":3,"x_coord":21.4,"y_coord":30.4}}]}"""
+        game_context = json.loads(json_data)  # This properly converts null to None
         
         print("📋 Pre-built Context Summary:")
         print(f"   Away Team: {game_context['away_team']['name']} ({len(game_context['away_team']['players'])} players)")
@@ -299,7 +354,7 @@ def main():
     
     try:
         # Configure rolling sequence parameters
-        n_iterations = 25  # Change this to control how many rolling predictions
+        n_iterations = 5  # Change this to control how many rolling predictions
         
         print(f"\n🚀 Starting rolling prediction sequence (N={n_iterations})")
         
@@ -356,10 +411,22 @@ def main():
         
     except Exception as e:
         print(f"\n❌ Prediction failed: {e}")
-        print("\n💡 Troubleshooting tips:")
-        print("   • Make sure OPENAI_API_KEY environment variable is set")
-        print("   • Verify the fine-tuned model ID is correct")
-        print("   • Check your OpenAI account has access to the model")
+        platform = get_prediction_platform()
+        print(f"\n💡 Troubleshooting tips for {platform.upper()}:")
+        
+        if platform == "openai":
+            print("   • Make sure OPENAI_API_KEY environment variable is set")
+            print("   • Verify the fine-tuned model ID is correct")
+            print("   • Check your OpenAI account has access to the model")
+        elif platform == "gemini":
+            print("   • Ensure you've authenticated: gcloud auth login")
+            print("   • Set correct project: gcloud config set project YOUR_PROJECT_ID")
+            print("   • Set GEMINI_MODEL_1_ENDPOINT and GEMINI_MODEL_2_ENDPOINT environment variables")
+            print("   • Verify your fine-tuned model endpoints are deployed and accessible")
+            print("   • Check that the google-cloud-aiplatform library is installed")
+        
+        print("   • Check your internet connection")
+        print("   • Verify the input data format is correct")
 
 if __name__ == "__main__":
     main()
