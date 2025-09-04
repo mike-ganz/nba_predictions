@@ -44,13 +44,24 @@ class GeminiFormatter(BaseFormatter):
         
         if generation_mode == "first_N_plays":
             # Mode 2: Single entry per game with first N plays as targets
-            for game_id in df['game_id'].unique():
-                game_df = df[df['game_id'] == game_id].sort_values('play_id').copy()
+            for game_id in sorted(df['game_id'].unique()):
+                game_df = df[df['game_id'] == game_id].sort_values('play_id').reset_index(drop=True)
                 
-                # Find the first game context row (should have no recent_plays)
-                context_rows = game_df[game_df['json_training_data'].str.contains('"recent_plays":[]')]
-                if len(context_rows) > 0:
-                    context_row = context_rows.iloc[0]
+                # Find the first row with valid JSON context (should be the first row)
+                context_row = None
+                for i in range(len(game_df)):
+                    json_data = game_df.iloc[i]['json_training_data']
+                    if json_data and json_data.strip() and json_data.strip() != "{}":
+                        try:
+                            # Test if it's valid JSON and has team data
+                            parsed = json.loads(json_data)
+                            if 'away_team' in parsed and 'home_team' in parsed:
+                                context_row = game_df.iloc[i]
+                                break
+                        except json.JSONDecodeError:
+                            continue
+                
+                if context_row is not None:
                     example = self._create_first_n_plays_example(game_df, context_row)
                     if example:
                         training_examples.append(example)
@@ -145,20 +156,23 @@ class GeminiFormatter(BaseFormatter):
             # Parse the context JSON
             context_json = json.loads(context_row['json_training_data'])
             
-            # Get first DEFAULT_N_TOTAL_PLAYS plays from the game
-            plays_df = game_df.head(DEFAULT_N_TOTAL_PLAYS).copy()
+            # Get first N non-null plays from the raw DataFrame data
             first_plays = []
+            n_total = DEFAULT_N_TOTAL_PLAYS  # Number of plays to include (configurable)
             
-            for _, row in plays_df.iterrows():
-                play_json = json.loads(row['json_training_data'])
-                if 'recent_plays' in play_json and len(play_json['recent_plays']) > 0:
-                    # Get the most recent play (last in the recent_plays array)
-                    recent_play = play_json['recent_plays'][-1]
-                    first_plays.append(recent_play)
+            for i in range(len(game_df)):
+                if len(first_plays) >= n_total:
+                    break
+                    
+                row = game_df.iloc[i]
+                if pd.notna(row.get('description')):
+                    # Create play object similar to recent_plays format
+                    play_obj = self._create_play_object(row, context_json, game_df)
+                    first_plays.append(play_obj)
             
-            # Create the response with first N plays
+            # Create the response with first N plays (matching OpenAI format)
             assistant_response = {
-                "first_N_plays": first_plays
+                "next_plays": first_plays  # Changed from "first_N_plays" to "next_plays" for consistency
             }
             
             # Create Gemini training example using GenerateContent format
@@ -195,6 +209,93 @@ class GeminiFormatter(BaseFormatter):
         except (json.JSONDecodeError, KeyError, ValueError, IndexError) as e:
             print(f"Warning: Skipped first_N_plays Gemini training example due to error: {e}")
             return None
+    
+    def _create_play_object(self, row: pd.Series, current_json: Dict[str, Any], game_df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Create a play object from a DataFrame row.
+        
+        Args:
+            row: DataFrame row with play data
+            current_json: Current game context for team names
+            game_df: Full game DataFrame for scoring calculations
+            
+        Returns:
+            dict: Play object in the expected format
+        """
+        # Get quarter and time
+        quarter, time_in_quarter = convert_to_quarter_time(
+            row['period'], row['remaining_time']
+        )
+        
+        # Calculate scoring by comparing with previous play in the game
+        scoring_team = None
+        points_scored = 0
+        
+        # Find the current row index in the game DataFrame using positional index
+        current_row_index = None
+        for pos_idx in range(len(game_df)):
+            game_row = game_df.iloc[pos_idx]
+            if (game_row['play_id'] == row['play_id'] and 
+                game_row['game_id'] == row['game_id']):
+                current_row_index = pos_idx
+                break
+        
+        # If we found the current row and it's not the first row, calculate scoring
+        if current_row_index is not None and current_row_index > 0:
+            prev_row = game_df.iloc[current_row_index - 1]
+            prev_away_score = prev_row.get('away_score', 0) or 0
+            prev_home_score = prev_row.get('home_score', 0) or 0
+            curr_away_score = row.get('away_score', 0) or 0
+            curr_home_score = row.get('home_score', 0) or 0
+            
+            scoring_team, points_scored = determine_scoring_info(
+                prev_away_score, prev_home_score,
+                curr_away_score, curr_home_score,
+                current_json['away_team']['name'], current_json['home_team']['name']
+            )
+        
+        # Format score
+        away_team_name = current_json['away_team']['name']
+        home_team_name = current_json['home_team']['name']
+        score = f"{away_team_name} {int(row.get('away_score', 0) or 0)} - {home_team_name} {int(row.get('home_score', 0) or 0)}"
+        
+        # Get player
+        player = row.get('player')
+        
+        # Create shot_details object - populated only for shots
+        event_type = row.get('event_type', '')
+        if event_type == 'shot':
+            # For shots, determine the shooting team from the row data
+            shooting_team = row.get('team', '')  # Get team that took the shot
+            
+            # Apply coordinate normalization for shots
+            raw_x = row.get('converted_x')
+            raw_y = row.get('converted_y')
+            x_norm, y_norm = normalize_shot_coordinates(raw_x, raw_y)
+            
+            shot_details = {
+                "team": str(shooting_team) if shooting_team else None,
+                "points": int(points_scored),
+                "x_coord": x_norm,
+                "y_coord": y_norm
+            }
+        else:
+            shot_details = {
+                "team": None,
+                "points": None,
+                "x_coord": None,
+                "y_coord": None
+            }
+        
+        return {
+            "quarter": int(quarter),
+            "time_remaining": str(time_in_quarter),
+            "score": score,
+            "players_on_court": extract_players_on_court(row, current_json['away_team']['name'], current_json['home_team']['name']),
+            "player": str(player) if pd.notna(player) else None,
+            "description": process_play_description(row),
+            "shot_details": shot_details  # Use shot_details format consistent with other formatters
+        }
     
     def _create_next_play_response(self, game_df: pd.DataFrame, current_index: int, 
                                  next_row: pd.Series, current_json: Dict[str, Any]) -> Dict[str, Any]:

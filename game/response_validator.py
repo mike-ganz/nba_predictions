@@ -31,6 +31,7 @@ class NBAResponseValidator:
     """Validates NBA prediction model responses for format consistency."""
     
     def __init__(self):
+        print("🔧 Initializing NBAResponseValidator")
         self.errors: List[ValidationError] = []
         
         # State tracking for advanced validations
@@ -40,6 +41,7 @@ class NBAResponseValidator:
         self.consecutive_same_time: int = 0  # Track consecutive same time_remaining values
         self.last_time_remaining: Optional[str] = None  # Track the last time_remaining value
         self.max_history_size: int = 10  # Limit history size for memory management
+        print("🔧 NBAResponseValidator initialized with clean state")
     
     def validate_response(self, response_text: str, context: Dict[str, Any]) -> Tuple[ValidationResult, List[ValidationError], str]:
         """
@@ -394,6 +396,12 @@ class NBAResponseValidator:
         Returns:
             (validation_result, reason)
         """
+        # Debug state information
+        current_time = next_play.get("time_remaining", "N/A")
+        description = next_play.get("description", "N/A")
+        print(f"🔍 Validator state: time_count={self.consecutive_same_time}, last_time='{self.last_time_remaining}', current_time='{current_time}', subs_count={self.consecutive_subs}")
+        print(f"🔍 Current play: {description[:60]}...")
+        
         # Update response history
         self._update_response_history(response_text)
         
@@ -403,7 +411,7 @@ class NBAResponseValidator:
         
         # Check for consecutive same time_remaining
         if self._check_consecutive_same_time(next_play):
-            return ValidationResult.RETRY, "Same time_remaining for 4 consecutive responses - requesting time progression"
+            return ValidationResult.RETRY, "Same time_remaining for 5 consecutive responses - requesting time progression"
         
         # Check for excessive substitutions
         if self._check_excessive_substitutions(next_play):
@@ -414,6 +422,7 @@ class NBAResponseValidator:
         if game_end_result != ValidationResult.VALID:
             return game_end_result, "Game ending condition met"
         
+        print(f"✅ Advanced validations passed for: {description[:60]}...")
         return ValidationResult.VALID, "Advanced validations passed"
     
     def _update_response_history(self, response_text: str) -> None:
@@ -432,7 +441,7 @@ class NBAResponseValidator:
         return all(r == response_text.strip() for r in recent_responses)
     
     def _check_consecutive_same_time(self, next_play: Dict[str, Any]) -> bool:
-        """Check for 4 consecutive responses with the same time_remaining."""
+        """Check for 5 consecutive responses with the same time_remaining."""
         current_time = next_play.get("time_remaining")
         
         # Skip validation if time_remaining is not a string (invalid format)
@@ -441,14 +450,17 @@ class NBAResponseValidator:
         
         if self.last_time_remaining == current_time:
             self.consecutive_same_time += 1
-            if self.consecutive_same_time >= 4:
+            print(f"🕒 Same time '{current_time}' count: {self.consecutive_same_time}/5")
+            if self.consecutive_same_time >= 5:
+                print(f"🚨 Time progression validation triggered! Same time '{current_time}' for {self.consecutive_same_time} consecutive responses")
                 # Reset counter and return retry
                 self.consecutive_same_time = 0
                 self.last_time_remaining = None
                 return True
         else:
-            # Reset counter if time changed
-            self.consecutive_same_time = 1  # Start count with current time
+            # Reset counter - time has changed
+            print(f"🕒 Time changed: '{self.last_time_remaining}' → '{current_time}' (resetting counter)")
+            self.consecutive_same_time = 1  # First occurrence of new time
             self.last_time_remaining = current_time
         
         return False
@@ -459,12 +471,16 @@ class NBAResponseValidator:
         
         if "SUB" in description:
             self.consecutive_subs += 1
+            print(f"🔄 Substitution detected: '{description[:50]}...' count: {self.consecutive_subs}/3")
             if self.consecutive_subs >= 3:
+                print(f"🚨 Substitution validation triggered! {self.consecutive_subs} consecutive substitutions")
                 # Reset counter and return retry
                 self.consecutive_subs = 0
                 return True
         else:
             # Reset counter if not a substitution
+            if self.consecutive_subs > 0:
+                print(f"🔄 Non-substitution play: '{description[:50]}...' (resetting sub counter from {self.consecutive_subs} to 0)")
             self.consecutive_subs = 0
         
         return False
