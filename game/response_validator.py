@@ -397,9 +397,9 @@ class NBAResponseValidator:
         # Update response history
         self._update_response_history(response_text)
         
-        # Check for duplicate responses (3rd time getting same response)
+        # Check for duplicate responses (2nd time getting same response)
         if self._check_duplicate_response(response_text):
-            return ValidationResult.RETRY, "Received same response 3 times - requesting new response"
+            return ValidationResult.RETRY, "Received same response 2 times consecutively - requesting new response"
         
         # Check for consecutive same time_remaining
         if self._check_consecutive_same_time(next_play):
@@ -423,12 +423,12 @@ class NBAResponseValidator:
             self.response_history.pop(0)
     
     def _check_duplicate_response(self, response_text: str) -> bool:
-        """Check if we've received the same response 3 times."""
-        if len(self.response_history) < 3:
+        """Check if we've received the same response 2 times consecutively."""
+        if len(self.response_history) < 2:
             return False
         
-        # Check if the last 3 responses are identical
-        recent_responses = self.response_history[-3:]
+        # Check if the last 2 responses are identical
+        recent_responses = self.response_history[-2:]
         return all(r == response_text.strip() for r in recent_responses)
     
     def _check_consecutive_same_time(self, next_play: Dict[str, Any]) -> bool:
