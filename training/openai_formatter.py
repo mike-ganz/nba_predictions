@@ -328,24 +328,24 @@ class OpenAIFormatter(BaseFormatter):
             # For shots, determine the shooting team from the row data
             shooting_team = next_row.get('team', '')  # Get team that took the shot
             
-            # Apply coordinate normalization for shots
-            from training.data_generator import normalize_shot_coordinates
-            raw_x = next_row.get('converted_x')
-            raw_y = next_row.get('converted_y')
-            x_norm, y_norm = normalize_shot_coordinates(raw_x, raw_y)
+            # Apply coordinate normalization for shots (commented out for now)
+            # from training.data_generator import normalize_shot_coordinates
+            # raw_x = next_row.get('converted_x')
+            # raw_y = next_row.get('converted_y')
+            # x_norm, y_norm = normalize_shot_coordinates(raw_x, raw_y)
             
             shot_details = {
                 "team": str(shooting_team) if shooting_team else None,
-                "points": int(points_scored) if points_scored else 0,
-                "x_coord": x_norm,
-                "y_coord": y_norm
+                "points": int(points_scored) if points_scored else 0
+                # "x_coord": x_norm,  # Commented out - can be re-enabled later
+                # "y_coord": y_norm   # Commented out - can be re-enabled later
             }
         else:
             shot_details = {
                 "team": None,
-                "points": None,
-                "x_coord": None,
-                "y_coord": None
+                "points": None
+                # "x_coord": None,  # Commented out - can be re-enabled later
+                # "y_coord": None   # Commented out - can be re-enabled later
             }
         
         # Create the assistant response with restructured shot_details and added player
