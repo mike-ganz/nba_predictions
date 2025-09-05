@@ -269,8 +269,8 @@ class NBAResponseValidator:
         expected_fields = {
             "team": (str, type(None)),
             "points": (int, type(None)),
-            "x_coord": (float, int, type(None)),
-            "y_coord": (float, int, type(None))
+            # "x_coord": (float, int, type(None)),
+            # "y_coord": (float, int, type(None))
         }
         
         for field, expected_type in expected_fields.items():

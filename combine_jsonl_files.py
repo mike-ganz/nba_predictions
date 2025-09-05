@@ -12,7 +12,7 @@ def append_jsonl_files(file1_path, file2_path, output_dir):
     # Compose output file path
     base1 = os.path.splitext(os.path.basename(file1_path))[0]
     base2 = os.path.splitext(os.path.basename(file2_path))[0]
-    output_file = os.path.join(output_dir, f"gemini_firstnplays_2223_2324.jsonl")
+    output_file = os.path.join(output_dir, f"gemini_firstnplays_2223_2324_v2.jsonl")
 
     with open(output_file, 'w', encoding='utf-8') as outfile:
         for path in [file1_path, file2_path]:
