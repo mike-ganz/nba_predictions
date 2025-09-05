@@ -37,9 +37,164 @@ the appropriate prediction client.
 
 import json
 import os
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 from game.prediction_client import PredictionClientFactory, BasePredictionClient
+
+# Try to import ujson for faster JSON operations, fallback to standard json
+try:
+    import ujson
+    json_dumps = ujson.dumps
+    json_loads = ujson.loads
+    print("✅ Using ujson for faster JSON operations")
+except ImportError:
+    json_dumps = json.dumps
+    json_loads = json.loads
+    print("ℹ️ Using standard json library (consider installing ujson for better performance)")
+
+
+class OptimizedGameContext:
+    """Optimized context manager that caches JSON serialization to eliminate redundant operations."""
+    
+    def __init__(self, base_context: Dict[str, Any]):
+        """Initialize with base context (teams, stats, etc. - everything except recent_plays)."""
+        self.base_context = {k: v for k, v in base_context.items() if k != 'recent_plays'}
+        
+        # Cache the base context JSON (teams, stats, etc.) - this rarely changes
+        self._base_json_cached = json_dumps(self.base_context, separators=(',', ':'))
+        
+        # Cache for recent_plays combinations to avoid re-serializing the same play sequences
+        self._plays_cache: Dict[str, str] = {}
+        
+        # Current state
+        self.current_recent_plays: list = base_context.get('recent_plays', [])
+        self._current_full_json: Optional[str] = None
+        self._current_plays_hash: Optional[str] = None
+        
+        print(f"🚀 OptimizedGameContext initialized - base context cached ({len(self._base_json_cached)} chars)")
+    
+    def _hash_plays(self, plays: list) -> str:
+        """Create a hash key for play sequence for caching."""
+        if not plays:
+            return "empty"
+        # Use play descriptions and times as a simple hash
+        return str(hash(tuple((p.get('description', ''), p.get('time_remaining', '')) for p in plays)))
+    
+    def update_recent_plays(self, new_plays: list) -> None:
+        """Update recent plays and invalidate cache if changed."""
+        new_hash = self._hash_plays(new_plays)
+        if self._current_plays_hash != new_hash:
+            self.current_recent_plays = new_plays
+            self._current_plays_hash = new_hash
+            self._current_full_json = None  # Invalidate cached JSON
+    
+    def get_json(self) -> str:
+        """Get optimized JSON string for the current context."""
+        if self._current_full_json is not None:
+            return self._current_full_json
+        
+        # Check if we have this plays combination cached
+        plays_hash = self._current_plays_hash or self._hash_plays(self.current_recent_plays)
+        
+        if plays_hash in self._plays_cache:
+            plays_json = self._plays_cache[plays_hash]
+        else:
+            # Cache miss - serialize recent_plays
+            plays_json = json_dumps(self.current_recent_plays, separators=(',', ':'))
+            self._plays_cache[plays_hash] = plays_json
+            
+            # Limit cache size to prevent memory bloat
+            if len(self._plays_cache) > 50:
+                # Remove oldest entries (simple FIFO)
+                oldest_key = next(iter(self._plays_cache))
+                del self._plays_cache[oldest_key]
+        
+        # Combine cached base with cached/new recent_plays
+        if self.current_recent_plays:
+            self._current_full_json = f'{self._base_json_cached[:-1]},"recent_plays":{plays_json}}}'
+        else:
+            self._current_full_json = f'{self._base_json_cached[:-1]}}}'
+        
+        return self._current_full_json
+    
+    def get_context_dict(self) -> Dict[str, Any]:
+        """Get the full context as a dictionary (for compatibility)."""
+        result = self.base_context.copy()
+        if self.current_recent_plays:
+            result['recent_plays'] = self.current_recent_plays
+        return result
+    
+    def add_play_and_slide(self, new_play: Dict[str, Any], max_plays: int = 20) -> None:
+        """Add a new play and maintain sliding window."""
+        new_plays = self.current_recent_plays.copy()
+        new_plays.append(new_play)
+        
+        # Maintain sliding window
+        if len(new_plays) > max_plays:
+            new_plays.pop(0)
+        
+        self.update_recent_plays(new_plays)
+    
+    def get_cache_stats(self) -> Dict[str, int]:
+        """Get caching statistics for debugging."""
+        return {
+            "plays_cache_size": len(self._plays_cache),
+            "base_json_length": len(self._base_json_cached),
+            "current_plays_count": len(self.current_recent_plays)
+        }
+
+
+class LoggingConfig:
+    """Centralized logging configuration for performance optimization."""
+    
+    def __init__(self):
+        # Logging levels: 0=minimal, 1=normal, 2=verbose, 3=debug
+        self.level = int(os.getenv("PREDICTION_LOG_LEVEL", "1"))
+        self.show_json_dumps = self.level >= 3
+        self.show_iteration_details = self.level >= 2
+        self.show_context_stats = self.level >= 2
+        self.show_validation_details = self.level >= 3
+        
+        if self.level == 0:
+            print("🔇 Minimal logging mode - only essential messages")
+        elif self.level == 1:
+            print("📝 Normal logging mode")
+        elif self.level == 2:
+            print("📋 Verbose logging mode - detailed iteration info")
+        else:
+            print("🔍 Debug logging mode - full JSON dumps and validation details")
+    
+    def log_minimal(self, message: str) -> None:
+        """Always shown - essential messages only."""
+        print(message)
+    
+    def log_normal(self, message: str) -> None:
+        """Shown in normal+ modes."""
+        if self.level >= 1:
+            print(message)
+    
+    def log_verbose(self, message: str) -> None:
+        """Shown in verbose+ modes."""
+        if self.level >= 2:
+            print(message)
+    
+    def log_debug(self, message: str) -> None:
+        """Shown in debug mode only."""
+        if self.level >= 3:
+            print(message)
+    
+    def should_show_json(self) -> bool:
+        """Whether to show full JSON dumps."""
+        return self.show_json_dumps
+    
+    def should_show_context_details(self) -> bool:
+        """Whether to show context size and stats."""
+        return self.show_context_stats
+
+
+# Global logging configuration
+log_config = LoggingConfig()
+
 
 def get_prediction_platform() -> str:
     """Get the prediction platform from environment variable or default to OpenAI."""
@@ -76,7 +231,7 @@ def init_prediction_client() -> tuple[BasePredictionClient, Dict[str, str]]:
 
 def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5, skip_stage1: bool = False) -> Dict[str, Any]:
     """
-    Rolling prediction pipeline:
+    Rolling prediction pipeline with optimized JSON caching and configurable logging.
     1. [Optional] Send game_context to MODEL_1 to get next_plays (initial sequence)
     2. [Optional] Add next_plays to game_context as recent_plays
     3. Send to MODEL_2 to get next_play
@@ -93,6 +248,9 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
     """
     client, model_config = init_prediction_client()
     
+    # Initialize optimized context for JSON caching
+    optimized_context = OptimizedGameContext(game_context)
+    
     # Results storage
     results = {
         "stage1_response": None,
@@ -101,27 +259,28 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
     }
     
     if skip_stage1:
-        print("\n⚡ SKIPPING STAGE 1: Using pre-loaded recent_plays...")
+        log_config.log_normal("\n⚡ SKIPPING STAGE 1: Using pre-loaded recent_plays...")
         
         # Validate that game_context has recent_plays
         if "recent_plays" not in game_context:
             return {"error": "skip_stage1=True but game_context has no 'recent_plays'"}
         
-        working_context = game_context.copy()
-        print(f"✅ Using {len(working_context['recent_plays'])} existing recent_plays")
+        log_config.log_normal(f"✅ Using {len(optimized_context.current_recent_plays)} existing recent_plays")
         results["stage1_response"] = "SKIPPED - Stage 1 bypassed for testing"
         
     else:
         # === STAGE 1: Get initial predictions ===
-        print("\n🎯 STAGE 1: Getting initial next_plays from first model...")
-        context_json = json.dumps(game_context, separators=(',', ':'))
-        print(f"📡 Sending to model: {model_config['model_1_id']}")
-        print(f"📊 Context size: {len(context_json)} characters")
+        log_config.log_normal("\n🎯 STAGE 1: Getting initial next_plays from first model...")
+        
+        # Use optimized JSON serialization
+        context_json = optimized_context.get_json()
+        log_config.log_normal(f"📡 Sending to model: {model_config['model_1_id']}")
+        log_config.log_verbose(f"📊 Context size: {len(context_json)} characters")
         
         try:
-            # Stage 1 API call with validation
+            # Stage 1 API call with validation - pass dict for now (client will handle JSON)
             stage1_content, stage1_usage, stage1_game_ended = client.predict_with_validation(
-                context=game_context,
+                context=optimized_context.get_context_dict(),
                 model_id=model_config['model_1_id'],
                 max_tokens=1500,
                 temperature=1.01,
@@ -129,68 +288,91 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
             )
             
             if stage1_game_ended:
-                print("🏁 Game ended during Stage 1 - terminating prediction sequence")
+                log_config.log_minimal("🏁 Game ended during Stage 1 - terminating prediction sequence")
                 results["termination_reason"] = "Game ended during Stage 1"
                 return results
             
-            print(f"📊 Stage 1 tokens: {stage1_usage.get('completion_tokens', 'N/A')} / 1500")
-            print("✅ Stage 1 completed!")
+            log_config.log_verbose(f"📊 Stage 1 tokens: {stage1_usage.get('completion_tokens', 'N/A')} / 1500")
+            log_config.log_normal("✅ Stage 1 completed!")
             
             results["stage1_response"] = stage1_content
             
             # Parse Stage 1 response
             try:
-                stage1_json = json.loads(stage1_content)
-            except json.JSONDecodeError as e:
-                print(f"❌ Failed to parse Stage 1 response as JSON: {e}")
+                stage1_json = json_loads(stage1_content)
+            except (json.JSONDecodeError, ValueError) as e:
+                log_config.log_minimal(f"❌ Failed to parse Stage 1 response as JSON: {e}")
                 return {"error": f"Stage 1 JSON parse error: {e}"}
             
-            # Initialize working context with recent_plays
-            working_context = game_context.copy()
+            # Update optimized context with recent_plays
             if "next_plays" in stage1_json:
-                working_context["recent_plays"] = stage1_json["next_plays"]
-                print(f"✅ Added {len(stage1_json['next_plays'])} recent_plays to context")
+                optimized_context.update_recent_plays(stage1_json["next_plays"])
+                log_config.log_normal(f"✅ Added {len(stage1_json['next_plays'])} recent_plays to context")
             else:
-                print("⚠️ Warning: No 'next_plays' found in Stage 1 response")
-                working_context["recent_plays"] = []
+                log_config.log_normal("⚠️ Warning: No 'next_plays' found in Stage 1 response")
+                optimized_context.update_recent_plays([])
                 
         except Exception as e:
-            print(f"❌ Error in Stage 1: {e}")
+            log_config.log_minimal(f"❌ Error in Stage 1: {e}")
             raise
     
     # === ROLLING ITERATIONS ===
-    print(f"\n🔄 Starting {n_iterations} rolling iterations...")
+    log_config.log_normal(f"\n🔄 Starting {n_iterations} rolling iterations...")
     
     try:
         for iteration in range(n_iterations):
-            print(f"\n--- ITERATION {iteration + 1}/{n_iterations} ---")
+            log_config.log_normal(f"\n--- ITERATION {iteration + 1}/{n_iterations} ---")
             
-            # Convert current context to JSON
-            iteration_json = json.dumps(working_context, separators=(',', ':'))
-            print(f"📡 Sending to model: {model_config['model_2_id']}")
-            print(f"📊 Context size: {len(iteration_json)} characters")
-            print(f"📋 Current recent_plays count: {len(working_context.get('recent_plays', []))}")
+            # Get optimized JSON (cached where possible)
+            iteration_json = optimized_context.get_json()
+            log_config.log_normal(f"📡 Sending to model: {model_config['model_2_id']}")
+            log_config.log_verbose(f"📊 Context size: {len(iteration_json)} characters")
+            log_config.log_verbose(f"📋 Current recent_plays count: {len(optimized_context.current_recent_plays)}")
             
-            # 🔍 LOG: Show the input context being sent to the model
-            print("\n" + "="*60)
-            print(f"📤 INPUT TO MODEL (Iteration {iteration + 1}):")
-            print("="*60)
-            print("📋 RECENT_PLAYS being sent:")
-            if "recent_plays" in working_context:
-                for i, play in enumerate(working_context["recent_plays"]):
-                    play_desc = play.get('description', 'No description')
-                    play_time = play.get('time_remaining', 'No time')
-                    print(f"   {i+1:2d}. [{play_time}] {play_desc}")
-            else:
-                print("   ❌ NO recent_plays in context!")
-            print("="*60)
-            print("📤 FULL INPUT JSON:")
-            print(iteration_json)
-            print("="*60 + "\n")
+            # Show essential game state info (normal logging level)
+            if optimized_context.current_recent_plays:
+                # Show current game state from most recent play
+                latest_play = optimized_context.current_recent_plays[-1]
+                current_score = latest_play.get('score', 'N/A')
+                current_quarter = latest_play.get('quarter', 'N/A')
+                current_time = latest_play.get('time_remaining', 'N/A')
+                
+                log_config.log_normal(f"🏀 Game State: Q{current_quarter} {current_time} | {current_score}")
+                
+                # Show last 5 plays for context
+                log_config.log_normal("📋 Recent plays context:")
+                recent_to_show = optimized_context.current_recent_plays[-5:]  # Last 5 plays
+                for i, play in enumerate(recent_to_show, 1):
+                    play_desc = play.get('description', 'No description')[:60]  # Truncate long descriptions
+                    play_time = play.get('time_remaining', 'N/A')
+                    log_config.log_normal(f"   {i}. [{play_time}] {play_desc}")
+            
+            # Show caching stats in debug mode
+            if log_config.should_show_context_details():
+                cache_stats = optimized_context.get_cache_stats()
+                log_config.log_debug(f"🚀 Cache stats: {cache_stats}")
+            
+            # 🔍 LOG: Show the input context being sent to the model (debug mode only)
+            if log_config.should_show_json():
+                log_config.log_debug("\n" + "="*60)
+                log_config.log_debug(f"📤 INPUT TO MODEL (Iteration {iteration + 1}):")
+                log_config.log_debug("="*60)
+                log_config.log_debug("📋 RECENT_PLAYS being sent:")
+                if optimized_context.current_recent_plays:
+                    for i, play in enumerate(optimized_context.current_recent_plays):
+                        play_desc = play.get('description', 'No description')
+                        play_time = play.get('time_remaining', 'No time')
+                        log_config.log_debug(f"   {i+1:2d}. [{play_time}] {play_desc}")
+                else:
+                    log_config.log_debug("   ❌ NO recent_plays in context!")
+                log_config.log_debug("="*60)
+                log_config.log_debug("📤 FULL INPUT JSON:")
+                log_config.log_debug(iteration_json)
+                log_config.log_debug("="*60 + "\n")
             
             # Stage 2 API call with validation
             stage2_content, stage2_usage, stage2_game_ended = client.predict_with_validation(
-                context=working_context,
+                context=optimized_context.get_context_dict(),
                 model_id=model_config['model_2_id'],
                 max_tokens=1500,
                 temperature=1.01,
@@ -198,7 +380,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
             )
             
             if stage2_game_ended:
-                print(f"🏁 Game ended during iteration {iteration + 1} - terminating prediction sequence")
+                log_config.log_minimal(f"🏁 Game ended during iteration {iteration + 1} - terminating prediction sequence")
                 results["termination_reason"] = f"Game ended at iteration {iteration + 1}"
                 # Still process this final response before breaking
                 # Continue to process the response below, then break after processing
@@ -206,23 +388,24 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
             else:
                 should_break_after_processing = False
             
-            print(f"📊 Stage 2 tokens: {stage2_usage.get('completion_tokens', 'N/A')} / 1500")
+            log_config.log_verbose(f"📊 Stage 2 tokens: {stage2_usage.get('completion_tokens', 'N/A')} / 1500")
             
-            # 📝 LOG: Print full model response for debugging
-            print("\n" + "="*60)
-            print(f"🔍 FULL MODEL RESPONSE (Iteration {iteration + 1}):")
-            print("="*60)
-            print(stage2_content)
-            print("="*60 + "\n")
+            # 📝 LOG: Print full model response for debugging (debug mode only)
+            if log_config.should_show_json():
+                log_config.log_debug("\n" + "="*60)
+                log_config.log_debug(f"🔍 FULL MODEL RESPONSE (Iteration {iteration + 1}):")
+                log_config.log_debug("="*60)
+                log_config.log_debug(stage2_content)
+                log_config.log_debug("="*60 + "\n")
             
             # Store this iteration's response
             results["stage2_responses"].append(stage2_content)
             
             # Parse the response to get the next_play
             try:
-                stage2_json = json.loads(stage2_content)
-            except json.JSONDecodeError as e:
-                print(f"❌ Failed to parse iteration {iteration + 1} response as JSON: {e}")
+                stage2_json = json_loads(stage2_content)
+            except (json.JSONDecodeError, ValueError) as e:
+                log_config.log_minimal(f"❌ Failed to parse iteration {iteration + 1} response as JSON: {e}")
                 results["iterations"].append({
                     "iteration": iteration + 1,
                     "error": f"JSON parse error: {e}",
@@ -233,7 +416,15 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
             # Extract the next_play
             if "next_play" in stage2_json:
                 next_play = stage2_json["next_play"]
-                print(f"✅ Got next_play: {next_play.get('description', 'No description')}")
+                
+                # Show new play with essential game state (normal logging)
+                play_desc = next_play.get('description', 'No description')
+                new_score = next_play.get('score', 'N/A')
+                new_quarter = next_play.get('quarter', 'N/A')
+                new_time = next_play.get('time_remaining', 'N/A')
+                
+                log_config.log_normal(f"✅ NEW PLAY: {play_desc}")
+                log_config.log_normal(f"🏀 Updated State: Q{new_quarter} {new_time} | {new_score}")
                 
                 # 🔍 AUDIT: Check for scoring information
                 if "shot_details" in next_play:
@@ -241,45 +432,38 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                     # Handle None values properly - JSON null becomes Python None
                     points = shot_details.get("points") if shot_details else None
                     if shot_details and points is not None and points > 0:
-                        print(f"🏀 🎯 SCORING PLAY DETECTED: {shot_details.get('team', 'Unknown')} +{points} points!")
+                        log_config.log_normal(f"🎯 SCORING PLAY: {shot_details.get('team', 'Unknown')} +{points} points!")
                     else:
                         points_display = points if points is not None else 'N/A'
-                        print(f"📋 Non-scoring play (points: {points_display})")
+                        log_config.log_verbose(f"📋 Non-scoring play (points: {points_display})")
                 else:
-                    print("⚠️ WARNING: No 'shot_details' field found in next_play")
+                    log_config.log_verbose("⚠️ WARNING: No 'shot_details' field found in next_play")
                 
-                # Check if score field exists in the play
-                if "score" in next_play:
-                    print(f"📊 Current game score: {next_play['score']}")
-                else:
-                    print("⚠️ WARNING: No 'score' field found in next_play")
+                # Update the sliding window using optimized context
+                from config.settings import DEFAULT_N_TOTAL_PLAYS
+                optimized_context.add_play_and_slide(next_play, DEFAULT_N_TOTAL_PLAYS)
                 
-                # Update the sliding window: add to end, remove from beginning
-                if "recent_plays" in working_context:
-                    # Add new play to the END
-                    working_context["recent_plays"].append(next_play)
-                    # Remove first play (maintain window size)
-                    from config.settings import DEFAULT_N_TOTAL_PLAYS
-                    if len(working_context["recent_plays"]) > DEFAULT_N_TOTAL_PLAYS:
-                        removed_play = working_context["recent_plays"].pop(0)
-                        print(f"🔄 Sliding window: Added new play, removed: {removed_play.get('description', 'No description')}")
+                # Show sliding window info
+                if log_config.should_show_context_details():
+                    if len(optimized_context.current_recent_plays) >= DEFAULT_N_TOTAL_PLAYS:
+                        log_config.log_verbose("🔄 Sliding window: Added new play, removed oldest play")
                     else:
-                        print(f"📈 Window growing: Now {len(working_context['recent_plays'])} plays")
+                        log_config.log_verbose(f"📈 Window growing: Now {len(optimized_context.current_recent_plays)} plays")
                 
                 results["iterations"].append({
                     "iteration": iteration + 1,
                     "next_play": next_play,
                     "raw_response": stage2_content,
-                    "recent_plays_count": len(working_context.get("recent_plays", []))
+                    "recent_plays_count": len(optimized_context.current_recent_plays)
                 })
                 
                 # Break if game ended
                 if should_break_after_processing:
-                    print(f"🏁 Breaking out of prediction loop - game ended")
+                    log_config.log_minimal("🏁 Breaking out of prediction loop - game ended")
                     break
                 
             else:
-                print(f"⚠️ Warning: No 'next_play' found in iteration {iteration + 1} response")
+                log_config.log_normal(f"⚠️ Warning: No 'next_play' found in iteration {iteration + 1} response")
                 results["iterations"].append({
                     "iteration": iteration + 1,
                     "error": "No 'next_play' in response",
@@ -288,10 +472,10 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                 
                 # Break if game ended (even with invalid response)
                 if should_break_after_processing:
-                    print(f"🏁 Breaking out of prediction loop - game ended")
+                    log_config.log_minimal("🏁 Breaking out of prediction loop - game ended")
                     break
         
-        print(f"\n✅ Rolling sequence completed! {n_iterations} iterations done.")
+        log_config.log_normal(f"\n✅ Rolling sequence completed! {n_iterations} iterations done.")
         
         # 📊 SCORING ANALYSIS SUMMARY
         scoring_plays = 0
@@ -309,23 +493,31 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                 else:
                     non_scoring_plays += 1
         
-        print(f"\n📈 SCORING SUMMARY:")
-        print(f"   🏀 Scoring plays: {scoring_plays}/{scoring_plays + non_scoring_plays}")
-        print(f"   📋 Non-scoring plays: {non_scoring_plays}/{scoring_plays + non_scoring_plays}")
+        log_config.log_normal(f"\n📈 SCORING SUMMARY:")
+        log_config.log_normal(f"   🏀 Scoring plays: {scoring_plays}/{scoring_plays + non_scoring_plays}")
+        log_config.log_normal(f"   📋 Non-scoring plays: {non_scoring_plays}/{scoring_plays + non_scoring_plays}")
         if scoring_plays + non_scoring_plays > 0:
             scoring_rate = (scoring_plays / (scoring_plays + non_scoring_plays)) * 100
-            print(f"   📊 Scoring rate: {scoring_rate:.1f}%")
+            log_config.log_normal(f"   📊 Scoring rate: {scoring_rate:.1f}%")
+        
+        # 🚀 PERFORMANCE SUMMARY (debug mode)
+        if log_config.should_show_context_details():
+            final_cache_stats = optimized_context.get_cache_stats()
+            log_config.log_verbose(f"\n🚀 PERFORMANCE SUMMARY:")
+            log_config.log_verbose(f"   📊 Final cache stats: {final_cache_stats}")
+            cache_hit_ratio = (final_cache_stats['plays_cache_size'] / max(n_iterations, 1)) * 100
+            log_config.log_verbose(f"   ⚡ Estimated JSON cache efficiency: {cache_hit_ratio:.1f}%")
         
         return results
         
     except Exception as e:
-        print(f"❌ Error in rolling iterations: {e}")
+        log_config.log_minimal(f"❌ Error in rolling iterations: {e}")
         raise
 
 def main():
-    """Main function to test the prediction system."""
+    """Main function to test the prediction system with performance optimizations."""
     
-    print("🏀 NBA Multi-Platform Play Prediction Test")
+    print("🏀 NBA Multi-Platform Play Prediction Test (OPTIMIZED)")
     print("=" * 60)
     
     # Display platform information
@@ -333,6 +525,13 @@ def main():
     available_platforms = PredictionClientFactory.get_available_platforms()
     print(f"📱 Platform: {platform.upper()}")
     print(f"🔧 Available platforms: {', '.join(available_platforms)}")
+    
+    # Display optimization information
+    print(f"\n🚀 Performance Optimizations Active:")
+    print(f"   • JSON Caching: ✅ Enabled")
+    print(f"   • Logging Level: {log_config.level} (set PREDICTION_LOG_LEVEL=0-3)")
+    print(f"   • Fast JSON Library: {'ujson' if 'ujson' in globals() else 'standard json'}")
+    print(f"   • Double Serialization: ❌ Eliminated")
     
     if platform == "gemini":
         print("\n💡 Gemini Configuration Notes:")
@@ -344,6 +543,13 @@ def main():
         print("\n💡 OpenAI Configuration Notes:")
         print("   • Ensure OPENAI_API_KEY environment variable is set")
         print("   • Default model IDs are configured for the provided fine-tuned models")
+    
+    print("\n🎛️ Logging Levels:")
+    print("   • 0: Minimal (essential messages only)")
+    print("   • 1: Normal (default - standard progress)")
+    print("   • 2: Verbose (detailed iteration info + cache stats)")
+    print("   • 3: Debug (full JSON dumps + validation details)")
+    print("   Set with: PREDICTION_LOG_LEVEL=0 (or 1,2,3)")
     
     print("\n" + "=" * 60)
     
@@ -388,7 +594,7 @@ def main():
     
     try:
         # Configure rolling sequence parameters
-        n_iterations = 400  # Change this to control how many rolling predictions
+        n_iterations = 2000  # Change this to control how many rolling predictions
         
         print(f"\n🚀 Starting rolling prediction sequence (N={n_iterations})")
         

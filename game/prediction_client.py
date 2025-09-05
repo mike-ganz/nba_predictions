@@ -50,6 +50,28 @@ class BasePredictionClient(ABC):
         """
         pass
     
+    def predict_from_json(self, context_json: str, model_id: str, 
+                         max_tokens: int = 1500, temperature: float = 0.1) -> Tuple[str, Dict[str, Any]]:
+        """
+        Make a prediction using pre-serialized JSON context (performance optimization).
+        
+        Args:
+            context_json: Pre-serialized JSON context string
+            model_id: Model identifier for the platform
+            max_tokens: Maximum tokens to generate
+            temperature: Temperature for generation
+            
+        Returns:
+            tuple: (response_content, usage_stats)
+        """
+        # Default implementation: parse JSON and call regular predict
+        # Subclasses can override this for better performance
+        try:
+            context = json.loads(context_json)
+            return self.predict(context, model_id, max_tokens, temperature)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON context: {e}")
+    
     def get_model_config(self) -> Dict[str, str]:
         """
         Get platform-specific model configuration.
@@ -172,7 +194,11 @@ class OpenAIPredictionClient(BasePredictionClient):
                 max_tokens: int = 1500, temperature: float = 0.1) -> Tuple[str, Dict[str, Any]]:
         """Make prediction using OpenAI API."""
         context_json = json.dumps(context, separators=(',', ':'))
-        
+        return self.predict_from_json(context_json, model_id, max_tokens, temperature)
+    
+    def predict_from_json(self, context_json: str, model_id: str, 
+                         max_tokens: int = 1500, temperature: float = 0.1) -> Tuple[str, Dict[str, Any]]:
+        """Make prediction using pre-serialized JSON (optimized)."""
         response = self.client.chat.completions.create(
             model=model_id,
             messages=[
@@ -253,27 +279,37 @@ class GeminiPredictionClient(BasePredictionClient):
     def predict(self, context: Dict[str, Any], model_id: str, 
                 max_tokens: int = 1500, temperature: float = 0.1) -> Tuple[str, Dict[str, Any]]:
         """Make prediction using Gemini API."""
+        context_json = json.dumps(context, separators=(',', ':'))
+        return self.predict_from_json(context_json, model_id, max_tokens, temperature)
+    
+    def predict_from_json(self, context_json: str, model_id: str, 
+                         max_tokens: int = 1500, temperature: float = 0.1) -> Tuple[str, Dict[str, Any]]:
+        """Make prediction using pre-serialized JSON (optimized)."""
         # Try the new Google GenAI SDK with proper thinking control first
         try:
-            return self._predict_with_genai_sdk(context, model_id, max_tokens, temperature)
+            return self._predict_with_genai_sdk_json(context_json, model_id, max_tokens, temperature)
         except Exception as genai_error:
             print(f"⚠️ Google GenAI SDK failed: {genai_error}")
             print("🔄 Falling back to Vertex AI approach...")
-            return self._predict_with_vertexai(context, model_id, max_tokens, temperature)
+            return self._predict_with_vertexai_json(context_json, model_id, max_tokens, temperature)
     
     def _predict_with_genai_sdk(self, context: Dict[str, Any], model_id: str, 
                                max_tokens: int = 1500, temperature: float = 0.1) -> Tuple[str, Dict[str, Any]]:
         """Make prediction using the new Google GenAI SDK with thinking control."""
+        # Add instruction to encourage direct responses
+        enhanced_context = context.copy()
+        enhanced_context["_instruction"] = "Provide direct JSON response immediately. No reasoning or explanation needed."
+        context_json = json.dumps(enhanced_context, separators=(',', ':'))
+        return self._predict_with_genai_sdk_json(context_json, model_id, max_tokens, temperature)
+    
+    def _predict_with_genai_sdk_json(self, context_json: str, model_id: str, 
+                                    max_tokens: int = 1500, temperature: float = 0.1) -> Tuple[str, Dict[str, Any]]:
+        """Make prediction using the new Google GenAI SDK with pre-serialized JSON (optimized)."""
         try:
             from google import genai
             from google.genai import types
         except ImportError:
             raise ImportError("Google GenAI library not found. Install with: pip install google-generativeai")
-        
-        # Add instruction to encourage direct responses
-        enhanced_context = context.copy()
-        enhanced_context["_instruction"] = "Provide direct JSON response immediately. No reasoning or explanation needed."
-        context_json = json.dumps(enhanced_context, separators=(',', ':'))
         
         # Initialize the client with Vertex AI backend
         client = genai.Client(
@@ -326,6 +362,15 @@ class GeminiPredictionClient(BasePredictionClient):
     def _predict_with_vertexai(self, context: Dict[str, Any], model_id: str, 
                               max_tokens: int = 1500, temperature: float = 0.1) -> Tuple[str, Dict[str, Any]]:
         """Fallback prediction using Vertex AI SDK."""
+        # Add instruction to encourage direct responses without extensive reasoning
+        enhanced_context = context.copy()
+        enhanced_context["_instruction"] = "Provide direct JSON response immediately. No reasoning or explanation needed."
+        context_json = json.dumps(enhanced_context, separators=(',', ':'))
+        return self._predict_with_vertexai_json(context_json, model_id, max_tokens, temperature)
+    
+    def _predict_with_vertexai_json(self, context_json: str, model_id: str, 
+                                   max_tokens: int = 1500, temperature: float = 0.1) -> Tuple[str, Dict[str, Any]]:
+        """Fallback prediction using Vertex AI SDK with pre-serialized JSON (optimized)."""
         try:
             from vertexai.generative_models import GenerativeModel, GenerationConfig
             # Try to import ThinkingConfig if available in newer versions
@@ -336,12 +381,6 @@ class GeminiPredictionClient(BasePredictionClient):
                 thinking_config_available = False
         except ImportError:
             raise ImportError("Vertex AI library not found. Install with: pip install google-cloud-aiplatform")
-        
-        # Add instruction to encourage direct responses without extensive reasoning
-        enhanced_context = context.copy()
-        enhanced_context["_instruction"] = "Provide direct JSON response immediately. No reasoning or explanation needed."
-        
-        context_json = json.dumps(enhanced_context, separators=(',', ':'))
         
         # Create model instance - model_id should be the full endpoint path
         # e.g., "projects/PROJECT_ID/locations/us-central1/endpoints/ENDPOINT_ID"
