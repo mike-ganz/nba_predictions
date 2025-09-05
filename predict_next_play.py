@@ -604,7 +604,7 @@ def main():
     
     try:
         # Configure rolling sequence parameters
-        n_iterations = 2000  # Change this to control how many rolling predictions
+        n_iterations = 750  # Change this to control how many rolling predictions
         
         print(f"\n🚀 Starting rolling prediction sequence (N={n_iterations})")
         
