@@ -411,7 +411,7 @@ class NBAResponseValidator:
         
         # Check for consecutive same time_remaining
         if self._check_consecutive_same_time(next_play):
-            return ValidationResult.RETRY, "Same time_remaining for 8 consecutive responses - requesting time progression"
+            return ValidationResult.RETRY, "Same time_remaining for 10 consecutive responses - requesting time progression"
         
         # Check for excessive substitutions
         if self._check_excessive_substitutions(next_play):
@@ -441,7 +441,8 @@ class NBAResponseValidator:
         return all(r == response_text.strip() for r in recent_responses)
     
     def _check_consecutive_same_time(self, next_play: Dict[str, Any]) -> bool:
-        """Check for 8 consecutive responses with the same time_remaining."""
+        """Check for 10 consecutive responses with the same time_remaining."""
+        consecutive_responses_limit = 10
         current_time = next_play.get("time_remaining")
         
         # Skip validation if time_remaining is not a string (invalid format)
@@ -450,8 +451,8 @@ class NBAResponseValidator:
         
         if self.last_time_remaining == current_time:
             self.consecutive_same_time += 1
-            print(f"🕒 Same time '{current_time}' count: {self.consecutive_same_time}/8")
-            if self.consecutive_same_time >= 8:
+            print(f"🕒 Same time '{current_time}' count: {self.consecutive_same_time}/{consecutive_responses_limit}")
+            if self.consecutive_same_time >= consecutive_responses_limit:
                 print(f"🚨 Time progression validation triggered! Same time '{current_time}' for {self.consecutive_same_time} consecutive responses")
                 # Reset counter and return retry
                 self.consecutive_same_time = 0

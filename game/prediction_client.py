@@ -83,7 +83,7 @@ class BasePredictionClient(ABC):
     
     def predict_with_validation(self, context: Dict[str, Any], model_id: str, 
                                max_tokens: int = 1500, temperature: float = 0.1,
-                               max_retries: int = 3) -> Tuple[str, Dict[str, Any], bool]:
+                               max_retries: int = 3, stage1_mode: bool = False) -> Tuple[str, Dict[str, Any], bool]:
         """
         Make a prediction with validation and retry logic.
         
@@ -93,6 +93,7 @@ class BasePredictionClient(ABC):
             max_tokens: Maximum tokens to generate
             temperature: Temperature for generation
             max_retries: Maximum number of retries on validation failure
+            stage1_mode: If True, validates for Stage 1 (next_plays array) instead of Stage 2 (next_play object)
             
         Returns:
             tuple: (response_content, usage_stats, is_game_ended)
@@ -107,8 +108,11 @@ class BasePredictionClient(ABC):
                 # Make prediction
                 response_content, usage_stats = self.predict(context, model_id, max_tokens, temperature)
                 
-                # Validate response with advanced game flow logic
-                validation_result, validation_errors, reason = self.validator.validate_response(response_content, context)
+                # Validate response (different logic for Stage 1 vs Stage 2)
+                if stage1_mode:
+                    validation_result, validation_errors, reason = self._validate_stage1_response(response_content, context)
+                else:
+                    validation_result, validation_errors, reason = self.validator.validate_response(response_content, context)
                 
                 if validation_result == ValidationResult.VALID:
                     if attempt > 0:
@@ -159,6 +163,47 @@ class BasePredictionClient(ABC):
         
         full_error_message = f"Response validation failed after {max_retries + 1} attempts:{''.join(error_details)}"
         raise ValueError(full_error_message)
+    
+    def _validate_stage1_response(self, response_text: str, context: Dict[str, Any]) -> Tuple[ValidationResult, list, str]:
+        """
+        Validate Stage 1 response which should return multiple plays.
+        Expected format: {"next_plays": [play1, play2, ..., playN]}
+        """
+        try:
+            response_data = json.loads(response_text.strip())
+        except json.JSONDecodeError as e:
+            return ValidationResult.RETRY, [], f"JSON parse error: {str(e)}"
+        
+        # Check for next_plays array
+        if "next_plays" not in response_data:
+            return ValidationResult.RETRY, [], "Missing 'next_plays' field"
+        
+        next_plays = response_data["next_plays"]
+        
+        # Validate it's an array
+        if not isinstance(next_plays, list):
+            return ValidationResult.RETRY, [], "'next_plays' must be an array"
+        
+        # Check array length (should have reasonable number of plays)
+        if len(next_plays) == 0:
+            return ValidationResult.RETRY, [], "'next_plays' array cannot be empty"
+        
+        if len(next_plays) > 50:  # Reasonable upper limit
+            return ValidationResult.RETRY, [], f"'next_plays' array too large ({len(next_plays)} plays)"
+        
+        # Basic validation of each play (less strict than Stage 2)
+        for i, play in enumerate(next_plays):
+            if not isinstance(play, dict):
+                return ValidationResult.RETRY, [], f"Play {i+1} must be a dictionary"
+                
+            # Check for basic required fields
+            required_fields = ["description"]  # Minimal requirement for Stage 1
+            for field in required_fields:
+                if field not in play:
+                    return ValidationResult.RETRY, [], f"Play {i+1} missing required field: {field}"
+        
+        print(f"Stage 1 validation passed: {len(next_plays)} plays received")
+        return ValidationResult.VALID, [], "Valid Stage 1 response"
     
     @abstractmethod
     def _get_default_models(self) -> Dict[str, str]:
@@ -436,7 +481,7 @@ class GeminiPredictionClient(BasePredictionClient):
         # Get endpoint IDs from environment variables or use placeholders
         # Support multiple variable name formats
         model_1_endpoint = (os.getenv("GEMINI_MODEL_1_ENDPOINT") or 
-                          os.getenv("ROLLING_PREDICTIONS_ENDPOINT_ID") or 
+                          os.getenv("INITIAL_PREDICTION_ENDPOINT_ID") or 
                           "YOUR_MODEL_1_ENDPOINT_ID")
         model_2_endpoint = (os.getenv("GEMINI_MODEL_2_ENDPOINT") or 
                           os.getenv("ROLLING_PREDICTIONS_ENDPOINT_ID") or 

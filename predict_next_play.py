@@ -269,31 +269,41 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
         results["stage1_response"] = "SKIPPED - Stage 1 bypassed for testing"
         
     else:
-        # === STAGE 1: Get initial predictions ===
-        log_config.log_normal("\n🎯 STAGE 1: Getting initial next_plays from first model...")
+        # === STAGE 1: Get initial predictions (first_n_plays mode) ===
+        log_config.log_normal("\nSTAGE 1: Getting initial next_plays from first model...")
+        log_config.log_normal("Using clean context (no recent_plays) - matching first_N_plays training mode")
         
-        # Use optimized JSON serialization
-        context_json = optimized_context.get_json()
-        log_config.log_normal(f"📡 Sending to model: {model_config['model_1_id']}")
-        log_config.log_verbose(f"📊 Context size: {len(context_json)} characters")
+        # Use OptimizedGameContext base_context (teams, players, stats only - no recent_plays)
+        log_config.log_normal(f"Sending to model: {model_config['model_1_id']}")
+        log_config.log_verbose(f"Clean context size: {len(optimized_context._base_json_cached)} characters")
+        log_config.log_verbose("Context contains: teams, players, stats (NO recent_plays)")
         
         try:
-            # Stage 1 API call with validation - pass dict for now (client will handle JSON)
+            # Verify clean context for Stage 1 (should have no recent_plays)
+            stage1_context = optimized_context.base_context
+            log_config.log_verbose(f"Stage 1 context keys: {list(stage1_context.keys())}")
+            if 'recent_plays' in stage1_context:
+                log_config.log_normal("WARNING: Stage 1 context contains recent_plays - this should not happen!")
+            else:
+                log_config.log_verbose("Stage 1 context is clean (no recent_plays)")
+            
+            # Stage 1 API call with base context only (matching first_N_plays training mode)
             stage1_content, stage1_usage, stage1_game_ended = client.predict_with_validation(
-                context=optimized_context.get_context_dict(),
+                context=stage1_context,  # Base context without recent_plays
                 model_id=model_config['model_1_id'],
-                max_tokens=1500,
+                max_tokens=8000,  # Higher limit for Stage 1 (generates ~20 plays)
                 temperature=1.01,
-                max_retries=6
+                max_retries=6,
+                stage1_mode=True  # Use Stage 1 validation (expects next_plays array)
             )
             
             if stage1_game_ended:
-                log_config.log_minimal("🏁 Game ended during Stage 1 - terminating prediction sequence")
+                log_config.log_minimal("Game ended during Stage 1 - terminating prediction sequence")
                 results["termination_reason"] = "Game ended during Stage 1"
                 return results
             
-            log_config.log_verbose(f"📊 Stage 1 tokens: {stage1_usage.get('completion_tokens', 'N/A')} / 1500")
-            log_config.log_normal("✅ Stage 1 completed!")
+            log_config.log_verbose(f"Stage 1 tokens: {stage1_usage.get('completion_tokens', 'N/A')} / 1500")
+            log_config.log_normal("Stage 1 completed!")
             
             results["stage1_response"] = stage1_content
             
@@ -556,7 +566,7 @@ def main():
     # ==================================================================================
     # 🎯 TESTING MODE SELECTION - Change this to switch between modes
     # ==================================================================================
-    TEST_MODE = "skip_stage1"  # Options: "full_pipeline" or "skip_stage1"
+    TEST_MODE = "full_pipeline"  # Options: "full_pipeline" or "skip_stage1"
     # ==================================================================================
     
     if TEST_MODE == "full_pipeline":

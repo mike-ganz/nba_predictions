@@ -1,0 +1,906 @@
+{
+  "away_team": {
+    "name": "SAS",
+    "stats": {
+      "OEFF": 117.6,
+      "DEFF": 113.7,
+      "PACE": 101.2,
+      "REST_DAYS": 3
+    },
+    "players": [
+      {
+        "name": "Victor Wembanyama",
+        "profile": {
+          "offense": 3.42,
+          "defense": 5.56,
+          "shot_selection": 0.71,
+          "efficiency": -1.06,
+          "MPG": 39,
+          "usage": 31
+        }
+      },
+      {
+        "name": "Jeremy Sochan",
+        "profile": {
+          "offense": 1.21,
+          "defense": 1.11,
+          "shot_selection": 0.18,
+          "efficiency": 0.22,
+          "MPG": 32,
+          "usage": 33
+        }
+      },
+      {
+        "name": "Tre Jones",
+        "profile": {
+          "offense": 1.88,
+          "defense": -0.06,
+          "shot_selection": 0.16,
+          "efficiency": -0.79,
+          "MPG": 30,
+          "usage": 31
+        }
+      },
+      {
+        "name": "Julian Champagnie",
+        "profile": {
+          "offense": -0.34,
+          "defense": -0.14,
+          "shot_selection": -0.86,
+          "efficiency": -0.17,
+          "MPG": 21,
+          "usage": 26
+        }
+      },
+      {
+        "name": "Devin Vassell",
+        "profile": {
+          "offense": 1.97,
+          "defense": 0.23,
+          "shot_selection": -0.22,
+          "efficiency": -0.61,
+          "MPG": 18,
+          "usage": 10
+        }
+      },
+      {
+        "name": "Zach Collins",
+        "profile": {
+          "offense": 1.1,
+          "defense": 1.47,
+          "shot_selection": 0.6,
+          "efficiency": -0.5,
+          "MPG": 30,
+          "usage": 27
+        }
+      },
+      {
+        "name": "Keldon Johnson",
+        "profile": {
+          "offense": 1.19,
+          "defense": 0.55,
+          "shot_selection": 0.14,
+          "efficiency": -0.3,
+          "MPG": 15,
+          "usage": 20
+        }
+      },
+      {
+        "name": "Malaki Branham",
+        "profile": {
+          "offense": 0.24,
+          "defense": -1.0,
+          "shot_selection": -0.8,
+          "efficiency": 0.2,
+          "MPG": 20,
+          "usage": 22
+        }
+      },
+      {
+        "name": "Cedi Osman",
+        "profile": {
+          "offense": -0.27,
+          "defense": -0.54,
+          "shot_selection": -1.05,
+          "efficiency": -0.79,
+          "MPG": 20,
+          "usage": 29
+        }
+      },
+      {
+        "name": "Blake Wesley",
+        "profile": {
+          "offense": -0.28,
+          "defense": -0.6,
+          "shot_selection": 1.2,
+          "efficiency": 0.33,
+          "MPG": 15,
+          "usage": 26
+        }
+      }
+    ]
+  },
+  "home_team": {
+    "name": "SAC",
+    "stats": {
+      "OEFF": 116.8,
+      "DEFF": 109.0,
+      "PACE": 97.9,
+      "REST_DAYS": 1
+    },
+    "players": [
+      {
+        "name": "Domantas Sabonis",
+        "profile": {
+          "offense": 4.87,
+          "defense": 2.0,
+          "shot_selection": 1.87,
+          "efficiency": -2.37,
+          "MPG": 21,
+          "usage": 14
+        }
+      },
+      {
+        "name": "Keegan Murray",
+        "profile": {
+          "offense": 0.56,
+          "defense": 1.98,
+          "shot_selection": -0.93,
+          "efficiency": -0.36,
+          "MPG": 38,
+          "usage": 29
+        }
+      },
+      {
+        "name": "Harrison Barnes",
+        "profile": {
+          "offense": 0.21,
+          "defense": -0.58,
+          "shot_selection": -0.1,
+          "efficiency": -0.8,
+          "MPG": 24,
+          "usage": 30
+        }
+      },
+      {
+        "name": "De'Aaron Fox",
+        "profile": {
+          "offense": 3.82,
+          "defense": 3.03,
+          "shot_selection": 0.37,
+          "efficiency": -0.84,
+          "MPG": 27,
+          "usage": 16
+        }
+      },
+      {
+        "name": "Kevin Huerter",
+        "profile": {
+          "offense": 0.23,
+          "defense": 0.54,
+          "shot_selection": -1.51,
+          "efficiency": -0.25,
+          "MPG": 36,
+          "usage": 28
+        }
+      },
+      {
+        "name": "Trey Lyles",
+        "profile": {
+          "offense": -0.46,
+          "defense": -0.62,
+          "shot_selection": -0.87,
+          "efficiency": -0.54,
+          "MPG": 38,
+          "usage": 12
+        }
+      },
+      {
+        "name": "Alex Len",
+        "profile": {
+          "offense": -0.97,
+          "defense": -0.38,
+          "shot_selection": 2.13,
+          "efficiency": -0.85,
+          "MPG": 29,
+          "usage": 28
+        }
+      },
+      {
+        "name": "Malik Monk",
+        "profile": {
+          "offense": 2.28,
+          "defense": 0.71,
+          "shot_selection": -0.16,
+          "efficiency": -0.54,
+          "MPG": 36,
+          "usage": 20
+        }
+      },
+      {
+        "name": "Chris Duarte",
+        "profile": {
+          "offense": -1.23,
+          "defense": -0.7,
+          "shot_selection": -1.0,
+          "efficiency": 0.79,
+          "MPG": 31,
+          "usage": 18
+        }
+      },
+      {
+        "name": "Davion Mitchell",
+        "profile": {
+          "offense": -0.52,
+          "defense": -1.33,
+          "shot_selection": -0.87,
+          "efficiency": 0.06,
+          "MPG": 18,
+          "usage": 32
+        }
+      }
+    ]
+  },
+  "recent_plays": [
+    {
+      "quarter": 1,
+      "time_remaining": "0:00:00",
+      "score": "SAS 32 - SAC 30",
+      "players_on_court": [
+        {
+          "team": "SAS",
+          "players": [
+            "Player1",
+            "Player2",
+            "Player3",
+            "Player4",
+            "Player5"
+          ]
+        },
+        {
+          "team": "SAC",
+          "players": [
+            "PlayerA",
+            "PlayerB",
+            "PlayerC",
+            "PlayerD",
+            "PlayerE"
+          ]
+        }
+      ],
+      "player": null,
+      "description": "Unknown play",
+      "shot_details": {
+        "team": null,
+        "points": null
+      }
+    },
+    {
+      "quarter": 1,
+      "time_remaining": "0:00:01",
+      "score": "SAS 32 - SAC 30",
+      "players_on_court": [
+        {
+          "team": "SAS",
+          "players": [
+            "Player1",
+            "Player2",
+            "Player3",
+            "Player4",
+            "Player5"
+          ]
+        },
+        {
+          "team": "SAC",
+          "players": [
+            "PlayerA",
+            "PlayerB",
+            "PlayerC",
+            "PlayerD",
+            "PlayerE"
+          ]
+        }
+      ],
+      "player": "Domantas Sabonis",
+      "description": "Sabonis REBOUND (Off:0 Def:2)",
+      "shot_details": {
+        "team": "SAC",
+        "points": null
+      }
+    },
+    {
+      "quarter": 1,
+      "time_remaining": "0:00:01",
+      "score": "SAS 32 - SAC 30",
+      "players_on_court": [
+        {
+          "team": "SAS",
+          "players": [
+            "Player1",
+            "Player2",
+            "Player3",
+            "Player4",
+            "Player5"
+          ]
+        },
+        {
+          "team": "SAC",
+          "players": [
+            "PlayerA",
+            "PlayerB",
+            "PlayerC",
+            "PlayerD",
+            "PlayerE"
+          ]
+        }
+      ],
+      "player": "Keldon Johnson",
+      "description": "MISS Johnson 6' Driving Floating Bank Jump Shot",
+      "shot_details": {
+        "team": "SAS",
+        "points": 0
+      }
+    },
+    {
+      "quarter": 1,
+      "time_remaining": "0:00:09",
+      "score": "SAS 32 - SAC 30",
+      "players_on_court": [
+        {
+          "team": "SAS",
+          "players": [
+            "Player1",
+            "Player2",
+            "Player3",
+            "Player4",
+            "Player5"
+          ]
+        },
+        {
+          "team": "SAC",
+          "players": [
+            "PlayerA",
+            "PlayerB",
+            "PlayerC",
+            "PlayerD",
+            "PlayerE"
+          ]
+        }
+      ],
+      "player": "Trey Lyles",
+      "description": "Lyles 25' 3PT Jump Shot (3 PTS) (Sabonis 4 AST)",
+      "shot_details": {
+        "team": "SAC",
+        "points": 3
+      }
+    },
+    {
+      "quarter": 1,
+      "time_remaining": "0:00:30",
+      "score": "SAS 32 - SAC 27",
+      "players_on_court": [
+        {
+          "team": "SAS",
+          "players": [
+            "Player1",
+            "Player2",
+            "Player3",
+            "Player4",
+            "Player5"
+          ]
+        },
+        {
+          "team": "SAC",
+          "players": [
+            "PlayerA",
+            "PlayerB",
+            "PlayerC",
+            "PlayerD",
+            "PlayerE"
+          ]
+        }
+      ],
+      "player": "Keldon Johnson",
+      "description": "Johnson 12' Pullup Jump Shot (2 PTS)",
+      "shot_details": {
+        "team": "SAS",
+        "points": 2
+      }
+    },
+    {
+      "quarter": 1,
+      "time_remaining": "0:00:36",
+      "score": "SAS 30 - SAC 27",
+      "players_on_court": [
+        {
+          "team": "SAS",
+          "players": [
+            "Player1",
+            "Player2",
+            "Player3",
+            "Player4",
+            "Player5"
+          ]
+        },
+        {
+          "team": "SAC",
+          "players": [
+            "PlayerA",
+            "PlayerB",
+            "PlayerC",
+            "PlayerD",
+            "PlayerE"
+          ]
+        }
+      ],
+      "player": "Cedi Osman",
+      "description": "Osman REBOUND (Off:0 Def:1)",
+      "shot_details": {
+        "team": "SAS",
+        "points": null
+      }
+    },
+    {
+      "quarter": 1,
+      "time_remaining": "0:00:40",
+      "score": "SAS 30 - SAC 27",
+      "players_on_court": [
+        {
+          "team": "SAS",
+          "players": [
+            "Player1",
+            "Player2",
+            "Player3",
+            "Player4",
+            "Player5"
+          ]
+        },
+        {
+          "team": "SAC",
+          "players": [
+            "PlayerA",
+            "PlayerB",
+            "PlayerC",
+            "PlayerD",
+            "PlayerE"
+          ]
+        }
+      ],
+      "player": "Malik Monk",
+      "description": "MISS Monk 25' 3PT Step Back Jump Shot",
+      "shot_details": {
+        "team": "SAC",
+        "points": 0
+      }
+    },
+    {
+      "quarter": 1,
+      "time_remaining": "0:00:47",
+      "score": "SAS 30 - SAC 27",
+      "players_on_court": [
+        {
+          "team": "SAS",
+          "players": [
+            "Player1",
+            "Player2",
+            "Player3",
+            "Player4",
+            "Player5"
+          ]
+        },
+        {
+          "team": "SAC",
+          "players": [
+            "PlayerA",
+            "PlayerB",
+            "PlayerC",
+            "PlayerD",
+            "PlayerE"
+          ]
+        }
+      ],
+      "player": "Keegan Murray",
+      "description": "Murray REBOUND (Off:0 Def:2)",
+      "shot_details": {
+        "team": "SAC",
+        "points": null
+      }
+    },
+    {
+      "quarter": 1,
+      "time_remaining": "0:00:49",
+      "score": "SAS 30 - SAC 27",
+      "players_on_court": [
+        {
+          "team": "SAS",
+          "players": [
+            "Player1",
+            "Player2",
+            "Player3",
+            "Player4",
+            "Player5"
+          ]
+        },
+        {
+          "team": "SAC",
+          "players": [
+            "PlayerA",
+            "PlayerB",
+            "PlayerC",
+            "PlayerD",
+            "PlayerE"
+          ]
+        }
+      ],
+      "player": "Malaki Branham",
+      "description": "MISS Branham 6' Driving Floating Jump Shot",
+      "shot_details": {
+        "team": "SAS",
+        "points": 0
+      }
+    },
+    {
+      "quarter": 1,
+      "time_remaining": "0:01:04",
+      "score": "SAS 30 - SAC 27",
+      "players_on_court": [
+        {
+          "team": "SAS",
+          "players": [
+            "Player1",
+            "Player2",
+            "Player3",
+            "Player4",
+            "Player5"
+          ]
+        },
+        {
+          "team": "SAC",
+          "players": [
+            "PlayerA",
+            "PlayerB",
+            "PlayerC",
+            "PlayerD",
+            "PlayerE"
+          ]
+        }
+      ],
+      "player": "Domantas Sabonis",
+      "description": "Sabonis 2' Cutting Dunk Shot (8 PTS) (Mitchell 1 AST)",
+      "shot_details": {
+        "team": "SAC",
+        "points": 2
+      }
+    },
+    {
+      "quarter": 1,
+      "time_remaining": "0:01:06",
+      "score": "SAS 30 - SAC 25",
+      "players_on_court": [
+        {
+          "team": "SAS",
+          "players": [
+            "Player1",
+            "Player2",
+            "Player3",
+            "Player4",
+            "Player5"
+          ]
+        },
+        {
+          "team": "SAC",
+          "players": [
+            "PlayerA",
+            "PlayerB",
+            "PlayerC",
+            "PlayerD",
+            "PlayerE"
+          ]
+        }
+      ],
+      "player": "Tre Jones",
+      "description": "SUB: Wesley FOR Jones",
+      "shot_details": {
+        "team": "SAS",
+        "points": null
+      }
+    },
+    {
+      "quarter": 1,
+      "time_remaining": "0:01:06",
+      "score": "SAS 30 - SAC 25",
+      "players_on_court": [
+        {
+          "team": "SAS",
+          "players": [
+            "Player1",
+            "Player2",
+            "Player3",
+            "Player4",
+            "Player5"
+          ]
+        },
+        {
+          "team": "SAC",
+          "players": [
+            "PlayerA",
+            "PlayerB",
+            "PlayerC",
+            "PlayerD",
+            "PlayerE"
+          ]
+        }
+      ],
+      "player": "Devin Vassell",
+      "description": "SUB: Branham FOR Vassell",
+      "shot_details": {
+        "team": "SAS",
+        "points": null
+      }
+    },
+    {
+      "quarter": 1,
+      "time_remaining": "0:01:06",
+      "score": "SAS 30 - SAC 25",
+      "players_on_court": [
+        {
+          "team": "SAS",
+          "players": [
+            "Player1",
+            "Player2",
+            "Player3",
+            "Player4",
+            "Player5"
+          ]
+        },
+        {
+          "team": "SAC",
+          "players": [
+            "PlayerA",
+            "PlayerB",
+            "PlayerC",
+            "PlayerD",
+            "PlayerE"
+          ]
+        }
+      ],
+      "player": "Jeremy Sochan",
+      "description": "SUB: Osman FOR Sochan",
+      "shot_details": {
+        "team": "SAS",
+        "points": null
+      }
+    },
+    {
+      "quarter": 1,
+      "time_remaining": "0:01:06",
+      "score": "SAS 30 - SAC 25",
+      "players_on_court": [
+        {
+          "team": "SAS",
+          "players": [
+            "Player1",
+            "Player2",
+            "Player3",
+            "Player4",
+            "Player5"
+          ]
+        },
+        {
+          "team": "SAC",
+          "players": [
+            "PlayerA",
+            "PlayerB",
+            "PlayerC",
+            "PlayerD",
+            "PlayerE"
+          ]
+        }
+      ],
+      "player": "Alex Len",
+      "description": "SUB: Sabonis FOR Len",
+      "shot_details": {
+        "team": "SAC",
+        "points": null
+      }
+    },
+    {
+      "quarter": 1,
+      "time_remaining": "0:01:06",
+      "score": "SAS 30 - SAC 25",
+      "players_on_court": [
+        {
+          "team": "SAS",
+          "players": [
+            "Player1",
+            "Player2",
+            "Player3",
+            "Player4",
+            "Player5"
+          ]
+        },
+        {
+          "team": "SAC",
+          "players": [
+            "PlayerA",
+            "PlayerB",
+            "PlayerC",
+            "PlayerD",
+            "PlayerE"
+          ]
+        }
+      ],
+      "player": "De'Aaron Fox",
+      "description": "SUB: Mitchell FOR Fox",
+      "shot_details": {
+        "team": "SAC",
+        "points": null
+      }
+    },
+    {
+      "quarter": 1,
+      "time_remaining": "0:01:06",
+      "score": "SAS 30 - SAC 25",
+      "players_on_court": [
+        {
+          "team": "SAS",
+          "players": [
+            "Player1",
+            "Player2",
+            "Player3",
+            "Player4",
+            "Player5"
+          ]
+        },
+        {
+          "team": "SAC",
+          "players": [
+            "PlayerA",
+            "PlayerB",
+            "PlayerC",
+            "PlayerD",
+            "PlayerE"
+          ]
+        }
+      ],
+      "player": null,
+      "description": "KINGS Rebound",
+      "shot_details": {
+        "team": "SAC",
+        "points": null
+      }
+    },
+    {
+      "quarter": 1,
+      "time_remaining": "0:01:06",
+      "score": "SAS 30 - SAC 25",
+      "players_on_court": [
+        {
+          "team": "SAS",
+          "players": [
+            "Player1",
+            "Player2",
+            "Player3",
+            "Player4",
+            "Player5"
+          ]
+        },
+        {
+          "team": "SAC",
+          "players": [
+            "PlayerA",
+            "PlayerB",
+            "PlayerC",
+            "PlayerD",
+            "PlayerE"
+          ]
+        }
+      ],
+      "player": "Trey Lyles",
+      "description": "MISS Lyles 3' Driving Layup",
+      "shot_details": {
+        "team": "SAC",
+        "points": 0
+      }
+    },
+    {
+      "quarter": 1,
+      "time_remaining": "0:01:17",
+      "score": "SAS 30 - SAC 25",
+      "players_on_court": [
+        {
+          "team": "SAS",
+          "players": [
+            "Player1",
+            "Player2",
+            "Player3",
+            "Player4",
+            "Player5"
+          ]
+        },
+        {
+          "team": "SAC",
+          "players": [
+            "PlayerA",
+            "PlayerB",
+            "PlayerC",
+            "PlayerD",
+            "PlayerE"
+          ]
+        }
+      ],
+      "player": "Jeremy Sochan",
+      "description": "Fox STEAL (1 STL): Sochan Lost Ball Turnover (P1.T1)",
+      "shot_details": {
+        "team": "SAS",
+        "points": null
+      }
+    },
+    {
+      "quarter": 1,
+      "time_remaining": "0:01:32",
+      "score": "SAS 30 - SAC 25",
+      "players_on_court": [
+        {
+          "team": "SAS",
+          "players": [
+            "Player1",
+            "Player2",
+            "Player3",
+            "Player4",
+            "Player5"
+          ]
+        },
+        {
+          "team": "SAC",
+          "players": [
+            "PlayerA",
+            "PlayerB",
+            "PlayerC",
+            "PlayerD",
+            "PlayerE"
+          ]
+        }
+      ],
+      "player": "Jeremy Sochan",
+      "description": "Sochan REBOUND (Off:0 Def:3)",
+      "shot_details": {
+        "team": "SAS",
+        "points": null
+      }
+    },
+    {
+      "quarter": 1,
+      "time_remaining": "0:01:37",
+      "score": "SAS 30 - SAC 25",
+      "players_on_court": [
+        {
+          "team": "SAS",
+          "players": [
+            "Player1",
+            "Player2",
+            "Player3",
+            "Player4",
+            "Player5"
+          ]
+        },
+        {
+          "team": "SAC",
+          "players": [
+            "PlayerA",
+            "PlayerB",
+            "PlayerC",
+            "PlayerD",
+            "PlayerE"
+          ]
+        }
+      ],
+      "player": "Trey Lyles",
+      "description": "MISS Lyles 26' 3PT Jump Shot",
+      "shot_details": {
+        "team": "SAC",
+        "points": 0
+      }
+    }
+  ]
+}
