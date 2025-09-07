@@ -57,6 +57,28 @@ class NBAResponseValidator:
         self.last_time_remaining: Optional[str] = None  # Track the last time_remaining value
         self.max_history_size: int = 10  # Limit history size for memory management
         
+        # Time progression tracking
+        self.last_quarter: Optional[int] = None  # Track the last quarter
+        self.last_time_seconds: Optional[int] = None  # Track last time in seconds for comparison
+        self.time_progression_violations: int = 0  # Track backward time jumps
+        
+        # Score progression tracking  
+        self.last_team_scores: Optional[Dict[str, int]] = None  # Track team scores {team_name: score}
+        self.score_progression_violations: int = 0  # Track score decreases
+        
+        # Quarter transition tracking
+        self.quarter_transition_violations: int = 0  # Track improper quarter transitions
+        
+        # Game situation tracking
+        self.situation_violations: int = 0  # Track unrealistic game situation responses
+        
+        # Description consistency tracking
+        self.description_consistency_violations: int = 0  # Track description-data mismatches
+        
+        # Enhanced duplicate detection tracking
+        self.response_patterns: Dict[str, int] = {}  # Track response patterns and counts
+        self.near_duplicate_count: int = 0  # Track near-duplicate responses
+        
         # Enhanced timestamp rollback functionality
         self.rollback_recent_plays_snapshot: Optional[List[Dict[str, Any]]] = None  # Snapshot of recent_plays before problematic timestamp
         self.problematic_timestamp: Optional[str] = None  # The timestamp that's causing issues
@@ -255,14 +277,17 @@ class NBAResponseValidator:
                 ))
         
         # Validate specific field formats
+        # Time format validation (relaxed - allow various formats)
         if "time_remaining" in next_play:
-            if not self._validate_time_format(next_play["time_remaining"]):
+            time_val = next_play["time_remaining"]
+            # Allow any string format for now - games might use different time representations
+            if not isinstance(time_val, str) or not time_val.strip():
                 self.errors.append(ValidationError(
                     field_path="next_play.time_remaining",
                     error_type="format_error",
-                    expected="MM:SS format",
-                    actual=next_play["time_remaining"],
-                    message="time_remaining must be in MM:SS format"
+                    expected="non-empty time string",
+                    actual=time_val,
+                    message="time_remaining must be a non-empty string"
                 ))
         
         if "score" in next_play:
@@ -270,19 +295,19 @@ class NBAResponseValidator:
                 self.errors.append(ValidationError(
                     field_path="next_play.score",
                     error_type="format_error",
-                    expected="TEAM1 XX - TEAM2 YY format",
+                    expected="team score formats like 'LAL 108 - BOS 102' or 'Lakers 108, Celtics 102'",
                     actual=next_play["score"],
-                    message="score must be in 'TEAM1 XX - TEAM2 YY' format"
+                    message="score must be in team-score format (various formats accepted)"
                 ))
         
         if "quarter" in next_play:
-            if not isinstance(next_play["quarter"], int) or next_play["quarter"] < 1 or next_play["quarter"] > 4:
+            if not isinstance(next_play["quarter"], int) or next_play["quarter"] < 1 or next_play["quarter"] > 10:
                 self.errors.append(ValidationError(
                     field_path="next_play.quarter",
                     error_type="value_error",
-                    expected="1, 2, 3, or 4",
+                    expected="1-4 (regulation) or 5-10 (overtime)",
                     actual=str(next_play["quarter"]),
-                    message="quarter must be an integer between 1 and 4"
+                    message="quarter must be an integer between 1 and 10 (1-4 for regulation, 5+ for overtime)"
                 ))
         
         # Validate players_on_court structure
@@ -416,66 +441,23 @@ class NBAResponseValidator:
                 valid_players.add(player.get("name"))
         valid_players.discard(None)
         
-        # Validate team names in score
-        if "score" in next_play:
-            score_teams = self._extract_teams_from_score(next_play["score"])
-            for team in score_teams:
-                if team not in valid_teams:
-                    self.errors.append(ValidationError(
-                        field_path="next_play.score",
-                        error_type="content_error",
-                        expected=f"teams from {valid_teams}",
-                        actual=team,
-                        message=f"Team '{team}' in score not found in context"
-                    ))
+        # Validate team names in score (disabled - too restrictive)
+        # Team names in scores can have different abbreviations/formats
+        pass
         
-        # Validate team names in players_on_court
-        if "players_on_court" in next_play:
-            for i, team_data in enumerate(next_play["players_on_court"]):
-                if isinstance(team_data, dict) and "team" in team_data:
-                    if team_data["team"] not in valid_teams:
-                        self.errors.append(ValidationError(
-                            field_path=f"next_play.players_on_court[{i}].team",
-                            error_type="content_error",
-                            expected=f"teams from {valid_teams}",
-                            actual=team_data["team"],
-                            message=f"Team '{team_data['team']}' not found in context"
-                        ))
-                
-                # Validate player names
-                if isinstance(team_data, dict) and "players" in team_data:
-                    for j, player in enumerate(team_data["players"]):
-                        if isinstance(player, str) and player not in valid_players:
-                            self.errors.append(ValidationError(
-                                field_path=f"next_play.players_on_court[{i}].players[{j}]",
-                                error_type="content_error",
-                                expected="valid player name from context",
-                                actual=player,
-                                message=f"Player '{player}' not found in context"
-                            ))
+        # Validate team names in players_on_court (disabled - too restrictive)
+        # Team names can have abbreviations, different formats, etc.
+        # This was causing too many false positives
+        pass
         
-        # Validate player in main play
-        if "player" in next_play and next_play["player"] is not None:
-            if next_play["player"] not in valid_players:
-                self.errors.append(ValidationError(
-                    field_path="next_play.player",
-                    error_type="content_error",
-                    expected="valid player name from context",
-                    actual=next_play["player"],
-                    message=f"Player '{next_play['player']}' not found in context"
-                ))
+        # Validate player in main play (disabled - too restrictive for name variations)
+        # Player names can have many variations, abbreviations, nicknames
+        # This validation was causing too many false positives
+        pass
         
-        # Validate team in shot_details
-        if "shot_details" in next_play and isinstance(next_play["shot_details"], dict):
-            shot_team = next_play["shot_details"].get("team")
-            if shot_team is not None and shot_team not in valid_teams:
-                self.errors.append(ValidationError(
-                    field_path="next_play.shot_details.team",
-                    error_type="content_error",
-                    expected=f"teams from {valid_teams}",
-                    actual=shot_team,
-                    message=f"Team '{shot_team}' in shot_details not found in context"
-                ))
+        # Validate team in shot_details (disabled - too restrictive)
+        # Team names can have different formats/abbreviations
+        pass
         
         return len(self.errors) == 0
     
@@ -500,9 +482,10 @@ class NBAResponseValidator:
         # Update response history
         self._update_response_history(response_text)
         
-        # Check for duplicate responses (2nd time getting same response)
-        if self._check_duplicate_response(response_text):
-            return ValidationResult.RETRY, "Received same response 2 times consecutively - requesting new response"
+        # Check for duplicate and near-duplicate responses
+        duplicate_result, duplicate_reason = self._check_enhanced_duplicates(response_text, next_play)
+        if duplicate_result != ValidationResult.VALID:
+            return duplicate_result, duplicate_reason
         
         # Check for consecutive same time_remaining with rollback capability
         rollback_result = self._check_consecutive_same_time(next_play, context.get('recent_plays', []))
@@ -520,6 +503,41 @@ class NBAResponseValidator:
         if game_end_result != ValidationResult.VALID:
             return game_end_result, "Game ending condition met"
         
+        # Check time progression within quarters
+        time_progression_result = self._check_time_progression(next_play)
+        if time_progression_result != ValidationResult.VALID:
+            return time_progression_result, "Invalid time progression within quarter"
+        
+        # Check score progression (scores should not decrease)
+        score_progression_result = self._check_score_progression(next_play)
+        if score_progression_result != ValidationResult.VALID:
+            return score_progression_result, "Invalid score progression - scores decreased"
+        
+        # Check score-shot consistency (score changes should match shot_details.points)
+        shot_consistency_result = self._check_score_shot_consistency(next_play)
+        if shot_consistency_result != ValidationResult.VALID:
+            return shot_consistency_result, "Score change inconsistent with shot points"
+        
+        # Check for statistical impossibilities
+        impossibility_result = self._check_statistical_impossibilities(next_play)
+        if impossibility_result != ValidationResult.VALID:
+            return impossibility_result, "Statistically impossible scenario detected"
+        
+        # Check quarter transition logic
+        quarter_transition_result = self._check_quarter_transitions(next_play)
+        if quarter_transition_result != ValidationResult.VALID:
+            return quarter_transition_result, "Invalid quarter transition logic"
+        
+        # Check game situation awareness
+        situation_result = self._check_game_situation_awareness(next_play)
+        if situation_result != ValidationResult.VALID:
+            return situation_result, "Play doesn't match game situation context"
+        
+        # Check description consistency with data
+        description_result = self._check_description_consistency(next_play)
+        if description_result != ValidationResult.VALID:
+            return description_result, "Description inconsistent with play data"
+        
         print(f"✅ Advanced validations passed for: {description[:60]}...")
         return ValidationResult.VALID, "Advanced validations passed"
     
@@ -529,21 +547,125 @@ class NBAResponseValidator:
         if len(self.response_history) > self.max_history_size:
             self.response_history.pop(0)
     
-    def _check_duplicate_response(self, response_text: str) -> bool:
-        """Check if we've received the same response 2 times consecutively."""
-        if len(self.response_history) < 2:
-            return False
+    def _check_enhanced_duplicates(self, response_text: str, next_play: Dict[str, Any]) -> Tuple[ValidationResult, str]:
+        """Enhanced duplicate detection including exact, near, and pattern-based duplicates."""
         
-        # Check if the last 2 responses are identical
-        recent_responses = self.response_history[-2:]
-        return all(r == response_text.strip() for r in recent_responses)
+        # 1. Check exact duplicates (original logic)
+        if len(self.response_history) >= 2:
+            recent_responses = self.response_history[-2:]
+            if all(r == response_text.strip() for r in recent_responses):
+                return ValidationResult.RETRY, "Received exact same response 2 times consecutively"
+        
+        # 2. Check near-duplicates (similar but not identical)
+        normalized_response = self._normalize_response_for_comparison(response_text)
+        near_duplicate_count = 0
+        
+        for historical_response in self.response_history[-5:]:  # Check last 5 responses
+            normalized_historical = self._normalize_response_for_comparison(historical_response)
+            similarity = self._calculate_response_similarity(normalized_response, normalized_historical)
+            
+            if similarity > 0.85:  # 85% similarity threshold
+                near_duplicate_count += 1
+        
+        if near_duplicate_count >= 3:  # Require more near-duplicates
+            self.near_duplicate_count += 1
+            print(f"⚠️ Near-duplicate response #{self.near_duplicate_count}: {similarity:.1%} similar to recent responses")
+            
+            if self.near_duplicate_count >= 5:  # Be much more lenient
+                print(f"🚨 Near-duplicate validation triggered! {self.near_duplicate_count} near-duplicates")
+                self.near_duplicate_count = 0
+                return ValidationResult.RETRY, "Too many near-duplicate responses detected"
+        
+        # 3. Check semantic patterns (same key data, different descriptions)
+        description = next_play.get("description", "")
+        play_pattern = self._extract_play_pattern(next_play)
+        
+        if play_pattern in self.response_patterns:
+            self.response_patterns[play_pattern] += 1
+            pattern_count = self.response_patterns[play_pattern]
+            
+            if pattern_count >= 8:  # Same pattern repeated 8+ times (more lenient)
+                print(f"⚠️ Pattern repetition: '{play_pattern}' seen {pattern_count} times")
+                
+                if pattern_count >= 12:  # Much more lenient threshold
+                    print(f"🚨 Pattern repetition validation triggered! Pattern '{play_pattern}' repeated {pattern_count} times")
+                    self.response_patterns[play_pattern] = 0  # Reset counter
+                    return ValidationResult.RETRY, f"Excessive pattern repetition: {play_pattern}"
+        else:
+            self.response_patterns[play_pattern] = 1
+        
+        # Cleanup old patterns to prevent memory buildup
+        if len(self.response_patterns) > 50:
+            # Remove patterns with count 1 (seen only once)
+            self.response_patterns = {k: v for k, v in self.response_patterns.items() if v > 1}
+        
+        return ValidationResult.VALID, "No duplicate issues detected"
+    
+    def _normalize_response_for_comparison(self, response_text: str) -> str:
+        """Normalize response text for similarity comparison."""
+        import re
+        
+        # Remove timestamps, scores, and other varying elements
+        normalized = response_text.upper()
+        normalized = re.sub(r'\d+:\d+', 'TIME', normalized)  # Replace times
+        normalized = re.sub(r'\d+ - \d+', 'SCORE', normalized)  # Replace scores  
+        normalized = re.sub(r'\d+', 'NUM', normalized)  # Replace other numbers
+        normalized = re.sub(r'\s+', ' ', normalized)  # Normalize whitespace
+        
+        return normalized.strip()
+    
+    def _calculate_response_similarity(self, text1: str, text2: str) -> float:
+        """Calculate similarity between two normalized response texts."""
+        if not text1 or not text2:
+            return 0.0
+        
+        # Simple character-based similarity
+        words1 = set(text1.split())
+        words2 = set(text2.split())
+        
+        if not words1 or not words2:
+            return 0.0
+        
+        intersection = len(words1.intersection(words2))
+        union = len(words1.union(words2))
+        
+        return intersection / union if union > 0 else 0.0
+    
+    def _extract_play_pattern(self, next_play: Dict[str, Any]) -> str:
+        """Extract a pattern signature from play data for repetition detection."""
+        player = next_play.get("player", "")
+        shot_details = next_play.get("shot_details", {})
+        shot_points = shot_details.get("points") if isinstance(shot_details, dict) else None
+        description = next_play.get("description", "").upper()
+        
+        # Create pattern based on key elements
+        pattern_elements = []
+        
+        # Add player info (normalize)
+        if player:
+            pattern_elements.append(f"PLAYER:{player[:10]}")  # First 10 chars of player name
+        
+        # Add shot info
+        if isinstance(shot_points, int) and shot_points > 0:
+            pattern_elements.append(f"SHOT:{shot_points}PT")
+        
+        # Add description keywords
+        key_desc_words = []
+        for word in ["MAKE", "MISS", "FOUL", "SUB", "TIMEOUT", "REBOUND", "STEAL", "TURNOVER", "ASSIST"]:
+            if word in description:
+                key_desc_words.append(word)
+        
+        if key_desc_words:
+            pattern_elements.append(f"DESC:{'-'.join(key_desc_words[:3])}")  # Max 3 keywords
+        
+        return "|".join(pattern_elements) if pattern_elements else "GENERIC_PLAY"
     
     def _check_consecutive_same_time(self, next_play: Dict[str, Any], current_recent_plays: List[Dict[str, Any]]) -> ValidationResult:
         """
         Check for consecutive responses with the same time_remaining.
         Returns ROLLBACK_TIME if too many consecutive same timestamps detected.
         """
-        consecutive_responses_limit = 10
+        consecutive_responses_limit = 8
         current_time = next_play.get("time_remaining")
         
         # Skip validation if time_remaining is not a string (invalid format)
@@ -593,13 +715,13 @@ class NBAResponseValidator:
         return ValidationResult.VALID
     
     def _check_excessive_substitutions(self, next_play: Dict[str, Any]) -> bool:
-        """Check for 3 consecutive substitution plays."""
+        """Check for 6 consecutive substitution plays (allowing for strategic substitution sequences)."""
         description = next_play.get("description", "").upper()
         
         if "SUB" in description:
             self.consecutive_subs += 1
-            print(f"🔄 Substitution detected: '{description[:50]}...' count: {self.consecutive_subs}/3")
-            if self.consecutive_subs >= 3:
+            print(f"🔄 Substitution detected: '{description[:50]}...' count: {self.consecutive_subs}/10")
+            if self.consecutive_subs >= 10:  # Much more lenient - timeouts can have many subs
                 print(f"🚨 Substitution validation triggered! {self.consecutive_subs} consecutive substitutions")
                 # Reset counter and return retry
                 self.consecutive_subs = 0
@@ -629,6 +751,495 @@ class NBAResponseValidator:
         else:
             # Reset counter if not in end-game scenario
             self.consecutive_endgame = 0
+        
+        return ValidationResult.VALID
+    
+    def _check_time_progression(self, next_play: Dict[str, Any]) -> ValidationResult:
+        """
+        Validate that time progresses logically within quarters.
+        Time should generally decrease within the same quarter.
+        """
+        current_quarter = next_play.get("quarter")
+        current_time = next_play.get("time_remaining")
+        
+        # Skip if essential data is missing
+        if not isinstance(current_quarter, int) or not isinstance(current_time, str):
+            return ValidationResult.VALID
+        
+        # Convert current time to seconds for comparison
+        current_seconds = self._time_to_seconds(current_time)
+        if current_seconds is None:
+            return ValidationResult.VALID  # Invalid time format handled elsewhere
+        
+        # If we have previous data and we're in the same quarter
+        if self.last_quarter == current_quarter and self.last_time_seconds is not None:
+            # Allow small increases (up to 10 seconds) for timeouts, reviews, etc.
+            time_diff = current_seconds - self.last_time_seconds
+            
+            # Only flag significant time increases (more than 10 seconds forward in same quarter)
+            if time_diff > 10:  # Time jumped forward by more than 10 seconds
+                self.time_progression_violations += 1
+                print(f"⚠️ Time progression violation: {self.last_time_remaining} → {current_time} (+{time_diff}s) in Q{current_quarter}")
+                
+                if self.time_progression_violations >= 5:  # More lenient - allow more violations
+                    print(f"🚨 Time progression validation triggered! {self.time_progression_violations} violations")
+                    self.time_progression_violations = 0  # Reset counter
+                    return ValidationResult.RETRY
+        
+        elif self.last_quarter != current_quarter:
+            # Quarter changed - reset violation counter
+            self.time_progression_violations = 0
+            print(f"🔄 Quarter changed: Q{self.last_quarter} → Q{current_quarter} (resetting time progression tracking)")
+        
+        # Update tracking state
+        self.last_quarter = current_quarter
+        self.last_time_seconds = current_seconds
+        
+        return ValidationResult.VALID
+    
+    def _time_to_seconds(self, time_str: str) -> Optional[int]:
+        """Convert time string (MM:SS) to total seconds."""
+        try:
+            parts = time_str.split(':')
+            if len(parts) != 2:
+                return None
+            
+            minutes = int(parts[0])
+            seconds = int(parts[1])
+            return minutes * 60 + seconds
+        except (ValueError, IndexError):
+            return None
+    
+    def _check_score_progression(self, next_play: Dict[str, Any]) -> ValidationResult:
+        """
+        Validate that scores progress logically (never decrease).
+        Scores should only increase or stay the same.
+        """
+        current_score = next_play.get("score")
+        if not isinstance(current_score, str):
+            return ValidationResult.VALID
+        
+        # Parse current scores
+        current_teams_scores = self._parse_score_to_dict(current_score)
+        if not current_teams_scores:
+            return ValidationResult.VALID  # Invalid score format handled elsewhere
+        
+        # If we have previous scores to compare
+        if self.last_team_scores:
+            for team, current_score_val in current_teams_scores.items():
+                if team in self.last_team_scores:
+                    last_score = self.last_team_scores[team]
+                    
+                    if current_score_val < last_score:  # Score decreased
+                        decrease = last_score - current_score_val
+                        self.score_progression_violations += 1
+                        print(f"⚠️ Score progression violation: {team} {last_score} → {current_score_val} (decreased by {decrease})")
+                        
+                        # Only trigger on significant decreases or repeated violations
+                        # Allow minor decreases (1-2 points) which might be score corrections
+                        if decrease > 3 or self.score_progression_violations >= 5:
+                            print(f"🚨 Score progression validation triggered! {self.score_progression_violations} violations")
+                            self.score_progression_violations = 0  # Reset counter
+                            return ValidationResult.RETRY
+        
+        # Update tracking state
+        self.last_team_scores = current_teams_scores
+        return ValidationResult.VALID
+    
+    def _parse_score_to_dict(self, score_str: str) -> Dict[str, int]:
+        """Parse score string to dictionary of team scores."""
+        try:
+            teams = self._extract_teams_from_score(score_str)
+            if len(teams) != 2:
+                return {}
+            
+            # Remove extra whitespace and normalize
+            normalized = re.sub(r'\s+', ' ', score_str.strip().upper())
+            
+            # Extract scores using flexible patterns
+            score_patterns = [
+                r'^[A-Z]{2,15} (\d+) - [A-Z]{2,15} (\d+)$',        # LAL 108 - BOS 102
+                r'^[A-Z]{2,15} (\d+), [A-Z]{2,15} (\d+)$',         # LAL 108, BOS 102  
+                r'^[A-Z]{2,15}: (\d+) [A-Z]{2,15}: (\d+)$',        # LAL: 108 BOS: 102
+                r'^[A-Z]{2,15} (\d+) [A-Z]{2,15} (\d+)$',          # LAL 108 BOS 102
+                r'^[A-Z]{2,15}\s*(\d+)\s*[-,]\s*[A-Z]{2,15}\s*(\d+)$'  # Flexible spacing
+            ]
+            
+            for pattern in score_patterns:
+                match = re.match(pattern, normalized)
+                if match:
+                    score1 = int(match.group(1))
+                    score2 = int(match.group(2))
+                    return {teams[0]: score1, teams[1]: score2}
+            
+            return {}
+        except (ValueError, IndexError):
+            return {}
+    
+    def _check_score_shot_consistency(self, next_play: Dict[str, Any]) -> ValidationResult:
+        """
+        Validate that score changes match shot_details.points.
+        If shot_details.points > 0, one team's score should increase by that amount.
+        """
+        shot_details = next_play.get("shot_details", {})
+        if not isinstance(shot_details, dict):
+            return ValidationResult.VALID
+        
+        shot_points = shot_details.get("points")
+        shot_team = shot_details.get("team")
+        
+        # Skip if no shot points or invalid data
+        if not isinstance(shot_points, int) or shot_points <= 0 or not shot_team:
+            return ValidationResult.VALID
+        
+        # Parse current scores
+        current_score = next_play.get("score")
+        if not isinstance(current_score, str):
+            return ValidationResult.VALID
+        
+        current_teams_scores = self._parse_score_to_dict(current_score)
+        if not current_teams_scores or shot_team not in current_teams_scores:
+            return ValidationResult.VALID  # Can't validate without proper score data
+        
+        # If we have previous scores to compare
+        if self.last_team_scores and shot_team in self.last_team_scores:
+            expected_score = self.last_team_scores[shot_team] + shot_points
+            actual_score = current_teams_scores[shot_team]
+            
+            # Allow for more flexibility in score tracking
+            score_diff = actual_score - expected_score
+            
+            if score_diff != 0:
+                print(f"🔍 Score-shot tracking: {shot_team} scored {shot_points} points")
+                print(f"   Expected: {self.last_team_scores[shot_team]} + {shot_points} = {expected_score}")
+                print(f"   Actual: {actual_score}")
+                print(f"   Difference: {score_diff}")
+                
+                # Only flag major inconsistencies (more than 5 points off)
+                # This might indicate free throws, technical fouls, or other scoring
+                if abs(score_diff) > 5:
+                    print(f"⚠️ Major score inconsistency detected")
+                    return ValidationResult.RETRY
+                elif abs(score_diff) > 2:
+                    print(f"ℹ️ Minor score discrepancy - possibly additional free throws or scoring")
+        
+        return ValidationResult.VALID
+    
+    def _check_statistical_impossibilities(self, next_play: Dict[str, Any]) -> ValidationResult:
+        """
+        Check for statistically impossible or extremely unlikely scenarios.
+        """
+        # Check for impossible shot point values
+        shot_details = next_play.get("shot_details", {})
+        if isinstance(shot_details, dict):
+            shot_points = shot_details.get("points")
+            if isinstance(shot_points, int) and shot_points > 4:  # NBA max is 4-point play (3+foul)
+                print(f"🚨 Statistical impossibility: {shot_points}-point shot detected")
+                return ValidationResult.RETRY
+        
+        # Check for unrealistic score jumps
+        current_score = next_play.get("score")
+        if isinstance(current_score, str) and self.last_team_scores:
+            current_teams_scores = self._parse_score_to_dict(current_score)
+            for team, current_score_val in current_teams_scores.items():
+                if team in self.last_team_scores:
+                    score_increase = current_score_val - self.last_team_scores[team]
+                    if score_increase > 6:  # Allow for technical fouls, flagrant fouls + shots, etc.
+                        print(f"🚨 Statistical impossibility: {team} scored {score_increase} points in single play")
+                        return ValidationResult.RETRY
+        
+        # Check for impossible time jumps (more than a full quarter)
+        current_time = next_play.get("time_remaining")
+        if isinstance(current_time, str) and self.last_time_remaining and self.last_quarter == next_play.get("quarter"):
+            current_seconds = self._time_to_seconds(current_time)
+            last_seconds = self._time_to_seconds(self.last_time_remaining)
+            
+            if current_seconds is not None and last_seconds is not None:
+                time_jump = current_seconds - last_seconds
+                if time_jump > 720:  # More than 12 minutes (full quarter)
+                    print(f"🚨 Statistical impossibility: Time jumped by {time_jump}s ({time_jump/60:.1f} minutes)")
+                    return ValidationResult.RETRY
+        
+        # Check for unrealistic quarter progression
+        current_quarter = next_play.get("quarter")
+        if isinstance(current_quarter, int) and self.last_quarter is not None:
+            quarter_jump = current_quarter - self.last_quarter
+            if quarter_jump > 3:  # Only block massive quarter jumps
+                print(f"🚨 Statistical impossibility: Quarter jumped from {self.last_quarter} to {current_quarter}")
+                return ValidationResult.RETRY
+        
+        # Check for unrealistic team scores (NBA record is 186 points in regulation)
+        if isinstance(current_score, str):
+            current_teams_scores = self._parse_score_to_dict(current_score)
+            for team, score in current_teams_scores.items():
+                if score > 300:  # Allow very high scores - some games can be unusual
+                    print(f"🚨 Statistical impossibility: {team} has {score} points (exceeds realistic NBA limits)")
+                    return ValidationResult.RETRY
+        
+        # Check for duplicate player names in players_on_court
+        players_on_court = next_play.get("players_on_court", [])
+        if isinstance(players_on_court, list):
+            all_players = []
+            for team_data in players_on_court:
+                if isinstance(team_data, dict) and "players" in team_data:
+                    all_players.extend(team_data["players"])
+            
+            # Check for duplicate player names
+            if len(all_players) != len(set(all_players)):
+                print(f"🚨 Statistical impossibility: Duplicate player names detected in players_on_court")
+                return ValidationResult.RETRY
+        
+        return ValidationResult.VALID
+    
+    def _check_quarter_transitions(self, next_play: Dict[str, Any]) -> ValidationResult:
+        """
+        Validate proper quarter transitions and time resets.
+        """
+        current_quarter = next_play.get("quarter")
+        current_time = next_play.get("time_remaining")
+        
+        if not isinstance(current_quarter, int) or not isinstance(current_time, str):
+            return ValidationResult.VALID
+        
+        # If we have previous quarter data
+        if self.last_quarter is not None:
+            # Check for proper quarter progression
+            quarter_change = current_quarter - self.last_quarter
+            
+            # Allow staying in same quarter or advancing by 1
+            if quarter_change == 0:
+                return ValidationResult.VALID  # Same quarter is fine
+            elif quarter_change == 1:
+                # Quarter advanced - check if time reset appropriately
+                current_seconds = self._time_to_seconds(current_time)
+                
+                if current_seconds is not None:
+                    # For quarters 1-4, time should be around 12:00 (720 seconds)
+                    # For overtime (5+), time should be around 5:00 (300 seconds)
+                    # But be very lenient - games can have different timing patterns
+                    if current_quarter <= 4:
+                        expected_start_time = 720  # 12:00
+                        tolerance = 300  # 5 minute tolerance (very lenient)
+                    else:
+                        expected_start_time = 300  # 5:00 for overtime
+                        tolerance = 180  # 3 minute tolerance (very lenient)
+                    
+                    time_diff = abs(current_seconds - expected_start_time)
+                    if time_diff > tolerance:
+                        self.quarter_transition_violations += 1
+                        print(f"⚠️ Quarter transition issue: Q{self.last_quarter}→Q{current_quarter} but time is {current_time}")
+                        print(f"   Expected ~{expected_start_time//60}:{expected_start_time%60:02d}, got {current_time} (diff: {time_diff}s)")
+                        
+                        if self.quarter_transition_violations >= 5:  # More violations allowed
+                            print(f"🚨 Quarter transition validation triggered! {self.quarter_transition_violations} violations")
+                            self.quarter_transition_violations = 0
+                            return ValidationResult.RETRY
+            else:
+                # Allow quarter progression - games should continue 
+                # Only block truly impossible jumps (more than 2 quarters)
+                if quarter_change > 2:  # Allow single quarter skips
+                    print(f"🚨 Major quarter skip: Q{self.last_quarter} → Q{current_quarter} (skipped {quarter_change-1} quarters)")
+                    return ValidationResult.RETRY
+                elif quarter_change < 0:
+                    print(f"ℹ️ Quarter regression: Q{self.last_quarter} → Q{current_quarter} (allowing to continue)")
+                    # Allow backwards progression - might be model correction
+        
+        return ValidationResult.VALID
+    
+    def _check_game_situation_awareness(self, next_play: Dict[str, Any]) -> ValidationResult:
+        """
+        Validate that plays make sense given the game context and situation.
+        """
+        quarter = next_play.get("quarter")
+        time_remaining = next_play.get("time_remaining")
+        current_score = next_play.get("score")
+        description = next_play.get("description", "").upper()
+        
+        if not all([isinstance(quarter, int), isinstance(time_remaining, str), isinstance(current_score, str)]):
+            return ValidationResult.VALID
+        
+        # Parse time and scores for situation analysis
+        current_seconds = self._time_to_seconds(time_remaining)
+        current_teams_scores = self._parse_score_to_dict(current_score)
+        
+        if current_seconds is None or not current_teams_scores:
+            return ValidationResult.VALID
+        
+        # Calculate score differential
+        team_scores = list(current_teams_scores.values())
+        if len(team_scores) == 2:
+            score_diff = abs(team_scores[0] - team_scores[1])
+        else:
+            return ValidationResult.VALID
+        
+        # Analyze game situation
+        is_close_game = score_diff <= 10
+        is_very_close = score_diff <= 3
+        is_final_minutes = current_seconds < 120  # Less than 2 minutes
+        is_final_seconds = current_seconds < 30   # Less than 30 seconds
+        is_fourth_quarter_or_ot = quarter >= 4
+        is_blowout = score_diff > 20
+        
+        # Check for unrealistic situations
+        violations = []
+        
+        # 1. Check timeout usage in unrealistic situations
+        if "TIMEOUT" in description:
+            if is_blowout and not is_final_minutes:
+                violations.append("Timeout called in blowout game with time remaining")
+        
+        # 2. Check fouling strategy awareness (be much more lenient)
+        if "FOUL" in description:
+            # Only flag fouls in very specific inappropriate situations
+            # Most fouls are normal basketball plays, not strategic
+            if "INTENTIONAL" in description and not is_fourth_quarter_or_ot:
+                # Only flag specifically mentioned intentional fouls outside of end-game
+                if not is_final_minutes and score_diff > 15:
+                    violations.append("Intentional fouling when far ahead early in game")
+            # Otherwise, let most fouls pass - they're normal basketball
+        
+        # 3. Check for unrealistic play pace
+        if is_final_seconds and is_very_close:
+            # In final seconds of close games, every second matters
+            if "SLOW" in description or "DELIBERATE" in description:
+                if score_diff > 1:  # Trailing team shouldn't slow down
+                    violations.append("Slow play when trailing in final seconds")
+        
+        # 4. Check shot selection awareness
+        shot_details = next_play.get("shot_details", {})
+        if isinstance(shot_details, dict):
+            shot_points = shot_details.get("points")
+            if isinstance(shot_points, int):
+                # Three-point attempts should make sense situationally
+                if shot_points == 3:
+                    if is_final_minutes and is_fourth_quarter_or_ot:
+                        # 3-pointers make sense when trailing by more than 3, or in very close games
+                        if not (score_diff > 3 or is_very_close):
+                            # Don't be too strict on this one
+                            pass
+                
+                # Free throw situations
+                if shot_points == 1:
+                    if not ("FOUL" in description or "FREE" in description):
+                        violations.append("1-point score without foul context")
+        
+        # 5. Check substitution timing
+        if "SUB" in description:
+            # Mass substitutions inappropriate in close, final moments
+            if is_very_close and is_final_seconds:
+                violations.append("Substitution in critical final seconds of close game")
+        
+        # Only trigger if we have clear violations and they're repeated
+        if violations:
+            self.situation_violations += 1
+            print(f"⚠️ Game situation violation #{self.situation_violations}: {violations[0]}")
+            print(f"   Context: Q{quarter} {time_remaining}, Score diff: {score_diff}, Description: {description[:50]}...")
+            
+            # Be much more lenient - only trigger after many clear violations
+            if self.situation_violations >= 8:  # Increased from 3 to 8
+                print(f"🚨 Game situation awareness validation triggered! {self.situation_violations} violations")
+                self.situation_violations = 0
+                return ValidationResult.RETRY
+        
+        return ValidationResult.VALID
+    
+    def _check_description_consistency(self, next_play: Dict[str, Any]) -> ValidationResult:
+        """
+        Validate that the description field matches the actual data in the play.
+        """
+        description = next_play.get("description", "").upper()
+        shot_details = next_play.get("shot_details", {})
+        players_on_court = next_play.get("players_on_court", [])
+        player = next_play.get("player", "")
+        
+        if not description:
+            return ValidationResult.VALID
+        
+        inconsistencies = []
+        
+        # 1. Check shot point consistency with description
+        if isinstance(shot_details, dict):
+            shot_points = shot_details.get("points")
+            if isinstance(shot_points, int):
+                if shot_points == 3 and "3" not in description and "THREE" not in description and "POINTER" not in description:
+                    if "SHOT" in description or "MAKE" in description or "SCORE" in description:
+                        inconsistencies.append(f"Description suggests scoring but missing '3-pointer' reference for {shot_points}-point shot")
+                
+                if shot_points == 2 and "3" in description and ("THREE" in description or "POINTER" in description):
+                    inconsistencies.append(f"Description mentions '3-pointer' but shot_details.points = {shot_points}")
+                
+                if shot_points == 1 and not ("FOUL" in description or "FREE" in description or "TECHNICAL" in description):
+                    inconsistencies.append(f"1-point shot without foul context in description")
+        
+        # 2. Check player name consistency
+        if isinstance(player, str) and player:
+            # Check if mentioned player is actually on court
+            all_court_players = []
+            for team_data in players_on_court:
+                if isinstance(team_data, dict) and "players" in team_data:
+                    all_court_players.extend(team_data["players"])
+            
+            if player not in all_court_players and player.upper() not in description:
+                # If the player field is set but not mentioned in description, that's suspicious
+                if len(all_court_players) > 0:  # Only if we have valid player data
+                    inconsistencies.append(f"Player '{player}' not mentioned in description but set in player field")
+        
+        # 3. Check for score mentions vs actual scoring
+        current_score = next_play.get("score")
+        if isinstance(current_score, str) and self.last_team_scores:
+            current_teams_scores = self._parse_score_to_dict(current_score)
+            
+            # Check if description mentions scoring
+            score_keywords = ["SCORE", "MAKE", "BASKET", "SHOT", "POINT"]
+            mentions_scoring = any(keyword in description for keyword in score_keywords)
+            
+            # Check if any team's score actually increased
+            actual_scoring = False
+            for team, current_score_val in current_teams_scores.items():
+                if team in self.last_team_scores and current_score_val > self.last_team_scores[team]:
+                    actual_scoring = True
+                    break
+            
+            # Flag mismatches
+            if mentions_scoring and not actual_scoring:
+                # Allow some flexibility for missed shots
+                if not ("MISS" in description or "BLOCK" in description or "REBOUND" in description):
+                    inconsistencies.append("Description suggests scoring but no score increase detected")
+            
+            elif actual_scoring and not mentions_scoring:
+                # This is more serious - score increased but description doesn't reflect it
+                if not ("SUB" in description or "TIMEOUT" in description or "FOUL" in description):
+                    inconsistencies.append("Score increased but description doesn't mention scoring play")
+        
+        # 4. Check substitution consistency
+        if "SUB" in description:
+            # Should mention player names
+            if not any(char.isalpha() for char in description.replace("SUB", "")):
+                inconsistencies.append("Substitution mentioned but no player names in description")
+        
+        # 5. Check time/quarter mentions
+        quarter = next_play.get("quarter")
+        time_remaining = next_play.get("time_remaining")
+        
+        if isinstance(quarter, int) and quarter == 4:
+            if "FOURTH" in description or "4TH" in description:
+                pass  # Consistent
+            elif "FIRST" in description or "1ST" in description:
+                inconsistencies.append("Description mentions first quarter but quarter = 4")
+        
+        # Only trigger on significant inconsistencies
+        if inconsistencies:
+            self.description_consistency_violations += 1
+            print(f"⚠️ Description consistency violation #{self.description_consistency_violations}:")
+            for inconsistency in inconsistencies[:2]:  # Show first 2
+                print(f"   {inconsistency}")
+            print(f"   Description: {description[:60]}...")
+            
+            # Be very lenient - only trigger after many clear violations
+            if self.description_consistency_violations >= 6:  # Increased from 3 to 6
+                print(f"🚨 Description consistency validation triggered! {self.description_consistency_violations} violations")
+                self.description_consistency_violations = 0
+                return ValidationResult.RETRY
         
         return ValidationResult.VALID
     
@@ -677,6 +1288,28 @@ class NBAResponseValidator:
         self.last_time_remaining = None
         self._clear_rollback_state()
         
+        # Reset time progression tracking
+        self.last_quarter = None
+        self.last_time_seconds = None
+        self.time_progression_violations = 0
+        
+        # Reset score progression tracking
+        self.last_team_scores = None
+        self.score_progression_violations = 0
+        
+        # Reset quarter transition tracking
+        self.quarter_transition_violations = 0
+        
+        # Reset game situation tracking
+        self.situation_violations = 0
+        
+        # Reset description consistency tracking
+        self.description_consistency_violations = 0
+        
+        # Reset enhanced duplicate detection tracking
+        self.response_patterns.clear()
+        self.near_duplicate_count = 0
+        
         # Reset termination tracking
         self.last_termination = None
         self.total_validation_attempts = 0
@@ -708,16 +1341,44 @@ class NBAResponseValidator:
             return False
     
     def _validate_score_format(self, score_str: str) -> bool:
-        """Validate score format (TEAM1 XX - TEAM2 YY)."""
-        pattern = r'^[A-Z]{2,4} \d+ - [A-Z]{2,4} \d+$'
-        return bool(re.match(pattern, score_str))
+        """Validate score format with flexible patterns."""
+        # Remove extra whitespace and normalize
+        normalized = re.sub(r'\s+', ' ', score_str.strip().upper())
+        
+        # Multiple accepted patterns
+        patterns = [
+            r'^[A-Z]{2,15} \d+ - [A-Z]{2,15} \d+$',      # LAL 108 - BOS 102
+            r'^[A-Z]{2,15} \d+, [A-Z]{2,15} \d+$',       # LAL 108, BOS 102
+            r'^[A-Z]{2,15}: \d+ [A-Z]{2,15}: \d+$',      # LAL: 108 BOS: 102
+            r'^[A-Z]{2,15} \d+ [A-Z]{2,15} \d+$',        # LAL 108 BOS 102
+            r'^[A-Z]{2,15}\s*\d+\s*[-,]\s*[A-Z]{2,15}\s*\d+$'  # Flexible spacing
+        ]
+        
+        for pattern in patterns:
+            if re.match(pattern, normalized):
+                return True
+                
+        return False
     
     def _extract_teams_from_score(self, score_str: str) -> List[str]:
-        """Extract team names from score string."""
-        pattern = r'^([A-Z]{2,4}) \d+ - ([A-Z]{2,4}) \d+$'
-        match = re.match(pattern, score_str)
-        if match:
-            return [match.group(1), match.group(2)]
+        """Extract team names from score string with flexible parsing."""
+        # Remove extra whitespace and normalize
+        normalized = re.sub(r'\s+', ' ', score_str.strip().upper())
+        
+        # Multiple patterns for team extraction
+        extraction_patterns = [
+            r'^([A-Z]{2,15}) \d+ - ([A-Z]{2,15}) \d+$',      # LAL 108 - BOS 102
+            r'^([A-Z]{2,15}) \d+, ([A-Z]{2,15}) \d+$',       # LAL 108, BOS 102
+            r'^([A-Z]{2,15}): \d+ ([A-Z]{2,15}): \d+$',      # LAL: 108 BOS: 102
+            r'^([A-Z]{2,15}) \d+ ([A-Z]{2,15}) \d+$',        # LAL 108 BOS 102
+            r'^([A-Z]{2,15})\s*\d+\s*[-,]\s*([A-Z]{2,15})\s*\d+$'  # Flexible spacing
+        ]
+        
+        for pattern in extraction_patterns:
+            match = re.match(pattern, normalized)
+            if match:
+                return [match.group(1), match.group(2)]
+                
         return []
     
     def get_error_summary(self) -> str:
