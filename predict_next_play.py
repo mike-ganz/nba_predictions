@@ -142,6 +142,25 @@ class OptimizedGameContext:
             "base_json_length": len(self._base_json_cached),
             "current_plays_count": len(self.current_recent_plays)
         }
+    
+    def restore_recent_plays(self, restored_plays: list) -> None:
+        """
+        Restore recent_plays to a previous state (used for timestamp rollback).
+        
+        Args:
+            restored_plays: List of plays to restore to
+        """
+        print(f"🔄 Restoring recent_plays: {len(self.current_recent_plays)} → {len(restored_plays)} plays")
+        if restored_plays:
+            last_play = restored_plays[-1]
+            print(f"🕒 Rolling back to time: {last_play.get('time_remaining', 'N/A')}")
+            print(f"📝 Last play: {last_play.get('description', 'N/A')[:60]}...")
+        
+        self.update_recent_plays(restored_plays)
+        
+        # Clear the plays cache since we've changed state
+        self._plays_cache.clear()
+        print(f"🧹 Cleared plays cache due to rollback")
 
 
 class LoggingConfig:
@@ -288,7 +307,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                 log_config.log_verbose("Stage 1 context is clean (no recent_plays)")
             
             # Stage 1 API call with base context only (matching first_N_plays training mode)
-            stage1_content, stage1_usage, stage1_game_ended = client.predict_with_validation(
+            stage1_content, stage1_usage, stage1_game_ended, stage1_needs_rollback, stage1_termination_info = client.predict_with_validation(
                 context=stage1_context,  # Base context without recent_plays
                 model_id=model_config['model_1_id'],
                 max_tokens=8000,  # Higher limit for Stage 1 (generates ~20 plays)
@@ -296,6 +315,15 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                 max_retries=6,
                 stage1_mode=True  # Use Stage 1 validation (expects next_plays array)
             )
+            
+            # Store Stage 1 termination information if present (shouldn't normally happen)
+            if stage1_termination_info:
+                log_config.log_normal(f"⚠️ Unexpected Stage 1 termination: {stage1_termination_info.get('validation_termination_type', 'unknown')}")
+                results["stage1_validation_termination"] = stage1_termination_info
+            
+            # Note: Rollback shouldn't happen in Stage 1 since there are no recent_plays
+            if stage1_needs_rollback:
+                log_config.log_normal("⚠️ Unexpected rollback signal in Stage 1 - ignoring")
             
             if stage1_game_ended:
                 log_config.log_minimal("Game ended during Stage 1 - terminating prediction sequence")
@@ -380,14 +408,36 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                 log_config.log_debug(iteration_json)
                 log_config.log_debug("="*60 + "\n")
             
-            # Stage 2 API call with validation
-            stage2_content, stage2_usage, stage2_game_ended = client.predict_with_validation(
+            # Stage 2 API call with validation and rollback handling
+            stage2_content, stage2_usage, stage2_game_ended, stage2_needs_rollback, termination_info = client.predict_with_validation(
                 context=optimized_context.get_context_dict(),
                 model_id=model_config['model_2_id'],
                 max_tokens=1500,
                 temperature=1.01,
                 max_retries=6
             )
+            
+            # Store termination information for later use
+            if termination_info:
+                log_config.log_normal(f"🛑 Validation termination info captured: {termination_info.get('validation_termination_type', 'unknown')}")
+                # Store in the results for the orchestrator to access
+                results["validation_termination"] = termination_info
+            
+            # Handle timestamp rollback scenario
+            if stage2_needs_rollback:
+                log_config.log_normal(f"🔄 Timestamp rollback triggered during iteration {iteration + 1}")
+                
+                # Get the rollback snapshot from the validator
+                rollback_snapshot = client.validator.get_rollback_snapshot()
+                if rollback_snapshot is not None:
+                    # Restore the context to the rollback state
+                    optimized_context.restore_recent_plays(rollback_snapshot)
+                    log_config.log_normal(f"✅ Game state restored to {len(rollback_snapshot)} plays")
+                    
+                    # Skip to next iteration with restored state
+                    continue
+                else:
+                    log_config.log_normal(f"⚠️ Rollback snapshot was None - continuing with current state")
             
             if stage2_game_ended:
                 log_config.log_minimal(f"🏁 Game ended during iteration {iteration + 1} - terminating prediction sequence")
@@ -522,6 +572,21 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
         
     except Exception as e:
         log_config.log_minimal(f"❌ Error in rolling iterations: {e}")
+        
+        # Check if this was a validation failure and capture details
+        if "Response validation failed" in str(e) and hasattr(client, 'get_last_validation_failure_info'):
+            validation_failure_info = client.get_last_validation_failure_info()
+            if validation_failure_info:
+                log_config.log_normal(f"🔍 Captured validation failure details:")
+                log_config.log_normal(f"   Most common reason: {validation_failure_info.get('validation_most_common_reason', 'unknown')}")
+                log_config.log_normal(f"   Most common error type: {validation_failure_info.get('validation_most_common_error_type', 'unknown')}")
+                log_config.log_normal(f"   Total failed attempts: {validation_failure_info.get('validation_total_failed_attempts', 0)}")
+                
+                # Store in results for orchestrator to access (even though we're about to raise)
+                # We can store this in a global or modify the exception
+                import builtins
+                builtins._last_validation_failure = validation_failure_info
+        
         raise
 
 def main():

@@ -85,6 +85,18 @@ class GameContextBuilder:
         
         print(f"🔨 Building context for game {game_id} from {len(game_data)} plays")
         
+        # Extract game date for PCA calculations
+        if 'date' in game_data.columns:
+            game_date = game_data['date'].iloc[0]
+            if hasattr(game_date, 'strftime'):
+                self.game_date = game_date.strftime('%Y-%m-%d')
+            else:
+                self.game_date = str(game_date)
+            print(f"📅 Game date: {self.game_date}")
+        else:
+            self.game_date = None
+            print("⚠️ No date column found in game data")
+        
         # Determine home vs away teams using player assignments
         away_team_abbr, home_team_abbr = self._determine_away_home_teams(game_data)
         print(f"🏟️ Determined: {away_team_abbr} @ {home_team_abbr} (away @ home)")
@@ -191,8 +203,9 @@ class GameContextBuilder:
         
         if DATA_SYSTEM_AVAILABLE:
             try:
-                # Try to get actual PCA scores with proper season parameter
-                pca_scores = get_player_pca_score(player_name, season=self.season_year)
+                # Try to get actual PCA scores with proper date and season parameters
+                game_date = getattr(self, 'game_date', None)
+                pca_scores = get_player_pca_score(player_name, game_date=game_date, season=self.season_year)
                 if pca_scores is not None:
                     # Extract individual scores from tuple (offense, defense, shot_selection, efficiency)
                     offense, defense, shot_selection, efficiency = pca_scores

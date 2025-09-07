@@ -20,7 +20,8 @@ def load_team_data(season_year=None):
     file_mapping = {
         "2021-2022": "data/team_boxscores/historical/2021-2022_NBA_Box_Score_Team-Stats.xlsx",
         "2022-2023": "data/team_boxscores/historical/2022-2023_NBA_Box_Score_Team-Stats.xlsx",
-        "2023-2024": "data/team_boxscores/historical/2023-2024_NBA_Box_Score_Team-Stats.xlsx"
+        "2023-2024": "data/team_boxscores/historical/2023-2024_NBA_Box_Score_Team-Stats.xlsx",
+        "2024-2025": "data/team_boxscores/historical/2024-2025_NBA_Box_Score_Team-Stats.xlsx"
     }
     
     if season_year not in file_mapping:

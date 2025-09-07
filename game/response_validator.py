@@ -5,6 +5,7 @@ Ensures all model responses adhere to the expected JSON format and data constrai
 
 import json
 import re
+from datetime import datetime
 from typing import Dict, Any, List, Optional, Set, Tuple
 from dataclasses import dataclass
 from enum import Enum
@@ -20,11 +21,25 @@ class ValidationError:
     message: str
 
 
+@dataclass
+class ValidationTermination:
+    """Detailed information about why a validation caused simulation termination."""
+    termination_type: str  # "game_ended", "rollback_time", "excessive_retries", etc.
+    reason: str  # Human-readable reason
+    trigger_condition: str  # Specific condition that triggered termination
+    game_state: Dict[str, Any]  # Game state when termination occurred
+    validation_context: Dict[str, Any]  # Validation-specific context
+    termination_timestamp: str  # When termination was decided
+    consecutive_count: int = 0  # For consecutive condition tracking
+    total_attempts: int = 0  # Total attempts before termination
+
+
 class ValidationResult(Enum):
     """Possible validation results."""
     VALID = "valid"
     RETRY = "retry"
     END_GAME = "end_game"
+    ROLLBACK_TIME = "rollback_time"
 
 
 class NBAResponseValidator:
@@ -41,7 +56,17 @@ class NBAResponseValidator:
         self.consecutive_same_time: int = 0  # Track consecutive same time_remaining values
         self.last_time_remaining: Optional[str] = None  # Track the last time_remaining value
         self.max_history_size: int = 10  # Limit history size for memory management
-        print("🔧 NBAResponseValidator initialized with clean state")
+        
+        # Enhanced timestamp rollback functionality
+        self.rollback_recent_plays_snapshot: Optional[List[Dict[str, Any]]] = None  # Snapshot of recent_plays before problematic timestamp
+        self.problematic_timestamp: Optional[str] = None  # The timestamp that's causing issues
+        
+        # Termination tracking
+        self.last_termination: Optional[ValidationTermination] = None  # Details about the most recent termination
+        self.total_validation_attempts: int = 0  # Total validation attempts in this session
+        self.retry_count: int = 0  # Count of retries for current validation sequence
+        
+        print("🔧 NBAResponseValidator initialized with clean state and termination tracking")
     
     def validate_response(self, response_text: str, context: Dict[str, Any]) -> Tuple[ValidationResult, List[ValidationError], str]:
         """
@@ -55,6 +80,7 @@ class NBAResponseValidator:
             (validation_result, validation_errors, reason)
         """
         self.errors = []
+        self.total_validation_attempts += 1
         
         # Step 1: Parse JSON
         try:
@@ -85,12 +111,80 @@ class NBAResponseValidator:
         
         # Step 5: Advanced game flow validations
         if len(self.errors) == 0:  # Only proceed if basic validation passed
-            advanced_result, reason = self._validate_advanced_game_flow(response_text, next_play)
+            advanced_result, reason = self._validate_advanced_game_flow(response_text, next_play, context)
             if advanced_result != ValidationResult.VALID:
+                # Create termination record if this is a terminating result
+                if advanced_result in [ValidationResult.END_GAME, ValidationResult.ROLLBACK_TIME]:
+                    self._create_termination_record(advanced_result, reason, next_play, context)
+                elif advanced_result == ValidationResult.RETRY:
+                    self.retry_count += 1
                 return advanced_result, self.errors, reason
         
         # If we get here, all validations passed
+        self.retry_count = 0  # Reset retry count on successful validation
         return ValidationResult.VALID, self.errors, "Response is valid"
+    
+    def _create_termination_record(self, result_type: ValidationResult, reason: str, next_play: Dict[str, Any], context: Dict[str, Any]) -> None:
+        """Create a detailed termination record for logging and analysis."""
+        termination_type_map = {
+            ValidationResult.END_GAME: "game_ended",
+            ValidationResult.ROLLBACK_TIME: "rollback_time"
+        }
+        
+        # Extract key game state information
+        game_state = {
+            "quarter": next_play.get("quarter"),
+            "time_remaining": next_play.get("time_remaining"),
+            "score": next_play.get("score"),
+            "description": next_play.get("description", "")[:100],  # Truncate for readability
+        }
+        
+        # Create validation-specific context
+        validation_context = {
+            "consecutive_same_time": self.consecutive_same_time,
+            "consecutive_subs": self.consecutive_subs,
+            "consecutive_endgame": self.consecutive_endgame,
+            "last_time_remaining": self.last_time_remaining,
+            "total_attempts": self.total_validation_attempts,
+            "retry_count": self.retry_count,
+            "response_history_length": len(self.response_history),
+            "has_rollback_snapshot": self.rollback_recent_plays_snapshot is not None,
+            "problematic_timestamp": self.problematic_timestamp
+        }
+        
+        # Determine specific trigger condition
+        trigger_condition = self._determine_trigger_condition(result_type)
+        
+        # Create the termination record
+        self.last_termination = ValidationTermination(
+            termination_type=termination_type_map.get(result_type, "unknown"),
+            reason=reason,
+            trigger_condition=trigger_condition,
+            game_state=game_state,
+            validation_context=validation_context,
+            termination_timestamp=datetime.now().isoformat(),
+            consecutive_count=max(self.consecutive_same_time, self.consecutive_subs, self.consecutive_endgame),
+            total_attempts=self.total_validation_attempts
+        )
+        
+        print(f"🛑 TERMINATION RECORD CREATED: {self.last_termination.termination_type}")
+        print(f"   Reason: {reason}")
+        print(f"   Trigger: {trigger_condition}")
+        print(f"   Game State: Q{game_state.get('quarter')} {game_state.get('time_remaining')} - {game_state.get('score')}")
+        print(f"   Validation Context: {self.consecutive_same_time} same_time, {self.consecutive_subs} subs, {self.total_validation_attempts} total attempts")
+    
+    def _determine_trigger_condition(self, result_type: ValidationResult) -> str:
+        """Determine the specific condition that triggered the termination."""
+        if result_type == ValidationResult.END_GAME:
+            if self.consecutive_endgame >= 5:
+                return f"consecutive_endgame_scenarios_limit_reached ({self.consecutive_endgame})"
+            else:
+                return "quarter_4_time_expired"
+                
+        elif result_type == ValidationResult.ROLLBACK_TIME:
+            return f"consecutive_same_timestamp_limit_reached ({self.consecutive_same_time} times at '{self.last_time_remaining}')"
+            
+        return "unknown_trigger"
     
     def _validate_top_level_structure(self, data: Any) -> bool:
         """Validate top-level response structure."""
@@ -385,13 +479,14 @@ class NBAResponseValidator:
         
         return len(self.errors) == 0
     
-    def _validate_advanced_game_flow(self, response_text: str, next_play: Dict[str, Any]) -> Tuple[ValidationResult, str]:
+    def _validate_advanced_game_flow(self, response_text: str, next_play: Dict[str, Any], context: Dict[str, Any]) -> Tuple[ValidationResult, str]:
         """
         Advanced game flow validations based on response patterns and game state.
         
         Args:
             response_text: Raw response text for duplicate detection
             next_play: Parsed next_play object
+            context: Original game context for validation reference
             
         Returns:
             (validation_result, reason)
@@ -409,9 +504,12 @@ class NBAResponseValidator:
         if self._check_duplicate_response(response_text):
             return ValidationResult.RETRY, "Received same response 2 times consecutively - requesting new response"
         
-        # Check for consecutive same time_remaining
-        if self._check_consecutive_same_time(next_play):
-            return ValidationResult.RETRY, "Same time_remaining for 10 consecutive responses - requesting time progression"
+        # Check for consecutive same time_remaining with rollback capability
+        rollback_result = self._check_consecutive_same_time(next_play, context.get('recent_plays', []))
+        if rollback_result == ValidationResult.ROLLBACK_TIME:
+            return ValidationResult.ROLLBACK_TIME, "Too many plays with same timestamp - rolling back to previous game state"
+        elif rollback_result == ValidationResult.RETRY:
+            return ValidationResult.RETRY, "Same time_remaining for multiple consecutive responses - requesting time progression"
         
         # Check for excessive substitutions
         if self._check_excessive_substitutions(next_play):
@@ -440,31 +538,59 @@ class NBAResponseValidator:
         recent_responses = self.response_history[-2:]
         return all(r == response_text.strip() for r in recent_responses)
     
-    def _check_consecutive_same_time(self, next_play: Dict[str, Any]) -> bool:
-        """Check for 10 consecutive responses with the same time_remaining."""
+    def _check_consecutive_same_time(self, next_play: Dict[str, Any], current_recent_plays: List[Dict[str, Any]]) -> ValidationResult:
+        """
+        Check for consecutive responses with the same time_remaining.
+        Returns ROLLBACK_TIME if too many consecutive same timestamps detected.
+        """
         consecutive_responses_limit = 10
         current_time = next_play.get("time_remaining")
         
         # Skip validation if time_remaining is not a string (invalid format)
         if not isinstance(current_time, str):
-            return False
+            return ValidationResult.VALID
         
         if self.last_time_remaining == current_time:
             self.consecutive_same_time += 1
             print(f"🕒 Same time '{current_time}' count: {self.consecutive_same_time}/{consecutive_responses_limit}")
+            
+            # If this is the first time we're seeing a repeat of this timestamp, save a snapshot
+            if self.consecutive_same_time == 2 and self.rollback_recent_plays_snapshot is None:
+                # Find the last play with a different timestamp to roll back to
+                rollback_plays = []
+                for play in reversed(current_recent_plays):
+                    if play.get("time_remaining") != current_time:
+                        # Found a play with different timestamp - this is our rollback point
+                        # Include this play and all plays after it (but before current problematic sequence)
+                        rollback_index = current_recent_plays.index(play)
+                        rollback_plays = current_recent_plays[:rollback_index + 1]
+                        break
+                
+                self.rollback_recent_plays_snapshot = rollback_plays.copy()
+                self.problematic_timestamp = current_time
+                print(f"📸 Snapshot saved: {len(self.rollback_recent_plays_snapshot)} plays before timestamp '{current_time}' sequence")
+                if rollback_plays:
+                    last_good_time = rollback_plays[-1].get("time_remaining", "N/A")
+                    print(f"🔄 Rollback point: Most recent play at time '{last_good_time}'")
+            
             if self.consecutive_same_time >= consecutive_responses_limit:
-                print(f"🚨 Time progression validation triggered! Same time '{current_time}' for {self.consecutive_same_time} consecutive responses")
-                # Reset counter and return retry
-                self.consecutive_same_time = 0
-                self.last_time_remaining = None
-                return True
+                print(f"🚨 Time rollback validation triggered! Same time '{current_time}' for {self.consecutive_same_time} consecutive responses")
+                print(f"🔄 Rolling back to snapshot with {len(self.rollback_recent_plays_snapshot or [])} plays")
+                # Don't reset state here - let the caller handle the rollback
+                return ValidationResult.ROLLBACK_TIME
+                
         else:
-            # Reset counter - time has changed
-            print(f"🕒 Time changed: '{self.last_time_remaining}' → '{current_time}' (resetting counter)")
+            # Time has changed - reset all tracking
+            if self.consecutive_same_time > 1:
+                print(f"🕒 Time changed: '{self.last_time_remaining}' → '{current_time}' (clearing rollback tracking)")
+                self._clear_rollback_state()
+            else:
+                print(f"🕒 Time changed: '{self.last_time_remaining}' → '{current_time}' (normal progression)")
+            
             self.consecutive_same_time = 1  # First occurrence of new time
             self.last_time_remaining = current_time
         
-        return False
+        return ValidationResult.VALID
     
     def _check_excessive_substitutions(self, next_play: Dict[str, Any]) -> bool:
         """Check for 3 consecutive substitution plays."""
@@ -549,6 +675,23 @@ class NBAResponseValidator:
         self.consecutive_endgame = 0
         self.consecutive_same_time = 0
         self.last_time_remaining = None
+        self._clear_rollback_state()
+        
+        # Reset termination tracking
+        self.last_termination = None
+        self.total_validation_attempts = 0
+        self.retry_count = 0
+    
+    def _clear_rollback_state(self) -> None:
+        """Clear rollback-related state tracking."""
+        self.rollback_recent_plays_snapshot = None
+        self.problematic_timestamp = None
+    
+    def get_rollback_snapshot(self) -> Optional[List[Dict[str, Any]]]:
+        """Get the saved rollback snapshot and clear rollback state."""
+        snapshot = self.rollback_recent_plays_snapshot
+        self._clear_rollback_state()
+        return snapshot
     
     def _validate_time_format(self, time_str: str) -> bool:
         """Validate time format (MM:SS)."""
@@ -587,3 +730,70 @@ class NBAResponseValidator:
             summary += f"  {i}. {error.field_path}: {error.message}\n"
         
         return summary
+    
+    def get_termination_info(self) -> Optional[ValidationTermination]:
+        """Get the most recent termination information."""
+        return self.last_termination
+    
+    def has_termination_record(self) -> bool:
+        """Check if there's a termination record available."""
+        return self.last_termination is not None
+    
+    def get_termination_summary(self) -> str:
+        """Get a formatted summary of the termination information."""
+        if not self.last_termination:
+            return "No termination record available"
+        
+        term = self.last_termination
+        
+        summary = f"🛑 VALIDATION TERMINATION SUMMARY\n"
+        summary += f"{'='*50}\n"
+        summary += f"Termination Type: {term.termination_type}\n"
+        summary += f"Reason: {term.reason}\n"
+        summary += f"Trigger Condition: {term.trigger_condition}\n"
+        summary += f"Timestamp: {term.termination_timestamp}\n"
+        
+        summary += f"\nGame State at Termination:\n"
+        summary += f"  Quarter: {term.game_state.get('quarter', 'N/A')}\n"
+        summary += f"  Time: {term.game_state.get('time_remaining', 'N/A')}\n"
+        summary += f"  Score: {term.game_state.get('score', 'N/A')}\n"
+        summary += f"  Description: {term.game_state.get('description', 'N/A')}\n"
+        
+        summary += f"\nValidation Context:\n"
+        vc = term.validation_context
+        summary += f"  Consecutive Same Time: {vc.get('consecutive_same_time', 0)}\n"
+        summary += f"  Consecutive Substitutions: {vc.get('consecutive_subs', 0)}\n"
+        summary += f"  Consecutive Endgame: {vc.get('consecutive_endgame', 0)}\n"
+        summary += f"  Total Validation Attempts: {vc.get('total_attempts', 0)}\n"
+        summary += f"  Retry Count: {vc.get('retry_count', 0)}\n"
+        summary += f"  Response History Length: {vc.get('response_history_length', 0)}\n"
+        summary += f"  Had Rollback Snapshot: {vc.get('has_rollback_snapshot', False)}\n"
+        summary += f"  Problematic Timestamp: {vc.get('problematic_timestamp', 'None')}\n"
+        
+        summary += f"\nStatistics:\n"
+        summary += f"  Consecutive Count: {term.consecutive_count}\n"
+        summary += f"  Total Attempts: {term.total_attempts}\n"
+        
+        summary += f"{'='*50}\n"
+        
+        return summary
+    
+    def get_termination_for_database(self) -> Dict[str, Any]:
+        """Get termination information formatted for database storage."""
+        if not self.last_termination:
+            return {}
+        
+        term = self.last_termination
+        
+        return {
+            "validation_termination_type": term.termination_type,
+            "validation_termination_reason": term.reason,
+            "validation_trigger_condition": term.trigger_condition,
+            "validation_termination_timestamp": term.termination_timestamp,
+            "validation_consecutive_count": term.consecutive_count,
+            "validation_total_attempts": term.total_attempts,
+            "validation_game_state_quarter": term.game_state.get("quarter"),
+            "validation_game_state_time": term.game_state.get("time_remaining"),
+            "validation_game_state_score": term.game_state.get("score"),
+            "validation_context_json": json.dumps(term.validation_context)
+        }

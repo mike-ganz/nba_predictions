@@ -109,6 +109,10 @@ class Config:
             "2023-2024": os.path.join(
                 self.play_by_play_dir,
                 "[10-24-2023]-[06-17-2024]-combined-stats.csv"
+            ),
+            "2024-2025": os.path.join(
+                self.play_by_play_dir,
+                "[10-22-2024]-[06-22-2025]-combined-stats.csv"
             )
         }
     

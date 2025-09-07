@@ -31,7 +31,7 @@ def show_game_summary(db_path: str = "enhanced_simulation_results.db"):
     
     conn = sqlite3.connect(db_path)
     
-    # Get game summary data
+    # Get game summary data INCLUDING individual final scores for statistics
     query = """
     SELECT 
         game_id,
@@ -43,8 +43,10 @@ def show_game_summary(db_path: str = "enhanced_simulation_results.db"):
         ROUND(MIN(successful_predictions), 0) as min_predictions,
         ROUND(MAX(successful_predictions), 0) as max_predictions,
         ROUND(AVG(duration_seconds)/60, 1) as avg_duration_min,
-        GROUP_CONCAT(DISTINCT final_score) as final_scores
+        GROUP_CONCAT(DISTINCT final_score) as final_scores,
+        GROUP_CONCAT(final_score) as all_scores
     FROM simulation_runs 
+    WHERE status = 'game_ended'  -- Only include completed games for statistics
     GROUP BY game_id, season_year
     ORDER BY game_id, season_year
     """
@@ -59,9 +61,71 @@ def show_game_summary(db_path: str = "enhanced_simulation_results.db"):
     # Calculate success rate
     df['success_rate'] = (df['completed_sims'] / df['total_sims'] * 100).round(1)
     
+    # Parse scores and calculate new statistics
+    def parse_scores_and_calculate_stats(all_scores_str):
+        if pd.isna(all_scores_str) or not all_scores_str:
+            return {
+                'avg_score_diff': 'N/A',
+                'median_score_diff': 'N/A', 
+                'median_away_score': 'N/A',
+                'median_home_score': 'N/A',
+                'home_win_pct': 'N/A'
+            }
+        
+        scores = [s.strip() for s in all_scores_str.split(',') if s.strip()]
+        away_scores = []
+        home_scores = []
+        score_diffs = []
+        home_wins = 0
+        
+        for score_str in scores:
+            try:
+                # Parse format: "AWAY_TEAM SCORE - HOME_TEAM SCORE"
+                if ' - ' in score_str:
+                    away_part, home_part = score_str.split(' - ')
+                    away_score = int(away_part.split()[-1])  # Get last part (score)
+                    home_score = int(home_part.split()[-1])  # Get last part (score)
+                    
+                    away_scores.append(away_score)
+                    home_scores.append(home_score)
+                    score_diffs.append(away_score - home_score)  # Positive means away won
+                    
+                    if home_score > away_score:
+                        home_wins += 1
+            except (ValueError, IndexError):
+                continue  # Skip malformed scores
+        
+        if not away_scores:
+            return {
+                'avg_score_diff': 'N/A',
+                'median_score_diff': 'N/A',
+                'median_away_score': 'N/A', 
+                'median_home_score': 'N/A',
+                'home_win_pct': 'N/A'
+            }
+        
+        return {
+            'avg_score_diff': round(sum(score_diffs) / len(score_diffs), 1),
+            'median_score_diff': round(pd.Series(score_diffs).median(), 1),
+            'median_away_score': round(pd.Series(away_scores).median(), 1),
+            'median_home_score': round(pd.Series(home_scores).median(), 1),
+            'home_win_pct': round((home_wins / len(scores)) * 100, 1)
+        }
+    
+    # Apply score parsing to each game
+    score_stats = df['all_scores'].apply(parse_scores_and_calculate_stats)
+    
+    # Extract statistics into separate columns
+    df['avg_score_diff'] = [stats['avg_score_diff'] for stats in score_stats]
+    df['median_score_diff'] = [stats['median_score_diff'] for stats in score_stats]
+    df['median_away_score'] = [stats['median_away_score'] for stats in score_stats]
+    df['median_home_score'] = [stats['median_home_score'] for stats in score_stats]
+    df['home_win_pct'] = [stats['home_win_pct'] for stats in score_stats]
+    
     # Format the dataframe for display
     display_df = df.copy()
     display_df['Success Rate'] = display_df['success_rate'].astype(str) + '%'
+    display_df['Home Win %'] = display_df['home_win_pct'].apply(lambda x: f'{x}%' if x != 'N/A' else 'N/A')
     display_df['Completed'] = '✅ ' + display_df['completed_sims'].astype(str) 
     display_df['Errors'] = display_df['error_sims'].apply(lambda x: f'⚠️ {x}' if x > 0 else str(x))
     
@@ -70,15 +134,23 @@ def show_game_summary(db_path: str = "enhanced_simulation_results.db"):
         lambda x: ', '.join([s for s in str(x).split(',') if s and s != 'None']) if pd.notna(x) else 'N/A'
     )
     
+    # Format score statistics for display
+    display_df['Avg Score Diff'] = display_df['avg_score_diff'].apply(lambda x: f'{x:+}' if x != 'N/A' else 'N/A')
+    display_df['Med Score Diff'] = display_df['median_score_diff'].apply(lambda x: f'{x:+}' if x != 'N/A' else 'N/A')
+    display_df['Med Away'] = display_df['median_away_score']
+    display_df['Med Home'] = display_df['median_home_score']
+    
     # Rename columns for display
     display_df = display_df[[
         'game_id', 'season_year', 'total_sims', 'Completed', 'Errors', 
-        'Success Rate', 'avg_predictions', 'avg_duration_min', 'final_scores'
+        'Success Rate', 'avg_predictions', 'avg_duration_min', 
+        'Avg Score Diff', 'Med Score Diff', 'Med Away', 'Med Home', 'Home Win %', 'final_scores'
     ]]
     
     display_df.columns = [
         'Game ID', 'Season', 'Total Sims', 'Completed', 'Errors', 
-        'Success Rate', 'Avg Predictions', 'Avg Duration (min)', 'Final Scores'
+        'Success Rate', 'Avg Predictions', 'Avg Duration (min)', 
+        'Avg Score Diff', 'Med Score Diff', 'Med Away', 'Med Home', 'Home Win %', 'Final Scores'
     ]
     
     print("🏀 NBA Simulation Results Summary")
@@ -95,6 +167,49 @@ def show_game_summary(db_path: str = "enhanced_simulation_results.db"):
     print(f"   🎯 Total Simulations: {total_sims}")
     print(f"   ✅ Completed: {total_completed} ({overall_success}%)")
     print(f"   ⚠️  Errors: {total_errors} ({round(total_errors/total_sims*100, 1)}%)")
+    
+    # Calculate overall score statistics
+    all_score_diffs = []
+    all_away_scores = []
+    all_home_scores = []
+    total_home_wins = 0
+    total_games_with_scores = 0
+    
+    for _, row in df.iterrows():
+        if row['avg_score_diff'] != 'N/A':
+            # Calculate individual game stats
+            if pd.notna(row['all_scores']) and row['all_scores']:
+                scores = [s.strip() for s in row['all_scores'].split(',') if s.strip()]
+                for score_str in scores:
+                    try:
+                        if ' - ' in score_str:
+                            away_part, home_part = score_str.split(' - ')
+                            away_score = int(away_part.split()[-1])
+                            home_score = int(home_part.split()[-1])
+                            
+                            all_score_diffs.append(away_score - home_score)
+                            all_away_scores.append(away_score)
+                            all_home_scores.append(home_score)
+                            total_games_with_scores += 1
+                            
+                            if home_score > away_score:
+                                total_home_wins += 1
+                    except (ValueError, IndexError):
+                        continue
+    
+    if all_score_diffs:
+        avg_overall_diff = round(sum(all_score_diffs) / len(all_score_diffs), 1)
+        median_overall_diff = round(pd.Series(all_score_diffs).median(), 1)
+        median_overall_away = round(pd.Series(all_away_scores).median(), 1)
+        median_overall_home = round(pd.Series(all_home_scores).median(), 1)
+        overall_home_win_pct = round((total_home_wins / total_games_with_scores) * 100, 1)
+        
+        print(f"\n🏈 Score Statistics Across All Games:")
+        print(f"   📈 Avg Score Difference: {avg_overall_diff:+} (Away - Home)")
+        print(f"   📊 Median Score Difference: {median_overall_diff:+}")
+        print(f"   🚗 Median Away Score: {median_overall_away}")
+        print(f"   🏠 Median Home Score: {median_overall_home}")
+        print(f"   🎯 Home Team Win Rate: {overall_home_win_pct}% ({total_home_wins}/{total_games_with_scores} games)")
     
     return display_df
 

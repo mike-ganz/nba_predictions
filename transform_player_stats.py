@@ -13,7 +13,8 @@ def load_player_data(season_year):
     file_mapping = {
         "2021-2022": "data/player_boxscores/historical/NBA-2021-2022-Player-BoxScore-Dataset.xlsx",
         "2022-2023": "data/player_boxscores/historical/NBA-2022-2023-Player-BoxScore-Dataset.xlsx", 
-        "2023-2024": "data/player_boxscores/historical/NBA-2023-2024-Player-BoxScore-Dataset.xlsx"
+        "2023-2024": "data/player_boxscores/historical/NBA-2023-2024-Player-BoxScore-Dataset.xlsx",
+        "2024-2025": "data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx"
     }
     
     if season_year not in file_mapping:

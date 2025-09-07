@@ -7,7 +7,7 @@ consistent interface.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 import json
 import os
 from dotenv import load_dotenv
@@ -21,6 +21,7 @@ class BasePredictionClient(ABC):
         """Initialize the prediction client."""
         self._initialize_client()
         self.validator = NBAResponseValidator()
+        self.last_validation_failure = None  # Store detailed validation failure info
     
     @property
     @abstractmethod
@@ -83,7 +84,7 @@ class BasePredictionClient(ABC):
     
     def predict_with_validation(self, context: Dict[str, Any], model_id: str, 
                                max_tokens: int = 1500, temperature: float = 0.1,
-                               max_retries: int = 3, stage1_mode: bool = False) -> Tuple[str, Dict[str, Any], bool]:
+                               max_retries: int = 3, stage1_mode: bool = False) -> Tuple[str, Dict[str, Any], bool, bool, Optional[Dict[str, Any]]]:
         """
         Make a prediction with validation and retry logic.
         
@@ -96,7 +97,12 @@ class BasePredictionClient(ABC):
             stage1_mode: If True, validates for Stage 1 (next_plays array) instead of Stage 2 (next_play object)
             
         Returns:
-            tuple: (response_content, usage_stats, is_game_ended)
+            tuple: (response_content, usage_stats, is_game_ended, needs_rollback, termination_info)
+                - response_content: The validated response text
+                - usage_stats: Token usage statistics  
+                - is_game_ended: True if the game has ended naturally
+                - needs_rollback: True if timestamp rollback is required
+                - termination_info: Detailed termination info dict if game ended via validation, None otherwise
             
         Raises:
             ValueError: If validation fails after all retries
@@ -117,12 +123,46 @@ class BasePredictionClient(ABC):
                 if validation_result == ValidationResult.VALID:
                     if attempt > 0:
                         print(f"✅ Validation successful on attempt {attempt + 1}")
-                    return response_content, usage_stats, False
+                    return response_content, usage_stats, False, False, None
                 
                 elif validation_result == ValidationResult.END_GAME:
                     print(f"🏁 Game ending condition detected: {reason}")
                     print(f"🎮 Returning final play and ending game loop")
-                    return response_content, usage_stats, True
+                    
+                    # Capture detailed termination information
+                    termination_info = None
+                    if not stage1_mode and self.validator.has_termination_record():
+                        termination_info = self.validator.get_termination_for_database()
+                        print(f"📊 Captured termination details: {termination_info.get('validation_termination_type', 'unknown')}")
+                        
+                        # Also print summary to console
+                        if self.validator.get_termination_info():
+                            print(f"🛑 TERMINATION SUMMARY:")
+                            print(f"   Type: {termination_info.get('validation_termination_type', 'N/A')}")
+                            print(f"   Trigger: {termination_info.get('validation_trigger_condition', 'N/A')}")
+                            print(f"   Game State: Q{termination_info.get('validation_game_state_quarter', '?')} {termination_info.get('validation_game_state_time', 'N/A')}")
+                    
+                    return response_content, usage_stats, True, False, termination_info
+                
+                elif validation_result == ValidationResult.ROLLBACK_TIME:
+                    print(f"🔄 Timestamp rollback required: {reason}")
+                    print(f"🎮 Returning rollback signal to main loop")
+                    
+                    # Capture detailed rollback termination information
+                    termination_info = None
+                    if not stage1_mode and self.validator.has_termination_record():
+                        termination_info = self.validator.get_termination_for_database()
+                        print(f"📊 Captured rollback details: {termination_info.get('validation_termination_type', 'unknown')}")
+                        
+                        # Also print summary to console
+                        if self.validator.get_termination_info():
+                            print(f"🔄 ROLLBACK SUMMARY:")
+                            print(f"   Trigger: {termination_info.get('validation_trigger_condition', 'N/A')}")
+                            print(f"   Consecutive Count: {termination_info.get('validation_consecutive_count', 0)}")
+                            print(f"   Total Attempts: {termination_info.get('validation_total_attempts', 0)}")
+                    
+                    # Note: response_content may be invalid, but needs_rollback=True signals the main loop to handle this
+                    return response_content, usage_stats, False, True, termination_info
                 
                 elif validation_result == ValidationResult.RETRY:
                     # Log validation retry reason
@@ -148,7 +188,7 @@ class BasePredictionClient(ABC):
                 if attempt == max_retries:
                     raise e
         
-        # All attempts failed - create detailed error message
+        # All attempts failed - create detailed error message and validation failure info
         error_details = []
         for attempt_info in validation_attempts:
             error_details.append(f"\nAttempt {attempt_info['attempt']}:")
@@ -162,7 +202,74 @@ class BasePredictionClient(ABC):
                     error_details.append(f"    - ... and {len(attempt_info['errors']) - 3} more errors")
         
         full_error_message = f"Response validation failed after {max_retries + 1} attempts:{''.join(error_details)}"
+        
+        # Create comprehensive validation failure info for database storage
+        validation_failure_info = self._create_validation_failure_info(validation_attempts, max_retries + 1)
+        
+        # Store validation failure info for potential capture by orchestrator
+        self.last_validation_failure = validation_failure_info
+        
         raise ValueError(full_error_message)
+    
+    def _create_validation_failure_info(self, validation_attempts: List[Dict[str, Any]], total_attempts: int) -> Dict[str, Any]:
+        """Create comprehensive validation failure information for database storage."""
+        from datetime import datetime
+        
+        if not validation_attempts:
+            return {}
+        
+        # Analyze failure patterns
+        failure_reasons = {}
+        error_types = {}
+        error_fields = {}
+        
+        for attempt in validation_attempts:
+            reason = attempt['reason']
+            failure_reasons[reason] = failure_reasons.get(reason, 0) + 1
+            
+            # Analyze validation errors
+            for error in attempt.get('errors', []):
+                error_type = error.error_type
+                error_field = error.field_path
+                
+                error_types[error_type] = error_types.get(error_type, 0) + 1
+                error_fields[error_field] = error_fields.get(error_field, 0) + 1
+        
+        # Get most common issues
+        most_common_reason = max(failure_reasons.items(), key=lambda x: x[1]) if failure_reasons else ("unknown", 0)
+        most_common_error_type = max(error_types.items(), key=lambda x: x[1]) if error_types else ("none", 0)
+        most_common_field = max(error_fields.items(), key=lambda x: x[1]) if error_fields else ("none", 0)
+        
+        # Get examples of failed responses (first and last)
+        response_examples = []
+        if len(validation_attempts) > 0:
+            response_examples.append(validation_attempts[0]['response_preview'])
+            if len(validation_attempts) > 1:
+                response_examples.append(validation_attempts[-1]['response_preview'])
+        
+        return {
+            'validation_failure_timestamp': datetime.now().isoformat(),
+            'validation_total_failed_attempts': total_attempts,
+            'validation_most_common_reason': most_common_reason[0],
+            'validation_most_common_reason_count': most_common_reason[1],
+            'validation_most_common_error_type': most_common_error_type[0],
+            'validation_most_common_error_type_count': most_common_error_type[1],
+            'validation_most_common_field': most_common_field[0],
+            'validation_most_common_field_count': most_common_field[1],
+            'validation_unique_reasons': len(failure_reasons),
+            'validation_unique_error_types': len(error_types),
+            'validation_unique_fields': len(error_fields),
+            'validation_failure_summary': json.dumps({
+                'reasons': failure_reasons,
+                'error_types': error_types,
+                'error_fields': error_fields
+            }),
+            'validation_response_examples': json.dumps(response_examples)
+        }
+    
+    def get_last_validation_failure_info(self) -> Optional[Dict[str, Any]]:
+        """Get the most recent validation failure information."""
+        return self.last_validation_failure
     
     def _validate_stage1_response(self, response_text: str, context: Dict[str, Any]) -> Tuple[ValidationResult, list, str]:
         """

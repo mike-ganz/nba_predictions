@@ -20,6 +20,7 @@ Usage:
 import sqlite3
 import json
 import time
+import threading
 import logging
 import argparse
 import traceback
@@ -48,6 +49,7 @@ class SimulationConfig:
     log_level: str = "INFO"
     resume_on_error: bool = True
     timeout_minutes: int = 30  # Max time per simulation
+    max_threads: int = 1  # Number of threads for parallel execution
 
 
 @dataclass
@@ -72,6 +74,33 @@ class SimulationResult:
     scoring_rate: float
     error_message: Optional[str]
     iterations_data: str  # JSON string of iteration details
+    
+    # Validation termination information (added for detailed termination tracking)
+    validation_termination_type: Optional[str] = None  # "game_ended", "rollback_time", etc.
+    validation_termination_reason: Optional[str] = None  # Human-readable reason
+    validation_trigger_condition: Optional[str] = None  # Specific trigger condition
+    validation_termination_timestamp: Optional[str] = None  # When termination was decided
+    validation_consecutive_count: Optional[int] = None  # Consecutive condition count
+    validation_total_attempts: Optional[int] = None  # Total validation attempts
+    validation_game_state_quarter: Optional[int] = None  # Game quarter at termination
+    validation_game_state_time: Optional[str] = None  # Game time at termination
+    validation_game_state_score: Optional[str] = None  # Game score at termination
+    validation_context_json: Optional[str] = None  # JSON string of validation context
+    
+    # Validation failure information (for retries that exhausted attempts)
+    validation_failure_timestamp: Optional[str] = None  # When validation started failing
+    validation_total_failed_attempts: Optional[int] = None  # Total failed validation attempts
+    validation_most_common_reason: Optional[str] = None  # Most frequent failure reason
+    validation_most_common_reason_count: Optional[int] = None  # Count of most common reason
+    validation_most_common_error_type: Optional[str] = None  # Most frequent error type
+    validation_most_common_error_type_count: Optional[int] = None  # Count of most common error type
+    validation_most_common_field: Optional[str] = None  # Most problematic field
+    validation_most_common_field_count: Optional[int] = None  # Count of field errors
+    validation_unique_reasons: Optional[int] = None  # Number of distinct failure reasons
+    validation_unique_error_types: Optional[int] = None  # Number of distinct error types
+    validation_unique_fields: Optional[int] = None  # Number of distinct problematic fields
+    validation_failure_summary: Optional[str] = None  # JSON summary of all failure patterns
+    validation_response_examples: Optional[str] = None  # JSON array of failed response examples
 
 
 class GameContextLoader:
@@ -136,11 +165,17 @@ class SimulationDatabase:
     
     def __init__(self, db_path: str):
         self.db_path = db_path
+        self._db_lock = threading.Lock()  # Thread-safe database access
         self._init_database()
     
     def _init_database(self):
         """Initialize database schema."""
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, check_same_thread=False) as conn:
+            # Enable WAL mode for better concurrent access
+            conn.execute('PRAGMA journal_mode=WAL;')
+            conn.execute('PRAGMA synchronous=NORMAL;')  # Balance safety and performance
+            conn.execute('PRAGMA cache_size=10000;')    # Increase cache for better performance
+            
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS simulation_runs (
                     run_id TEXT PRIMARY KEY,
@@ -162,6 +197,29 @@ class SimulationDatabase:
                     scoring_rate REAL,
                     error_message TEXT,
                     iterations_data TEXT,
+                    validation_termination_type TEXT,
+                    validation_termination_reason TEXT,
+                    validation_trigger_condition TEXT,
+                    validation_termination_timestamp TEXT,
+                    validation_consecutive_count INTEGER,
+                    validation_total_attempts INTEGER,
+                    validation_game_state_quarter INTEGER,
+                    validation_game_state_time TEXT,
+                    validation_game_state_score TEXT,
+                    validation_context_json TEXT,
+                    validation_failure_timestamp TEXT,
+                    validation_total_failed_attempts INTEGER,
+                    validation_most_common_reason TEXT,
+                    validation_most_common_reason_count INTEGER,
+                    validation_most_common_error_type TEXT,
+                    validation_most_common_error_type_count INTEGER,
+                    validation_most_common_field TEXT,
+                    validation_most_common_field_count INTEGER,
+                    validation_unique_reasons INTEGER,
+                    validation_unique_error_types INTEGER,
+                    validation_unique_fields INTEGER,
+                    validation_failure_summary TEXT,
+                    validation_response_examples TEXT,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
@@ -172,31 +230,65 @@ class SimulationDatabase:
             conn.commit()
     
     def save_result(self, result: SimulationResult):
-        """Save a simulation result to database."""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                INSERT OR REPLACE INTO simulation_runs (
-                    run_id, game_id, season_year, platform, start_time, end_time,
-                    duration_seconds, status, total_predictions, successful_predictions,
-                    final_score, final_quarter, final_time, termination_reason,
-                    scoring_plays, non_scoring_plays, scoring_rate, error_message, iterations_data
-                ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                )
-            ''', (
-                result.run_id, result.game_id, result.season_year, result.platform,
-                result.start_time.isoformat(), result.end_time.isoformat() if result.end_time else None,
-                result.duration_seconds, result.status, result.total_predictions,
-                result.successful_predictions, result.final_score, result.final_quarter,
-                result.final_time, result.termination_reason, result.scoring_plays,
-                result.non_scoring_plays, result.scoring_rate, result.error_message,
-                result.iterations_data
-            ))
-            conn.commit()
+        """Save a simulation result to database with thread safety."""
+        with self._db_lock:  # Ensure thread-safe database access
+            try:
+                with sqlite3.connect(self.db_path, check_same_thread=False) as conn:
+                    conn.execute('''
+                        INSERT OR REPLACE INTO simulation_runs (
+                            run_id, game_id, season_year, platform, start_time, end_time,
+                            duration_seconds, status, total_predictions, successful_predictions,
+                            final_score, final_quarter, final_time, termination_reason,
+                            scoring_plays, non_scoring_plays, scoring_rate, error_message, iterations_data,
+                            validation_termination_type, validation_termination_reason, validation_trigger_condition,
+                            validation_termination_timestamp, validation_consecutive_count, validation_total_attempts,
+                            validation_game_state_quarter, validation_game_state_time, validation_game_state_score,
+                            validation_context_json, validation_failure_timestamp, validation_total_failed_attempts,
+                            validation_most_common_reason, validation_most_common_reason_count, validation_most_common_error_type,
+                            validation_most_common_error_type_count, validation_most_common_field, validation_most_common_field_count,
+                            validation_unique_reasons, validation_unique_error_types, validation_unique_fields,
+                            validation_failure_summary, validation_response_examples
+                        ) VALUES (
+                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                        )
+                    ''', (
+                        result.run_id, result.game_id, result.season_year, result.platform,
+                        result.start_time.isoformat(), result.end_time.isoformat() if result.end_time else None,
+                        result.duration_seconds, result.status, result.total_predictions,
+                        result.successful_predictions, result.final_score, result.final_quarter,
+                        result.final_time, result.termination_reason, result.scoring_plays,
+                        result.non_scoring_plays, result.scoring_rate, result.error_message,
+                        result.iterations_data,
+                        # Validation termination fields
+                        result.validation_termination_type, result.validation_termination_reason, result.validation_trigger_condition,
+                        result.validation_termination_timestamp, result.validation_consecutive_count, result.validation_total_attempts,
+                        result.validation_game_state_quarter, result.validation_game_state_time, result.validation_game_state_score,
+                        result.validation_context_json,
+                        # Validation failure fields
+                        result.validation_failure_timestamp, result.validation_total_failed_attempts, 
+                        result.validation_most_common_reason, result.validation_most_common_reason_count,
+                        result.validation_most_common_error_type, result.validation_most_common_error_type_count,
+                        result.validation_most_common_field, result.validation_most_common_field_count,
+                        result.validation_unique_reasons, result.validation_unique_error_types, result.validation_unique_fields,
+                        result.validation_failure_summary, result.validation_response_examples
+                    ))
+                    conn.commit()
+                    
+                    # Log successful save with thread info
+                    thread_name = threading.current_thread().name
+                    logging.debug(f"Successfully saved result {result.run_id} to database (thread: {thread_name})")
+                    
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error saving result {result.run_id}: {e}")
+                raise
+            except Exception as e:
+                logging.error(f"Unexpected error saving result {result.run_id}: {e}")
+                raise
     
     def get_results_for_game(self, game_id: str, season_year: str) -> List[Dict]:
         """Get all results for a specific game."""
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, check_same_thread=False) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute('''
                 SELECT * FROM simulation_runs 
@@ -207,7 +299,7 @@ class SimulationDatabase:
     
     def get_summary_stats(self) -> Dict[str, Any]:
         """Get summary statistics across all simulations."""
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, check_same_thread=False) as conn:
             cursor = conn.execute('''
                 SELECT 
                     COUNT(*) as total_simulations,
@@ -384,6 +476,27 @@ class NBA_Orchestrator:
                 if "Game ended" in termination_reason:
                     status = "game_ended"
             
+            # Extract validation termination information
+            validation_termination = results.get("validation_termination", {})
+            
+            # Extract validation failure information (for retries that exhausted attempts)
+            validation_failure = results.get("validation_failure", {})
+            
+            # Log validation termination if present
+            if validation_termination:
+                self.logger.info(f"🛑 Validation termination captured for {run_id}")
+                self.logger.info(f"   Type: {validation_termination.get('validation_termination_type', 'N/A')}")
+                self.logger.info(f"   Trigger: {validation_termination.get('validation_trigger_condition', 'N/A')}")
+                self.logger.info(f"   Game State: Q{validation_termination.get('validation_game_state_quarter', '?')} {validation_termination.get('validation_game_state_time', 'N/A')}")
+            
+            # Log validation failure details if present
+            if validation_failure:
+                self.logger.info(f"🔍 Validation failure details captured for {run_id}")
+                self.logger.info(f"   Most common reason: {validation_failure.get('validation_most_common_reason', 'N/A')}")
+                self.logger.info(f"   Most common error type: {validation_failure.get('validation_most_common_error_type', 'N/A')}")
+                self.logger.info(f"   Total failed attempts: {validation_failure.get('validation_total_failed_attempts', 0)}")
+                self.logger.info(f"   Unique failure reasons: {validation_failure.get('validation_unique_reasons', 0)}")
+            
             return SimulationResult(
                 run_id=run_id,
                 game_id=game_id,
@@ -403,12 +516,50 @@ class NBA_Orchestrator:
                 non_scoring_plays=non_scoring_plays,
                 scoring_rate=scoring_rate,
                 error_message=None,
-                iterations_data=json.dumps(iterations[:10])  # Store first 10 iterations
+                iterations_data=json.dumps(iterations[:10]),  # Store first 10 iterations
+                # Validation termination information
+                validation_termination_type=validation_termination.get('validation_termination_type'),
+                validation_termination_reason=validation_termination.get('validation_termination_reason'),
+                validation_trigger_condition=validation_termination.get('validation_trigger_condition'),
+                validation_termination_timestamp=validation_termination.get('validation_termination_timestamp'),
+                validation_consecutive_count=validation_termination.get('validation_consecutive_count'),
+                validation_total_attempts=validation_termination.get('validation_total_attempts'),
+                validation_game_state_quarter=validation_termination.get('validation_game_state_quarter'),
+                validation_game_state_time=validation_termination.get('validation_game_state_time'),
+                validation_game_state_score=validation_termination.get('validation_game_state_score'),
+                validation_context_json=validation_termination.get('validation_context_json'),
+                # Validation failure information
+                validation_failure_timestamp=validation_failure.get('validation_failure_timestamp'),
+                validation_total_failed_attempts=validation_failure.get('validation_total_failed_attempts'),
+                validation_most_common_reason=validation_failure.get('validation_most_common_reason'),
+                validation_most_common_reason_count=validation_failure.get('validation_most_common_reason_count'),
+                validation_most_common_error_type=validation_failure.get('validation_most_common_error_type'),
+                validation_most_common_error_type_count=validation_failure.get('validation_most_common_error_type_count'),
+                validation_most_common_field=validation_failure.get('validation_most_common_field'),
+                validation_most_common_field_count=validation_failure.get('validation_most_common_field_count'),
+                validation_unique_reasons=validation_failure.get('validation_unique_reasons'),
+                validation_unique_error_types=validation_failure.get('validation_unique_error_types'),
+                validation_unique_fields=validation_failure.get('validation_unique_fields'),
+                validation_failure_summary=validation_failure.get('validation_failure_summary'),
+                validation_response_examples=validation_failure.get('validation_response_examples')
             )
             
         except Exception as e:
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
+            
+            # Check if validation failure info was captured
+            validation_failure = {}
+            try:
+                import builtins
+                if hasattr(builtins, '_last_validation_failure') and builtins._last_validation_failure:
+                    validation_failure = builtins._last_validation_failure
+                    self.logger.info(f"🔍 Using captured validation failure details for error case")
+                    self.logger.info(f"   Most common reason: {validation_failure.get('validation_most_common_reason', 'N/A')}")
+                    # Clear the global after use
+                    builtins._last_validation_failure = None
+            except:
+                pass  # Ignore any issues accessing global validation failure info
             
             return SimulationResult(
                 run_id=run_id,
@@ -429,7 +580,32 @@ class NBA_Orchestrator:
                 non_scoring_plays=0,
                 scoring_rate=0.0,
                 error_message=str(e),
-                iterations_data="[]"
+                iterations_data="[]",
+                # Validation termination information (None for error cases)
+                validation_termination_type=None,
+                validation_termination_reason=None,
+                validation_trigger_condition=None,
+                validation_termination_timestamp=None,
+                validation_consecutive_count=None,
+                validation_total_attempts=None,
+                validation_game_state_quarter=None,
+                validation_game_state_time=None,
+                validation_game_state_score=None,
+                validation_context_json=None,
+                # Validation failure information (use captured data if available)
+                validation_failure_timestamp=validation_failure.get('validation_failure_timestamp'),
+                validation_total_failed_attempts=validation_failure.get('validation_total_failed_attempts'),
+                validation_most_common_reason=validation_failure.get('validation_most_common_reason'),
+                validation_most_common_reason_count=validation_failure.get('validation_most_common_reason_count'),
+                validation_most_common_error_type=validation_failure.get('validation_most_common_error_type'),
+                validation_most_common_error_type_count=validation_failure.get('validation_most_common_error_type_count'),
+                validation_most_common_field=validation_failure.get('validation_most_common_field'),
+                validation_most_common_field_count=validation_failure.get('validation_most_common_field_count'),
+                validation_unique_reasons=validation_failure.get('validation_unique_reasons'),
+                validation_unique_error_types=validation_failure.get('validation_unique_error_types'),
+                validation_unique_fields=validation_failure.get('validation_unique_fields'),
+                validation_failure_summary=validation_failure.get('validation_failure_summary'),
+                validation_response_examples=validation_failure.get('validation_response_examples')
             )
     
     def analyze_results(self, game_id: Optional[str] = None) -> Dict[str, Any]:
