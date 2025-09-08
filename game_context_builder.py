@@ -124,22 +124,31 @@ class GameContextBuilder:
         return context
     
     def _determine_away_home_teams(self, game_data: pd.DataFrame) -> tuple[str, str]:
-        """Determine which team is away vs home using player assignments in away/home columns."""
+        """Determine which team is away vs home using player assignments (optimized)."""
+        # Single combined operation to get unique teams and players
         unique_teams = game_data['team'].dropna().unique()
         
         if len(unique_teams) >= 2:
-            # Get sample players from away/home columns
-            away_players = game_data['away'].dropna().unique()[:5]  # Sample away players
-            home_players = game_data['home'].dropna().unique()[:5]  # Sample home players
+            # Optimized: combine operations and use sets for faster lookups
+            away_series = game_data['away'].dropna()
+            home_series = game_data['home'].dropna()
             
-            # Map teams to away/home based on player assignments
+            # Convert to sets once (faster lookups)
+            away_players_set = set(away_series.unique()[:10])  # Slightly more players for better accuracy
+            home_players_set = set(home_series.unique()[:10])
+            
             team1, team2 = unique_teams[0], unique_teams[1]
-            team1_players = set(game_data[game_data['team'] == team1]['player'].dropna().unique())
-            team2_players = set(game_data[game_data['team'] == team2]['player'].dropna().unique())
             
-            # Check which team's players appear more in away vs home columns
-            team1_away_matches = sum(1 for p in away_players if p in team1_players)
-            team1_home_matches = sum(1 for p in home_players if p in team1_players)
+            # Get player sets for each team in one operation
+            team1_mask = game_data['team'] == team1
+            team2_mask = game_data['team'] == team2
+            
+            team1_players = set(game_data.loc[team1_mask, 'player'].dropna().unique())
+            team2_players = set(game_data.loc[team2_mask, 'player'].dropna().unique())
+            
+            # Optimized set intersection operations
+            team1_away_matches = len(team1_players & away_players_set)
+            team1_home_matches = len(team1_players & home_players_set)
             
             if team1_away_matches > team1_home_matches:
                 # Team1 is away, Team2 is home
@@ -164,11 +173,9 @@ class GameContextBuilder:
             "REST_DAYS": random.randint(1, 4)            # Whole number
         }
         
-        # Get players who appeared in this game for this team
-        team_plays = game_data[game_data['team'] == team_abbr]
-        
-        # Get unique players
-        players = team_plays['player'].dropna().unique()
+        # Optimized: single operation to get unique players for this team
+        team_mask = game_data['team'] == team_abbr
+        players = game_data.loc[team_mask, 'player'].dropna().unique()
         
         # Build player profiles
         player_profiles = []

@@ -166,6 +166,28 @@ class SimulationDatabase:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self._db_lock = threading.Lock()  # Thread-safe database access
+        
+        # Pre-compile insert statement for better performance
+        self._insert_sql = '''
+            INSERT OR REPLACE INTO simulation_runs (
+                run_id, game_id, season_year, platform, start_time, end_time,
+                duration_seconds, status, total_predictions, successful_predictions,
+                final_score, final_quarter, final_time, termination_reason,
+                scoring_plays, non_scoring_plays, scoring_rate, error_message, iterations_data,
+                validation_termination_type, validation_termination_reason, validation_trigger_condition,
+                validation_termination_timestamp, validation_consecutive_count, validation_total_attempts,
+                validation_game_state_quarter, validation_game_state_time, validation_game_state_score,
+                validation_context_json, validation_failure_timestamp, validation_total_failed_attempts,
+                validation_most_common_reason, validation_most_common_reason_count, validation_most_common_error_type,
+                validation_most_common_error_type_count, validation_most_common_field, validation_most_common_field_count,
+                validation_unique_reasons, validation_unique_error_types, validation_unique_fields,
+                validation_failure_summary, validation_response_examples
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+        '''
+        
         self._init_database()
     
     def _init_database(self):
@@ -234,25 +256,8 @@ class SimulationDatabase:
         with self._db_lock:  # Ensure thread-safe database access
             try:
                 with sqlite3.connect(self.db_path, check_same_thread=False) as conn:
-                    conn.execute('''
-                        INSERT OR REPLACE INTO simulation_runs (
-                            run_id, game_id, season_year, platform, start_time, end_time,
-                            duration_seconds, status, total_predictions, successful_predictions,
-                            final_score, final_quarter, final_time, termination_reason,
-                            scoring_plays, non_scoring_plays, scoring_rate, error_message, iterations_data,
-                            validation_termination_type, validation_termination_reason, validation_trigger_condition,
-                            validation_termination_timestamp, validation_consecutive_count, validation_total_attempts,
-                            validation_game_state_quarter, validation_game_state_time, validation_game_state_score,
-                            validation_context_json, validation_failure_timestamp, validation_total_failed_attempts,
-                            validation_most_common_reason, validation_most_common_reason_count, validation_most_common_error_type,
-                            validation_most_common_error_type_count, validation_most_common_field, validation_most_common_field_count,
-                            validation_unique_reasons, validation_unique_error_types, validation_unique_fields,
-                            validation_failure_summary, validation_response_examples
-                        ) VALUES (
-                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                        )
-                    ''', (
+                    # Use pre-compiled SQL statement for better performance
+                    conn.execute(self._insert_sql, (
                         result.run_id, result.game_id, result.season_year, result.platform,
                         result.start_time.isoformat(), result.end_time.isoformat() if result.end_time else None,
                         result.duration_seconds, result.status, result.total_predictions,
@@ -275,9 +280,10 @@ class SimulationDatabase:
                     ))
                     conn.commit()
                     
-                    # Log successful save with thread info
-                    thread_name = threading.current_thread().name
-                    logging.debug(f"Successfully saved result {result.run_id} to database (thread: {thread_name})")
+                    # Optimized logging: only get thread name if debug logging is enabled
+                    if logging.getLogger().isEnabledFor(logging.DEBUG):
+                        thread_name = threading.current_thread().name
+                        logging.debug(f"Successfully saved result {result.run_id} to database (thread: {thread_name})")
                     
             except sqlite3.Error as e:
                 logging.error(f"SQLite error saving result {result.run_id}: {e}")
@@ -434,39 +440,43 @@ class NBA_Orchestrator:
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
             
-            # Extract results
+            # Extract results with optimized processing
             iterations = results.get("iterations", [])
             total_predictions = len(iterations)
-            successful_predictions = len([i for i in iterations if "next_play" in i])
             
-            # Calculate scoring statistics
+            # Single-pass analysis of iterations (avoid multiple loops)
+            successful_predictions = 0
             scoring_plays = 0
             non_scoring_plays = 0
+            final_score = None
+            final_quarter = None
+            final_time = None
             
-            for iteration_result in iterations:
+            # Process all iterations in a single loop
+            for i, iteration_result in enumerate(iterations):
                 if "next_play" in iteration_result:
+                    successful_predictions += 1
                     next_play = iteration_result["next_play"]
-                    if "shot_details" in next_play and next_play["shot_details"]:
-                        points = next_play["shot_details"].get("points")
+                    
+                    # Check scoring (optimized with early exits)
+                    shot_details = next_play.get("shot_details")
+                    if shot_details:
+                        points = shot_details.get("points")
                         if points is not None and points > 0:
                             scoring_plays += 1
                         else:
                             non_scoring_plays += 1
                     else:
                         non_scoring_plays += 1
+                    
+                    # Update final state (last iteration will be the final one)
+                    final_score = next_play.get("score")
+                    final_quarter = next_play.get("quarter")
+                    final_time = next_play.get("time_remaining")
             
-            scoring_rate = (scoring_plays / (scoring_plays + non_scoring_plays)) * 100 if (scoring_plays + non_scoring_plays) > 0 else 0
-            
-            # Get final game state
-            final_score = None
-            final_quarter = None
-            final_time = None
-            
-            if iterations and "next_play" in iterations[-1]:
-                final_play = iterations[-1]["next_play"]
-                final_score = final_play.get("score")
-                final_quarter = final_play.get("quarter")
-                final_time = final_play.get("time_remaining")
+            # Calculate scoring rate once
+            total_plays = scoring_plays + non_scoring_plays
+            scoring_rate = (scoring_plays / total_plays) * 100 if total_plays > 0 else 0
             
             # Determine status and termination reason
             status = "completed"

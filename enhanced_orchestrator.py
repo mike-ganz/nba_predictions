@@ -216,14 +216,15 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
         # Give threads more time to finish database operations
         print("⏳ Waiting for active threads to complete database writes...")
         
-        # Wait longer and monitor for completion
+        # Optimized shutdown wait with reduced lock contention
         max_wait_time = 30  # 30 seconds should be enough for most simulations
         start_wait = time.time()
         
         while time.time() - start_wait < max_wait_time:
+            # Optimize: single lock operation with efficient counting
             with self._thread_info_lock:
-                active_count = len([t for t in self._active_threads.values() 
-                                  if t.future and not t.future.done()])
+                active_count = sum(1 for t in self._active_threads.values() 
+                                 if t.future and not t.future.done())
             
             if active_count == 0:
                 print("✅ All threads completed. Database writes should be safe.")
@@ -286,7 +287,7 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
                 del self._active_threads[thread_id]
     
     def _show_thread_status(self):
-        """Display current status of all active threads."""
+        """Display current status of all active threads (optimized)."""
         with self._thread_info_lock:
             active_threads = dict(self._active_threads)
         
@@ -294,23 +295,36 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
             print("📭 No active threads")
             return
         
-        print(f"\n🧵 Active Threads ({len(active_threads)}):")
+        thread_count = len(active_threads)
+        print(f"\n🧵 Active Threads ({thread_count}):")
         print("=" * 80)
         print(f"{'ID':<20} {'Game':<12} {'Run':<4} {'Status':<10} {'Iter':<6} {'Game State':<25} {'Duration'}")
         print("-" * 80)
         
+        # Pre-calculate current time once for all duration calculations
+        current_time = datetime.now()
+        
+        # Pre-compile format strings and use list for batch printing
+        status_lines = []
         for thread_id, info in active_threads.items():
-            duration = (datetime.now() - info.start_time).total_seconds()
+            duration = (current_time - info.start_time).total_seconds()
             duration_str = f"{duration:.0f}s"
             
-            game_state = ""
+            # Optimized game state construction
             if info.current_score:
                 game_state = f"Q{info.current_quarter} {info.current_time} | {info.current_score}"
             elif info.status == "stage1":
-                game_state = "Initial plays generation"
+                game_state = "Initial plays generation"  
+            else:
+                game_state = ""
             
-            print(f"{thread_id[:18]:<20} {info.game_id:<12} {info.run_num:<4} {info.status:<10} "
-                  f"{info.current_iteration:<6} {game_state:<25} {duration_str}")
+            # Create status line once and add to batch
+            status_line = (f"{thread_id[:18]:<20} {info.game_id:<12} {info.run_num:<4} {info.status:<10} "
+                          f"{info.current_iteration:<6} {game_state:<25} {duration_str}")
+            status_lines.append(status_line)
+        
+        # Batch print all lines (single I/O operation)
+        print('\n'.join(status_lines))
     
     def cancel_thread(self, thread_id: str) -> bool:
         """Cancel a specific thread by ID."""
@@ -512,37 +526,43 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
                 # Save to database
                 self.db.save_result(result)
                 
-                # Log successful save with thread info
-                thread_name = threading.current_thread().name
-                self.logger.debug(f"Successfully saved result {result.run_id} to database "
-                                f"(thread: {thread_name}, attempt: {attempt + 1})")
+                # Optimized logging: only get thread name and log if debug logging is enabled
+                if self.logger.isEnabledFor(logging.DEBUG):
+                    thread_name = threading.current_thread().name
+                    self.logger.debug(f"Successfully saved result {result.run_id} to database "
+                                    f"(thread: {thread_name}, attempt: {attempt + 1})")
                 return True
                 
             except Exception as e:
-                thread_name = threading.current_thread().name
-                error_context = {
-                    'run_id': result.run_id,
-                    'game_id': result.game_id,
-                    'thread_name': thread_name,
-                    'thread_id': thread_id,
-                    'attempt': attempt + 1,
-                    'error': str(e),
-                    'status': result.status,
-                    'duration': result.duration_seconds
-                }
+                # Optimized: only create expensive error context on final failure
+                # For retries, just capture essential info
+                error_str = str(e)
                 
                 if attempt < max_retries - 1:
-                    # Log retry attempt to dedicated database error log
+                    # Retry case - minimal logging
                     self.db_error_logger.warning(
                         f"RETRY {attempt + 1}/{max_retries}: {result.run_id} "
-                        f"({result.game_id}) - {str(e)} - Retrying in {retry_delay}s"
+                        f"({result.game_id}) - {error_str} - Retrying in {retry_delay}s"
                     )
                     time.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
                 else:
+                    # Final failure - create full context and handle failure
+                    thread_name = threading.current_thread().name
+                    error_context = {
+                        'run_id': result.run_id,
+                        'game_id': result.game_id,
+                        'thread_name': thread_name,
+                        'thread_id': thread_id,
+                        'attempt': attempt + 1,
+                        'error': error_str,
+                        'status': result.status,
+                        'duration': result.duration_seconds
+                    }
+                    
                     # Final attempt failed - log extensively and track failure
                     error_msg = (f"PERMANENT FAILURE: {result.run_id} ({result.game_id}) "
-                               f"- Failed after {max_retries} attempts: {str(e)}")
+                               f"- Failed after {max_retries} attempts: {error_str}")
                     
                     # Log to dedicated database error logger (both file and console with 🔥 format)
                     self.db_error_logger.error(error_msg)
@@ -661,11 +681,12 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
         
         start_time = time.time()
         
-        # Create list of all simulation tasks
-        simulation_tasks = []
-        for game_id in self.config.games:
-            for run_num in range(self.config.runs_per_game):
-                simulation_tasks.append((game_id, run_num + 1, total_runs))
+        # Optimized task creation using list comprehension (faster than loop)
+        simulation_tasks = [
+            (game_id, run_num + 1, total_runs) 
+            for game_id in self.config.games 
+            for run_num in range(self.config.runs_per_game)
+        ]
         
         # Execute simulations using ThreadPoolExecutor
         if self.config.max_threads == 1:
@@ -716,19 +737,28 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
                         result = future.result()
                         results.append(result)
                         
-                        # Progress update
+                        # Optimized progress update - reduce frequency of expensive operations
                         completed_total = self._completed_runs + self._failed_runs
-                        if completed_total % 5 == 0 or completed_total == total_runs:  # Update every 5 runs
+                        
+                        # Only do expensive progress calculations on meaningful intervals
+                        should_update = (completed_total % 5 == 0 or completed_total == total_runs)
+                        if should_update:
+                            # Batch the expensive lock operations
+                            save_errors = 0
+                            total_save_failures = 0
+                            
                             with self._thread_info_lock:
-                                save_errors = len([t for t in self._active_threads.values() 
-                                                 if t.status == "save_error"])
+                                save_errors = sum(1 for t in self._active_threads.values() 
+                                                if t.status == "save_error")
                             
                             with self._save_failure_lock:
                                 total_save_failures = len(self._save_failures)
                             
-                            progress_msg = f"Progress: {completed_total}/{total_runs} simulations completed " \
-                                         f"({completed_total/total_runs*100:.1f}%)"
+                            # Pre-calculate percentage once
+                            completion_pct = completed_total/total_runs*100
+                            progress_msg = f"Progress: {completed_total}/{total_runs} simulations completed ({completion_pct:.1f}%)"
                             
+                            # Optimize string concatenation
                             if total_save_failures > 0:
                                 progress_msg += f" [🔥 {total_save_failures} DATABASE SAVE FAILURES]"
                             elif save_errors > 0:
@@ -736,7 +766,7 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
                             
                             self.logger.info(progress_msg)
                             
-                            # Show prominent warning if we have database failures
+                            # Show prominent warning if we have database failures (less frequent)
                             if total_save_failures > 0 and completed_total % 10 == 0:
                                 print(f"\n⚠️⚠️⚠️ DATABASE ALERT: {total_save_failures} results failed to save! ⚠️⚠️⚠️")
                                 print("   Check database_errors_*.log for details\n")
@@ -785,7 +815,7 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
             failures = list(self._save_failures)  # Copy the list
         
         if not failures:
-            self.logger.info("   Database saves: ✅ All successful")
+            self.logger.info("   Database saves: [OK] All successful")
             return
         
         # Print prominent console warning
@@ -795,15 +825,17 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
         print(f"   {len(failures)} simulation results FAILED to save to database!")
         print(f"   Check database_errors_*.log for detailed error information")
         
-        # Group failures by error type
+        # Optimized failure analysis - single pass with efficient operations
         error_types = {}
         games_affected = set()
         
         for failure in failures:
-            error_key = failure['error'][:50] + "..." if len(failure['error']) > 50 else failure['error']
-            if error_key not in error_types:
-                error_types[error_key] = []
-            error_types[error_key].append(failure)
+            # Optimize string truncation
+            error_text = failure['error']
+            error_key = error_text if len(error_text) <= 50 else error_text[:50] + "..."
+            
+            # Use setdefault for cleaner grouping
+            error_types.setdefault(error_key, []).append(failure)
             games_affected.add(failure['game_id'])
         
         print(f"\nFailed Results Summary:")
@@ -846,25 +878,33 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
             print(f"⚠️ Threads with save errors: {len(save_error_threads)}")
             
             if failures:
-                # Group by game and error type
-                games_affected = set(f['game_id'] for f in failures)
-                error_types = set(f['error'][:30] + "..." if len(f['error']) > 30 
-                                else f['error'] for f in failures)
+                # Optimized analysis - reduce multiple iterations
+                games_affected = set()
+                error_types = set()
+                
+                # Single pass to collect both games and error types
+                for f in failures:
+                    games_affected.add(f['game_id'])
+                    error_text = f['error']
+                    error_short = error_text if len(error_text) <= 30 else error_text[:30] + "..."
+                    error_types.add(error_short)
                 
                 print(f"\nFailed Results Details:")
                 print(f"   Games affected: {len(games_affected)}")
                 print(f"   Games: {', '.join(sorted(games_affected))}")
                 print(f"   Error types: {len(error_types)}")
                 
-                # Show recent failures
-                recent_failures = failures[-5:] if len(failures) > 5 else failures
+                # Show recent failures with optimized slicing
+                failure_count = len(failures)
+                recent_failures = failures[-5:] if failure_count > 5 else failures
                 print(f"\nMost recent failures:")
                 for failure in recent_failures:
-                    error_short = failure['error'][:40] + "..." if len(failure['error']) > 40 else failure['error']
+                    error_text = failure['error']
+                    error_short = error_text if len(error_text) <= 40 else error_text[:40] + "..."
                     print(f"     • {failure['run_id']} ({failure['game_id']}): {error_short}")
                 
-                if len(failures) > 5:
-                    print(f"     ... and {len(failures) - 5} more (see database_errors_*.log)")
+                if failure_count > 5:
+                    print(f"     ... and {failure_count - 5} more (see database_errors_*.log)")
             
             if save_error_threads:
                 print(f"\nThreads currently with save errors:")

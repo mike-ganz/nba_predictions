@@ -74,11 +74,32 @@ class OptimizedGameContext:
         print(f"🚀 OptimizedGameContext initialized - base context cached ({len(self._base_json_cached)} chars)")
     
     def _hash_plays(self, plays: list) -> str:
-        """Create a hash key for play sequence for caching."""
+        """Create a hash key for play sequence for caching (optimized)."""
         if not plays:
             return "empty"
-        # Use play descriptions and times as a simple hash
-        return str(hash(tuple((p.get('description', ''), p.get('time_remaining', '')) for p in plays)))
+        
+        # Fast hash using simplified approach for small sequences
+        # This avoids expensive tuple creation and string operations
+        play_count = len(plays)
+        if play_count <= 3:  # For small sequences, use lightweight content hash
+            # Use a simple but consistent hash for small sequences
+            simple_hash = hash(play_count)
+            for play in plays:
+                desc = play.get('description', '')
+                simple_hash ^= hash(desc[:20])  # First 20 chars only
+            return f"small_{play_count}_{simple_hash}"
+        
+        # For larger sequences or when identity fails, use efficient content-based hash
+        # Avoid creating intermediate tuple - use hash accumulation instead
+        hash_acc = hash(play_count)  # Start with length
+        for i, play in enumerate(plays):
+            if i < 5:  # Only hash first 5 plays for speed (most variance is at the beginning)
+                desc = play.get('description', '')
+                time_r = play.get('time_remaining', '')
+                hash_acc ^= hash(desc[:30])  # Only hash first 30 chars of description
+                hash_acc ^= hash(time_r)
+        
+        return str(hash_acc)
     
     def update_recent_plays(self, new_plays: list) -> None:
         """Update recent plays and invalidate cache if changed."""
@@ -103,17 +124,24 @@ class OptimizedGameContext:
             plays_json = json_dumps(self.current_recent_plays, separators=(',', ':'))
             self._plays_cache[plays_hash] = plays_json
             
-            # Limit cache size to prevent memory bloat
+            # Optimized cache eviction - clear half the cache when full (more efficient than single item removal)
             if len(self._plays_cache) > 50:
-                # Remove oldest entries (simple FIFO)
-                oldest_key = next(iter(self._plays_cache))
-                del self._plays_cache[oldest_key]
+                # Clear oldest half of entries (batch operation is faster)
+                keys_to_remove = list(self._plays_cache.keys())[:25]  # Remove first 25
+                for key in keys_to_remove:
+                    del self._plays_cache[key]
         
-        # Combine cached base with cached/new recent_plays
+        # Optimized JSON combination using join (faster than f-string for large strings)
         if self.current_recent_plays:
-            self._current_full_json = f'{self._base_json_cached[:-1]},"recent_plays":{plays_json}}}'
+            self._current_full_json = ''.join([
+                self._base_json_cached[:-1],  # Remove closing brace
+                ',"recent_plays":',
+                plays_json,
+                '}}'
+            ])
         else:
-            self._current_full_json = f'{self._base_json_cached[:-1]}}}'
+            # For empty plays, just add closing brace - avoid string slicing
+            self._current_full_json = self._base_json_cached[:-1] + '}}'
         
         return self._current_full_json
     
@@ -125,13 +153,16 @@ class OptimizedGameContext:
         return result
     
     def add_play_and_slide(self, new_play: Dict[str, Any], max_plays: int = 20) -> None:
-        """Add a new play and maintain sliding window."""
-        new_plays = self.current_recent_plays.copy()
-        new_plays.append(new_play)
+        """Add a new play and maintain sliding window (optimized)."""
+        current_len = len(self.current_recent_plays)
         
-        # Maintain sliding window
-        if len(new_plays) > max_plays:
-            new_plays.pop(0)
+        # Optimized: avoid copy when possible, modify in-place when beneficial
+        if current_len < max_plays:
+            # Simple append case - extend current list
+            new_plays = self.current_recent_plays + [new_play]
+        else:
+            # Sliding window case - use slicing to avoid intermediate lists
+            new_plays = self.current_recent_plays[1:] + [new_play]
         
         self.update_recent_plays(new_plays)
     
