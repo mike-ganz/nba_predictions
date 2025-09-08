@@ -155,18 +155,18 @@ def show_game_summary(db_path: str = "enhanced_simulation_results.db"):
     
     print("🏀 NBA Simulation Results Summary")
     print("=" * 80)
-    display(display_df.style.set_table_attributes('style="font-size: 12px"'))
+    # display(display_df.style.set_table_attributes('style="font-size: 12px"'))
     
-    # Overall stats
-    total_sims = df['total_sims'].sum()
-    total_completed = df['completed_sims'].sum()
-    total_errors = df['error_sims'].sum()
-    overall_success = round(total_completed / total_sims * 100, 1) if total_sims > 0 else 0
+    # # Overall stats
+    # total_sims = df['total_sims'].sum()
+    # total_completed = df['completed_sims'].sum()
+    # total_errors = df['error_sims'].sum()
+    # overall_success = round(total_completed / total_sims * 100, 1) if total_sims > 0 else 0
     
-    print(f"\n📊 Overall Summary:")
-    print(f"   🎯 Total Simulations: {total_sims}")
-    print(f"   ✅ Completed: {total_completed} ({overall_success}%)")
-    print(f"   ⚠️  Errors: {total_errors} ({round(total_errors/total_sims*100, 1)}%)")
+    # print(f"\n📊 Overall Summary:")
+    # print(f"   🎯 Total Simulations: {total_sims}")
+    # print(f"   ✅ Completed: {total_completed} ({overall_success}%)")
+    # print(f"   ⚠️  Errors: {total_errors} ({round(total_errors/total_sims*100, 1)}%)")
     
     # Calculate overall score statistics
     all_score_diffs = []

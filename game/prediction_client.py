@@ -17,10 +17,10 @@ from .response_validator import NBAResponseValidator, ValidationResult
 class BasePredictionClient(ABC):
     """Abstract base class for prediction clients."""
     
-    def __init__(self):
+    def __init__(self, validation_mode: str = "fast"):
         """Initialize the prediction client."""
         self._initialize_client()
-        self.validator = NBAResponseValidator()
+        self.validator = NBAResponseValidator(validation_mode=validation_mode)
         self.last_validation_failure = None  # Store detailed validation failure info
     
     @property
@@ -610,12 +610,14 @@ class PredictionClientFactory:
     }
     
     @classmethod
-    def create_client(cls, platform_name: str) -> BasePredictionClient:
+    def create_client(cls, platform_name: str, validation_mode: str = None) -> BasePredictionClient:
         """
         Create a prediction client instance for the specified platform.
         
         Args:
             platform_name: Name of the platform ('openai' or 'gemini')
+            validation_mode: Validation mode ('fast', 'normal', 'strict'). 
+                           If None, uses VALIDATION_MODE env var or defaults to 'fast'
             
         Returns:
             BasePredictionClient: Client instance for the platform
@@ -628,7 +630,15 @@ class PredictionClientFactory:
             available = list(cls._clients.keys())
             raise ValueError(f"Unsupported platform '{platform_name}'. Available platforms: {available}")
         
-        return cls._clients[platform_key]()
+        # Determine validation mode
+        if validation_mode is None:
+            validation_mode = os.getenv("VALIDATION_MODE", "fast")
+        
+        if validation_mode not in ["fast", "normal", "strict"]:
+            print(f"⚠️ Invalid validation mode '{validation_mode}', defaulting to 'fast'")
+            validation_mode = "fast"
+        
+        return cls._clients[platform_key](validation_mode=validation_mode)
     
     @classmethod
     def get_available_platforms(cls) -> list:

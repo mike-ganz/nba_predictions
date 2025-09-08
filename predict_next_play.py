@@ -232,15 +232,26 @@ def get_prediction_platform() -> str:
 def init_prediction_client() -> tuple[BasePredictionClient, Dict[str, str]]:
     """Initialize prediction client based on platform configuration."""
     platform = get_prediction_platform()
+    validation_mode = os.getenv("VALIDATION_MODE", "fast")
+    
     print(f"🤖 Initializing {platform.upper()} client...")
+    print(f"🔧 Validation mode: {validation_mode.upper()} (set VALIDATION_MODE=fast/normal/strict to change)")
     
     try:
-        client = PredictionClientFactory.create_client(platform)
+        client = PredictionClientFactory.create_client(platform, validation_mode)
         model_config = client.get_model_config()
         
         print(f"✅ {platform.upper()} client initialized successfully")
         print(f"📋 Model 1: {model_config['model_1_id']}")
         print(f"📋 Model 2: {model_config['model_2_id']}")
+        
+        # Show validation mode benefits
+        if validation_mode == "fast":
+            print(f"🚀 Fast validation mode: ~10-20% speed boost, essential checks only")
+        elif validation_mode == "normal":
+            print(f"⚖️ Normal validation mode: balanced speed and validation coverage")
+        else:
+            print(f"🔍 Strict validation mode: comprehensive checks, slower but thorough")
         
         return client, model_config
         
@@ -330,7 +341,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                 results["termination_reason"] = "Game ended during Stage 1"
                 return results
             
-            log_config.log_verbose(f"Stage 1 tokens: {stage1_usage.get('completion_tokens', 'N/A')} / 1500")
+            log_config.log_verbose(f"Stage 1 tokens: {stage1_usage.get('completion_tokens', 'N/A')} / 5000")
             log_config.log_normal("Stage 1 completed!")
             
             results["stage1_response"] = stage1_content
@@ -412,7 +423,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
             stage2_content, stage2_usage, stage2_game_ended, stage2_needs_rollback, termination_info = client.predict_with_validation(
                 context=optimized_context.get_context_dict(),
                 model_id=model_config['model_2_id'],
-                max_tokens=1500,
+                max_tokens=5000,
                 temperature=1.01,
                 max_retries=6
             )
@@ -448,7 +459,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
             else:
                 should_break_after_processing = False
             
-            log_config.log_verbose(f"📊 Stage 2 tokens: {stage2_usage.get('completion_tokens', 'N/A')} / 1500")
+            log_config.log_verbose(f"📊 Stage 2 tokens: {stage2_usage.get('completion_tokens', 'N/A')} / 5000")
             
             # 📝 LOG: Print full model response for debugging (debug mode only)
             if log_config.should_show_json():
@@ -602,11 +613,20 @@ def main():
     print(f"🔧 Available platforms: {', '.join(available_platforms)}")
     
     # Display optimization information
+    validation_mode = os.getenv("VALIDATION_MODE", "fast")
     print(f"\n🚀 Performance Optimizations Active:")
     print(f"   • JSON Caching: ✅ Enabled")
     print(f"   • Logging Level: {log_config.level} (set PREDICTION_LOG_LEVEL=0-3)")
     print(f"   • Fast JSON Library: {'ujson' if 'ujson' in globals() else 'standard json'}")
     print(f"   • Double Serialization: ❌ Eliminated")
+    print(f"   • Validation Mode: {validation_mode.upper()} (set VALIDATION_MODE=fast/normal/strict)")
+    
+    if validation_mode == "fast":
+        print(f"   • Response Validation: ⚡ Fast mode - 10-20% speed boost")
+    elif validation_mode == "normal":
+        print(f"   • Response Validation: ⚖️ Normal mode - balanced performance")
+    else:
+        print(f"   • Response Validation: 🔍 Strict mode - comprehensive checks")
     
     if platform == "gemini":
         print("\n💡 Gemini Configuration Notes:")

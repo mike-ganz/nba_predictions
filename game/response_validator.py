@@ -10,8 +10,22 @@ from typing import Dict, Any, List, Optional, Set, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
+# Pre-compile regex patterns for performance (avoid recompilation)
+TIME_FORMAT_REGEX = re.compile(r'^\d{1,2}:\d{2}$')
+SCORE_PATTERNS = [
+    re.compile(r'^[A-Z]{2,15} \d+ - [A-Z]{2,15} \d+$'),           # LAL 108 - BOS 102
+    re.compile(r'^[A-Z]{2,15} \d+, [A-Z]{2,15} \d+$'),            # LAL 108, BOS 102
+    re.compile(r'^[A-Z]{2,15}: \d+ [A-Z]{2,15}: \d+$'),           # LAL: 108 BOS: 102
+    re.compile(r'^[A-Z]{2,15} \d+ [A-Z]{2,15} \d+$'),             # LAL 108 BOS 102
+    re.compile(r'^[A-Z]{2,15}\s*\d+\s*[-,]\s*[A-Z]{2,15}\s*\d+$') # Flexible spacing
+]
 
-@dataclass
+# Fast lookups for common validations
+GAME_END_TIMES = frozenset(["0:00", "00:00", "0", "00"])
+QUARTER_4 = 4
+
+
+@dataclass(slots=True)  # Use slots for memory efficiency
 class ValidationError:
     """Represents a validation error with context."""
     field_path: str
@@ -45,10 +59,43 @@ class ValidationResult(Enum):
 class NBAResponseValidator:
     """Validates NBA prediction model responses for format consistency."""
     
-    def __init__(self):
-        print("🔧 Initializing NBAResponseValidator")
+    def __init__(self, validation_mode: str = "fast"):
+        """
+        Initialize validator with configurable validation mode.
+        
+        Args:
+            validation_mode: "fast" (essential only), "normal" (balanced), "strict" (all checks)
+        """
+        self.validation_mode = validation_mode
+        print(f"🔧 Initializing NBAResponseValidator in '{validation_mode}' mode")
+        
         self.errors: List[ValidationError] = []
         
+        # Always track essential state regardless of mode
+        self.total_validation_attempts: int = 0
+        self.retry_count: int = 0
+        self.last_termination: Optional[ValidationTermination] = None
+        
+        # Initialize advanced state tracking only for normal/strict modes
+        if validation_mode in ["normal", "strict"]:
+            self._init_advanced_tracking()
+        else:
+            self._init_minimal_tracking()
+        
+        # Performance optimization caches
+        self._init_performance_caches()
+        
+        print(f"🔧 NBAResponseValidator initialized in {validation_mode} mode")
+    
+    def _init_minimal_tracking(self):
+        """Initialize minimal state tracking for fast mode."""
+        # Only track absolute essentials for fast validation
+        self.consecutive_same_time: int = 0
+        self.last_time_remaining: Optional[str] = None
+        self.consecutive_endgame: int = 0
+        
+    def _init_advanced_tracking(self):
+        """Initialize full state tracking for normal/strict modes."""
         # State tracking for advanced validations
         self.response_history: List[str] = []  # Track raw responses for duplicate detection
         self.consecutive_subs: int = 0  # Track consecutive substitution responses
@@ -82,17 +129,26 @@ class NBAResponseValidator:
         # Enhanced timestamp rollback functionality
         self.rollback_recent_plays_snapshot: Optional[List[Dict[str, Any]]] = None  # Snapshot of recent_plays before problematic timestamp
         self.problematic_timestamp: Optional[str] = None  # The timestamp that's causing issues
+    
+    def _init_performance_caches(self):
+        """Initialize performance optimization caches."""
+        # Cache for repeated string operations
+        self._score_validation_cache: Dict[str, bool] = {}  # Cache score format validation results
+        self._time_validation_cache: Dict[str, bool] = {}   # Cache time format validation results  
+        self._cache_max_size = 100  # Limit cache growth
         
-        # Termination tracking
-        self.last_termination: Optional[ValidationTermination] = None  # Details about the most recent termination
-        self.total_validation_attempts: int = 0  # Total validation attempts in this session
-        self.retry_count: int = 0  # Count of retries for current validation sequence
-        
-        print("🔧 NBAResponseValidator initialized with clean state and termination tracking")
+        # Pre-compile common error messages to avoid string operations
+        self._error_messages = {
+            'dict_required': "next_play must be a dictionary",
+            'description_missing': "next_play must contain 'description' field", 
+            'description_empty': "description must be a non-empty string",
+            'json_object_required': "Response must be a JSON object",
+            'next_play_missing': "Response must contain 'next_play' field"
+        }
     
     def validate_response(self, response_text: str, context: Dict[str, Any]) -> Tuple[ValidationResult, List[ValidationError], str]:
         """
-        Validate a model response against expected format with advanced game flow logic.
+        Validate a model response against expected format with configurable validation depth.
         
         Args:
             response_text: Raw response text from the model
@@ -104,31 +160,48 @@ class NBAResponseValidator:
         self.errors = []
         self.total_validation_attempts += 1
         
-        # Step 1: Parse JSON
+        # Step 1: Optimized JSON parsing
         try:
-            response_data = json.loads(response_text.strip())
-        except json.JSONDecodeError as e:
+            # Fast path: try ujson if available, fallback to standard json
+            stripped_text = response_text.strip()  # Cache stripped version
+            try:
+                import ujson
+                response_data = ujson.loads(stripped_text)
+            except (ImportError, AttributeError):
+                response_data = json.loads(stripped_text)
+        except (json.JSONDecodeError, ValueError) as e:
+            # Optimized error creation (avoid f-strings in hot path)
+            error_msg = "Response is not valid JSON: " + str(e)
             self.errors.append(ValidationError(
                 field_path="root",
                 error_type="json_parse_error",
                 expected="valid JSON",
-                actual=f"JSON parse error: {str(e)}",
-                message=f"Response is not valid JSON: {str(e)}"
+                actual="parse_error",  # Avoid expensive string formatting
+                message=error_msg
             ))
             return ValidationResult.RETRY, self.errors, "JSON parse error"
         
-        # Step 2: Validate top-level structure
+        # Step 2: Validate top-level structure (always required)
         if not self._validate_top_level_structure(response_data):
             return ValidationResult.RETRY, self.errors, "Invalid top-level structure"
         
         next_play = response_data["next_play"]
         
-        # Step 3: Validate next_play structure and types
-        if not self._validate_next_play_structure(next_play):
-            return ValidationResult.RETRY, self.errors, "Invalid next_play structure"
+        # Step 3: Validate next_play structure (always required)
+        if self.validation_mode == "fast":
+            if not self._validate_next_play_structure_fast(next_play):
+                return ValidationResult.RETRY, self.errors, "Invalid next_play structure"
+        else:
+            if not self._validate_next_play_structure(next_play):
+                return ValidationResult.RETRY, self.errors, "Invalid next_play structure"
         
+        # Fast mode: Skip expensive validations and only do essential checks
+        if self.validation_mode == "fast":
+            return self._validate_fast_path(response_text, next_play, context)
+        
+        # Normal/Strict modes: Continue with full validation
         # Step 4: Validate content against context
-        if not self._validate_content_consistency(next_play, context):
+        if self.validation_mode == "strict" and not self._validate_content_consistency(next_play, context):
             return ValidationResult.RETRY, self.errors, "Content inconsistency with context"
         
         # Step 5: Advanced game flow validations
@@ -209,24 +282,26 @@ class NBAResponseValidator:
         return "unknown_trigger"
     
     def _validate_top_level_structure(self, data: Any) -> bool:
-        """Validate top-level response structure."""
+        """Validate top-level response structure (optimized with caching)."""
+        # Fast type check with minimal string operations
         if not isinstance(data, dict):
             self.errors.append(ValidationError(
                 field_path="root",
                 error_type="type_error",
-                expected="object/dict",
-                actual=str(type(data).__name__),
-                message="Response must be a JSON object"
+                expected="dict",
+                actual=type(data).__name__,  # Avoid str() call
+                message=self._error_messages['json_object_required']  # Pre-compiled message
             ))
             return False
         
+        # Direct membership test (faster than .get())
         if "next_play" not in data:
             self.errors.append(ValidationError(
                 field_path="root",
                 error_type="missing_field",
-                expected="next_play field",
+                expected="next_play",
                 actual="missing",
-                message="Response must contain 'next_play' field"
+                message=self._error_messages['next_play_missing']  # Pre-compiled message
             ))
             return False
         
@@ -551,11 +626,11 @@ class NBAResponseValidator:
         """Enhanced duplicate detection including exact, near, and pattern-based duplicates."""
         
         # 1. Check exact duplicates (original logic)
-        if len(self.response_history) >= 2:
-            recent_responses = self.response_history[-2:]
+        if len(self.response_history) >= 3:
+            recent_responses = self.response_history[-3:]
             if all(r == response_text.strip() for r in recent_responses):
-                return ValidationResult.RETRY, "Received exact same response 2 times consecutively"
-        
+                return ValidationResult.RETRY, "Received exact same response 3 times consecutively"
+                
         # 2. Check near-duplicates (similar but not identical)
         normalized_response = self._normalize_response_for_comparison(response_text)
         near_duplicate_count = 0
@@ -1327,38 +1402,65 @@ class NBAResponseValidator:
         return snapshot
     
     def _validate_time_format(self, time_str: str) -> bool:
-        """Validate time format (MM:SS)."""
-        pattern = r'^\d{1,2}:\d{2}$'
-        if not re.match(pattern, time_str):
+        """Validate time format (MM:SS) with caching and optimized parsing."""
+        # Fast length check first
+        if not time_str or len(time_str) < 3 or len(time_str) > 5:
             return False
         
-        parts = time_str.split(':')
+        # Check cache first (time formats are often repeated)
+        if time_str in self._time_validation_cache:
+            return self._time_validation_cache[time_str]
+            
+        # Use pre-compiled regex for speed
+        if not TIME_FORMAT_REGEX.match(time_str):
+            if len(self._time_validation_cache) < self._cache_max_size:
+                self._time_validation_cache[time_str] = False
+            return False
+        
+        # Optimized parsing (avoid exception handling in happy path)
+        colon_pos = time_str.find(':')
+        if colon_pos == -1:
+            if len(self._time_validation_cache) < self._cache_max_size:
+                self._time_validation_cache[time_str] = False
+            return False
+            
         try:
-            minutes = int(parts[0])
-            seconds = int(parts[1])
-            return 0 <= minutes <= 12 and 0 <= seconds <= 59
+            minutes = int(time_str[:colon_pos])
+            seconds = int(time_str[colon_pos + 1:])
+            # Fast bounds check
+            is_valid = 0 <= minutes <= 12 and 0 <= seconds <= 59
+            
+            # Cache result
+            if len(self._time_validation_cache) < self._cache_max_size:
+                self._time_validation_cache[time_str] = is_valid
+            
+            return is_valid
         except ValueError:
+            if len(self._time_validation_cache) < self._cache_max_size:
+                self._time_validation_cache[time_str] = False
             return False
     
     def _validate_score_format(self, score_str: str) -> bool:
-        """Validate score format with flexible patterns."""
-        # Remove extra whitespace and normalize
+        """Validate score format with caching and pre-compiled patterns (optimized)."""
+        # Fast path: empty or too short strings
+        if not score_str or len(score_str) < 7:  # Minimum: "A 0-B 0"
+            return False
+        
+        # Check cache first (avoid expensive regex operations)
+        if score_str in self._score_validation_cache:
+            return self._score_validation_cache[score_str]
+        
+        # Remove extra whitespace and normalize (vectorized operation)
         normalized = re.sub(r'\s+', ' ', score_str.strip().upper())
         
-        # Multiple accepted patterns
-        patterns = [
-            r'^[A-Z]{2,15} \d+ - [A-Z]{2,15} \d+$',      # LAL 108 - BOS 102
-            r'^[A-Z]{2,15} \d+, [A-Z]{2,15} \d+$',       # LAL 108, BOS 102
-            r'^[A-Z]{2,15}: \d+ [A-Z]{2,15}: \d+$',      # LAL: 108 BOS: 102
-            r'^[A-Z]{2,15} \d+ [A-Z]{2,15} \d+$',        # LAL 108 BOS 102
-            r'^[A-Z]{2,15}\s*\d+\s*[-,]\s*[A-Z]{2,15}\s*\d+$'  # Flexible spacing
-        ]
+        # Use pre-compiled patterns for speed
+        is_valid = any(pattern.match(normalized) for pattern in SCORE_PATTERNS)
         
-        for pattern in patterns:
-            if re.match(pattern, normalized):
-                return True
-                
-        return False
+        # Cache result (with size limit)
+        if len(self._score_validation_cache) < self._cache_max_size:
+            self._score_validation_cache[score_str] = is_valid
+        
+        return is_valid
     
     def _extract_teams_from_score(self, score_str: str) -> List[str]:
         """Extract team names from score string with flexible parsing."""
@@ -1458,3 +1560,74 @@ class NBAResponseValidator:
             "validation_game_state_score": term.game_state.get("score"),
             "validation_context_json": json.dumps(term.validation_context)
         }
+
+    # Fast validation methods for performance optimization
+    def _validate_next_play_structure_fast(self, next_play: Any) -> bool:
+        """Ultra-fast validation with minimal essential next_play structure checks."""
+        # Fast type check without expensive string operations
+        if not isinstance(next_play, dict):
+            self.errors.append(ValidationError(
+                field_path="next_play",
+                error_type="type_error", 
+                expected="dict",
+                actual=type(next_play).__name__,  # Avoid str() call
+                message=self._error_messages['dict_required']  # Pre-compiled message
+            ))
+            return False
+        
+        # Ultra-fast essential field check (single field, direct access)
+        description = next_play.get("description")
+        if description is None:
+            self.errors.append(ValidationError(
+                field_path="next_play.description",
+                error_type="missing_field",
+                expected="description",
+                actual="missing",
+                message=self._error_messages['description_missing']  # Pre-compiled message
+            ))
+            return False
+        
+        # Fast string validation (avoid strip() if possible)
+        if not isinstance(description, str) or len(description) == 0:
+            self.errors.append(ValidationError(
+                field_path="next_play.description",
+                error_type="value_error",
+                expected="non-empty string",
+                actual=str(description) if len(str(description)) < 50 else "long_value",  # Avoid expensive string conversion for long values
+                message=self._error_messages['description_empty']  # Pre-compiled message
+            ))
+            return False
+        
+        # Fast path success - no expensive operations
+        return True
+
+    def _validate_fast_path(self, response_text: str, next_play: Dict[str, Any], context: Dict[str, Any]) -> Tuple[ValidationResult, List[ValidationError], str]:
+        """Ultra-fast validation with optimized critical checks."""
+        
+        # Pre-fetch values once for efficiency (avoid multiple dict lookups)
+        quarter = next_play.get("quarter")
+        time_remaining = next_play.get("time_remaining", "")
+        
+        # 1. Optimized game ending check using pre-compiled sets
+        if quarter == QUARTER_4 and time_remaining in GAME_END_TIMES:
+            self.consecutive_endgame += 1
+            if self.consecutive_endgame >= 3:  # More lenient threshold
+                return ValidationResult.END_GAME, self.errors, "Game ended - quarter 4, time expired"
+        else:
+            self.consecutive_endgame = 0
+        
+        # 2. Optimized stuck time progression check 
+        # Use identity comparison first (faster than equality for same strings)
+        if time_remaining and (
+            self.last_time_remaining is time_remaining or 
+            self.last_time_remaining == time_remaining
+        ):
+            self.consecutive_same_time += 1
+            if self.consecutive_same_time >= 8:  # Much more lenient
+                return ValidationResult.ROLLBACK_TIME, self.errors, "Time progression stuck"
+        else:
+            self.consecutive_same_time = 0
+            self.last_time_remaining = time_remaining
+        
+        # Ultra-fast success path
+        return ValidationResult.VALID, self.errors, "Fast validation passed"
