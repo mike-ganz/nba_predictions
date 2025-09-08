@@ -197,20 +197,6 @@ def show_game_summary(db_path: str = "enhanced_simulation_results.db"):
                     except (ValueError, IndexError):
                         continue
     
-    if all_score_diffs:
-        avg_overall_diff = round(sum(all_score_diffs) / len(all_score_diffs), 1)
-        median_overall_diff = round(pd.Series(all_score_diffs).median(), 1)
-        median_overall_away = round(pd.Series(all_away_scores).median(), 1)
-        median_overall_home = round(pd.Series(all_home_scores).median(), 1)
-        overall_home_win_pct = round((total_home_wins / total_games_with_scores) * 100, 1)
-        
-        print(f"\n🏈 Score Statistics Across All Games:")
-        print(f"   📈 Avg Score Difference: {avg_overall_diff:+} (Away - Home)")
-        print(f"   📊 Median Score Difference: {median_overall_diff:+}")
-        print(f"   🚗 Median Away Score: {median_overall_away}")
-        print(f"   🏠 Median Home Score: {median_overall_home}")
-        print(f"   🎯 Home Team Win Rate: {overall_home_win_pct}% ({total_home_wins}/{total_games_with_scores} games)")
-    
     return display_df
 
 def show_run_timeline(db_path: str = "enhanced_simulation_results.db"):
