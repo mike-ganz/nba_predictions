@@ -44,7 +44,7 @@ class Config:
         """Get the training data directory."""
         return os.path.join(self.data_dir, "training")
     
-    def get_play_by_play_file_path(self, season_year: Optional[str] = None) -> str:
+                def get_play_by_play_file_path(self, season_year: Optional[str] = None) -> str:
         """
         Get the file path for play-by-play data for a specific season.
         
@@ -100,7 +100,7 @@ class Config:
         except (ValueError, IndexError):
             return "2022-2023"  # Default fallback
     
-                    def _get_file_mapping(self) -> Dict[str, str]:
+                def _get_file_mapping(self) -> Dict[str, str]:
         """Get mapping of season years to file paths."""
         
         # Check if running on GCP (environment variable set)
@@ -207,6 +207,5 @@ TEAM_ABBREVIATIONS = {
 DEFAULT_MIN_GAMES_THRESHOLD = 10  # Keep high threshold for data quality, but cache prior season data
 DEFAULT_N_TOTAL_PLAYS = 20
 FAST_TEST_MODE_THRESHOLD = 100  # Use dummy PCA values below this many rows
-
 
 

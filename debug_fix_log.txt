@@ -1,0 +1,4 @@
+  File "/home/micha/orchestrator.py", line 470
+    """Run a single simulation and return results with correct score tracking."""
+    ^
+IndentationError: expected an indented block after function definition on line 469

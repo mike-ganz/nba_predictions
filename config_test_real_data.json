@@ -1,0 +1,17 @@
+{
+  "season_year": "2024-2025",
+  "games": [
+    "22400530",
+    "22400531",
+    "22400532"
+  ],
+  "runs_per_game": 5,
+  "max_iterations_per_run": 800,
+  "max_threads": 2,
+  "skip_stage1": false,
+  "platform": "gemini",
+  "output_db": "test_real_data.db",
+  "log_level": "INFO",
+  "resume_on_error": true,
+  "timeout_minutes": 30
+}

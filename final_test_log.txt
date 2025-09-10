@@ -1,0 +1,6 @@
+✅ Using ujson for faster JSON operations
+📝 Normal logging mode
+Traceback (most recent call last):
+  File "/home/micha/orchestrator.py", line 36, in <module>
+    from config.settings import config, set_season_year
+ImportError: cannot import name 'set_season_year' from 'config.settings' (/home/micha/config/settings.py)

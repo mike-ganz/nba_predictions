@@ -1,0 +1,13 @@
+﻿{
+  "season_year": "2023-2024",
+  "games": ["22200001", "22200002", "22200003"],
+  "runs_per_game": 8,
+  "max_iterations_per_run": 1000,
+  "max_threads": 4,
+  "skip_stage1": true,
+  "platform": "gemini",
+  "output_db": "multithreaded_simulation_results.db",
+  "log_level": "INFO",
+  "resume_on_error": true,
+  "timeout_minutes": 30
+}

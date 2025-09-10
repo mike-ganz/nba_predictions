@@ -286,7 +286,7 @@ def load_actual_game_results():
         print(f"❌ Error loading actual results: {e}")
         return pd.DataFrame()
 
-def get_simulation_betting_recommendations(actual_results_df, db_path="enhanced_simulation_results.db"):
+def get_simulation_betting_recommendations(actual_results_df, db_path="enhanced_simulation_results_current.db"):
     """
     Determine betting recommendations based on simulation results using new logic:
     

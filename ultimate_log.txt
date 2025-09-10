@@ -1,0 +1,454 @@
+2025-09-10 20:11:12,727 - NBA_Orchestrator - INFO - Starting multithreaded orchestration: 1 total simulations
+2025-09-10 20:11:12,727 - NBA_Orchestrator - INFO -    Games: ['22400530']
+2025-09-10 20:11:12,727 - NBA_Orchestrator - INFO -    Runs per game: 1
+2025-09-10 20:11:12,727 - NBA_Orchestrator - INFO -    Max threads: 1
+2025-09-10 20:11:12,727 - NBA_Orchestrator - INFO -    Season: 2024-2025
+2025-09-10 20:11:12,727 - NBA_Orchestrator - INFO -    Platform: gemini
+2025-09-10 20:11:12,729 - NBA_Orchestrator - INFO - 📊 Submitted 1 tasks to thread pool
+✅ Using ujson for faster JSON operations
+📝 Normal logging mode
+📥 Loading play-by-play data for 2024-2025...
+Loading play-by-play data for season 2024-2025...
+Loaded 617280 rows of play-by-play data
+✅ Loaded 617280 plays
+Season year set to: 2024-2025
+🔨 Building context for game 22400530 from 460 plays
+📅 Game date: 2025-01-10
+🏟️ Determined: WAS @ CHI (away @ home)
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Jordan Poole: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Jordan Poole: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Kyle Kuzma: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Kyle Kuzma: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Alexandre Sarr: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Alexandre Sarr: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Bilal Coulibaly: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Bilal Coulibaly: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Carlton Carrington: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Carlton Carrington: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Jonas Valanciunas: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Jonas Valanciunas: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Kyshawn George: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Kyshawn George: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Justin Champagnie: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Justin Champagnie: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Jared Butler: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Jared Butler: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Corey Kispert: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Corey Kispert: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Richaun Holmes: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Richaun Holmes: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Johnny Davis: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Johnny Davis: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Patrick Baldwin Jr.: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Patrick Baldwin Jr.: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Anthony Gill: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Anthony Gill: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Alexandre Sarr: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Alexandre Sarr: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Nikola Vucevic: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Nikola Vucevic: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Zach LaVine: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Zach LaVine: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Josh Giddey: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Josh Giddey: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Patrick Williams: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Patrick Williams: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Coby White: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Coby White: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Lonzo Ball: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Lonzo Ball: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Julian Phillips: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Julian Phillips: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Jalen Smith: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Jalen Smith: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Dalen Terry: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Dalen Terry: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Talen Horton-Tucker: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Talen Horton-Tucker: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Matas Buzelis: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Matas Buzelis: float() argument must be a string or a real number, not 'NoneType'
+🚀 Calculating ALL PCA scores for 2025-01-10...
+📊 Loading ALL player stats for 2025-01-10...
+📊 Loading 2024-2025 data to get distinct players...
+Warning: Could not get PCA scores for Jevon Carter: Data file not found: data/player_boxscores/historical/NBA-2024-2025-Player-BoxScore-Dataset.xlsx
+⚠️ Could not get PCA score for Jevon Carter: float() argument must be a string or a real number, not 'NoneType'
+🎯 Building clean context for first_N_plays mode (no recent_plays)
+✅ Built clean context: WAS @ CHI, ready for Stage 1
+🤖 Initializing GEMINI client...
+🔧 Validation mode: FAST (set VALIDATION_MODE=fast/normal/strict to change)
+🔧 Initializing NBAResponseValidator in 'fast' mode
+🔧 NBAResponseValidator initialized in fast mode
+✅ GEMINI client initialized successfully
+📋 Model 1: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/8359264749073989632
+📋 Model 2: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🚀 Fast validation mode: ~10-20% speed boost, essential checks only
+🚀 OptimizedGameContext initialized - base context cached (3290 chars)
+
+STAGE 1: Getting initial next_plays from first model...
+Using clean context (no recent_plays) - matching first_N_plays training mode
+Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/8359264749073989632
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+Stage 1 validation passed: 20 plays received
+Stage 1 completed!
+✅ Added 20 recent_plays to context
+
+🔄 Starting 20 rolling iterations...
+
+--- ITERATION 1/20 ---
+📡 Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🏀 Game State: Q1 09:51 | WAS 5 - CHI 7
+📋 Recent plays context:
+   1. [10:14] A. Sarr Free Throw 1 of 1
+   2. [10:04] Vucevic 25' 3PT Jump Shot
+   3. [09:51] Giddey S.FOUL on Alexandre Sarr
+   4. [09:51] MISS A. Sarr Free Throw 1 of 2
+   5. [09:51] Wizards Rebound
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+✅ NEW PLAY: A. Sarr Free Throw 2 of 2
+🏀 Updated State: Q1 09:51 | WAS 6 - CHI 7
+
+--- ITERATION 2/20 ---
+📡 Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🏀 Game State: Q1 09:51 | WAS 6 - CHI 7
+📋 Recent plays context:
+   1. [10:04] Vucevic 25' 3PT Jump Shot
+   2. [09:51] Giddey S.FOUL on Alexandre Sarr
+   3. [09:51] MISS A. Sarr Free Throw 1 of 2
+   4. [09:51] Wizards Rebound
+   5. [09:51] A. Sarr Free Throw 2 of 2
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+✅ NEW PLAY: MISS Giddey 4' Driving Finger Roll Layup
+🏀 Updated State: Q1 09:43 | WAS 6 - CHI 7
+
+--- ITERATION 3/20 ---
+📡 Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🏀 Game State: Q1 09:43 | WAS 6 - CHI 7
+📋 Recent plays context:
+   1. [09:51] Giddey S.FOUL on Alexandre Sarr
+   2. [09:51] MISS A. Sarr Free Throw 1 of 2
+   3. [09:51] Wizards Rebound
+   4. [09:51] A. Sarr Free Throw 2 of 2
+   5. [09:43] MISS Giddey 4' Driving Finger Roll Layup
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+✅ NEW PLAY: BULLS OFF.REBOUND
+🏀 Updated State: Q1 09:43 | WAS 6 - CHI 7
+
+--- ITERATION 4/20 ---
+📡 Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🏀 Game State: Q1 09:43 | WAS 6 - CHI 7
+📋 Recent plays context:
+   1. [09:51] MISS A. Sarr Free Throw 1 of 2
+   2. [09:51] Wizards Rebound
+   3. [09:51] A. Sarr Free Throw 2 of 2
+   4. [09:43] MISS Giddey 4' Driving Finger Roll Layup
+   5. [09:43] BULLS OFF.REBOUND
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+✅ NEW PLAY: Kuzma S.FOUL on Patrick Williams
+🏀 Updated State: Q1 09:43 | WAS 6 - CHI 7
+
+--- ITERATION 5/20 ---
+📡 Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🏀 Game State: Q1 09:43 | WAS 6 - CHI 7
+📋 Recent plays context:
+   1. [09:51] Wizards Rebound
+   2. [09:51] A. Sarr Free Throw 2 of 2
+   3. [09:43] MISS Giddey 4' Driving Finger Roll Layup
+   4. [09:43] BULLS OFF.REBOUND
+   5. [09:43] Kuzma S.FOUL on Patrick Williams
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+✅ NEW PLAY: Williams Free Throw 1 of 1
+🏀 Updated State: Q1 09:43 | WAS 6 - CHI 8
+
+--- ITERATION 6/20 ---
+📡 Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🏀 Game State: Q1 09:43 | WAS 6 - CHI 8
+📋 Recent plays context:
+   1. [09:51] A. Sarr Free Throw 2 of 2
+   2. [09:43] MISS Giddey 4' Driving Finger Roll Layup
+   3. [09:43] BULLS OFF.REBOUND
+   4. [09:43] Kuzma S.FOUL on Patrick Williams
+   5. [09:43] Williams Free Throw 1 of 1
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+✅ NEW PLAY: Coulibaly 6' Driving Floating Jump Shot
+🏀 Updated State: Q1 09:32 | WAS 8 - CHI 8
+🎯 SCORING PLAY: WAS +2 points!
+
+--- ITERATION 7/20 ---
+📡 Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🏀 Game State: Q1 09:32 | WAS 8 - CHI 8
+📋 Recent plays context:
+   1. [09:43] MISS Giddey 4' Driving Finger Roll Layup
+   2. [09:43] BULLS OFF.REBOUND
+   3. [09:43] Kuzma S.FOUL on Patrick Williams
+   4. [09:43] Williams Free Throw 1 of 1
+   5. [09:32] Coulibaly 6' Driving Floating Jump Shot
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+✅ NEW PLAY: Sarr P.FOUL on Josh Giddey
+🏀 Updated State: Q1 09:17 | WAS 8 - CHI 8
+
+--- ITERATION 8/20 ---
+📡 Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🏀 Game State: Q1 09:17 | WAS 8 - CHI 8
+📋 Recent plays context:
+   1. [09:43] BULLS OFF.REBOUND
+   2. [09:43] Kuzma S.FOUL on Patrick Williams
+   3. [09:43] Williams Free Throw 1 of 1
+   4. [09:32] Coulibaly 6' Driving Floating Jump Shot
+   5. [09:17] Sarr P.FOUL on Josh Giddey
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+✅ NEW PLAY: Giddey Free Throw 1 of 3
+🏀 Updated State: Q1 09:17 | WAS 8 - CHI 9
+
+--- ITERATION 9/20 ---
+📡 Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🏀 Game State: Q1 09:17 | WAS 8 - CHI 9
+📋 Recent plays context:
+   1. [09:43] Kuzma S.FOUL on Patrick Williams
+   2. [09:43] Williams Free Throw 1 of 1
+   3. [09:32] Coulibaly 6' Driving Floating Jump Shot
+   4. [09:17] Sarr P.FOUL on Josh Giddey
+   5. [09:17] Giddey Free Throw 1 of 3
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+✅ NEW PLAY: Giddey Free Throw 2 of 3
+🏀 Updated State: Q1 09:17 | WAS 8 - CHI 10
+
+--- ITERATION 10/20 ---
+📡 Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🏀 Game State: Q1 09:17 | WAS 8 - CHI 10
+📋 Recent plays context:
+   1. [09:43] Williams Free Throw 1 of 1
+   2. [09:32] Coulibaly 6' Driving Floating Jump Shot
+   3. [09:17] Sarr P.FOUL on Josh Giddey
+   4. [09:17] Giddey Free Throw 1 of 3
+   5. [09:17] Giddey Free Throw 2 of 3
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+✅ NEW PLAY: Giddey Free Throw 3 of 3
+🏀 Updated State: Q1 09:17 | WAS 8 - CHI 11
+
+--- ITERATION 11/20 ---
+📡 Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🏀 Game State: Q1 09:17 | WAS 8 - CHI 11
+📋 Recent plays context:
+   1. [09:32] Coulibaly 6' Driving Floating Jump Shot
+   2. [09:17] Sarr P.FOUL on Josh Giddey
+   3. [09:17] Giddey Free Throw 1 of 3
+   4. [09:17] Giddey Free Throw 2 of 3
+   5. [09:17] Giddey Free Throw 3 of 3
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+✅ NEW PLAY: Giddey STEAL : Poole Bad Pass Turnover
+🏀 Updated State: Q1 08:53 | WAS 8 - CHI 11
+
+--- ITERATION 12/20 ---
+📡 Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🏀 Game State: Q1 08:53 | WAS 8 - CHI 11
+📋 Recent plays context:
+   1. [09:17] Sarr P.FOUL on Josh Giddey
+   2. [09:17] Giddey Free Throw 1 of 3
+   3. [09:17] Giddey Free Throw 2 of 3
+   4. [09:17] Giddey Free Throw 3 of 3
+   5. [08:53] Giddey STEAL : Poole Bad Pass Turnover
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+✅ NEW PLAY: MISS Giddey 6' Running Finger Roll Layup
+🏀 Updated State: Q1 08:52 | WAS 8 - CHI 11
+
+--- ITERATION 13/20 ---
+📡 Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🏀 Game State: Q1 08:52 | WAS 8 - CHI 11
+📋 Recent plays context:
+   1. [09:17] Giddey Free Throw 1 of 3
+   2. [09:17] Giddey Free Throw 2 of 3
+   3. [09:17] Giddey Free Throw 3 of 3
+   4. [08:53] Giddey STEAL : Poole Bad Pass Turnover
+   5. [08:52] MISS Giddey 6' Running Finger Roll Layup
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+✅ NEW PLAY: BULLS OFF.REBOUND
+🏀 Updated State: Q1 08:51 | WAS 8 - CHI 11
+
+--- ITERATION 14/20 ---
+📡 Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🏀 Game State: Q1 08:51 | WAS 8 - CHI 11
+📋 Recent plays context:
+   1. [09:17] Giddey Free Throw 2 of 3
+   2. [09:17] Giddey Free Throw 3 of 3
+   3. [08:53] Giddey STEAL : Poole Bad Pass Turnover
+   4. [08:52] MISS Giddey 6' Running Finger Roll Layup
+   5. [08:51] BULLS OFF.REBOUND
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+✅ NEW PLAY: Vucevic Putback Layup
+🏀 Updated State: Q1 08:51 | WAS 8 - CHI 13
+🎯 SCORING PLAY: CHI +2 points!
+
+--- ITERATION 15/20 ---
+📡 Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🏀 Game State: Q1 08:51 | WAS 8 - CHI 13
+📋 Recent plays context:
+   1. [09:17] Giddey Free Throw 3 of 3
+   2. [08:53] Giddey STEAL : Poole Bad Pass Turnover
+   3. [08:52] MISS Giddey 6' Running Finger Roll Layup
+   4. [08:51] BULLS OFF.REBOUND
+   5. [08:51] Vucevic Putback Layup
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+✅ NEW PLAY: Giddey STEAL : Poole Bad Pass Turnover
+🏀 Updated State: Q1 08:33 | WAS 8 - CHI 13
+
+--- ITERATION 16/20 ---
+📡 Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🏀 Game State: Q1 08:33 | WAS 8 - CHI 13
+📋 Recent plays context:
+   1. [08:53] Giddey STEAL : Poole Bad Pass Turnover
+   2. [08:52] MISS Giddey 6' Running Finger Roll Layup
+   3. [08:51] BULLS OFF.REBOUND
+   4. [08:51] Vucevic Putback Layup
+   5. [08:33] Giddey STEAL : Poole Bad Pass Turnover
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+✅ NEW PLAY: Sarr S.FOUL on Josh Giddey
+🏀 Updated State: Q1 08:17 | WAS 8 - CHI 15
+
+--- ITERATION 17/20 ---
+📡 Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🏀 Game State: Q1 08:17 | WAS 8 - CHI 15
+📋 Recent plays context:
+   1. [08:52] MISS Giddey 6' Running Finger Roll Layup
+   2. [08:51] BULLS OFF.REBOUND
+   3. [08:51] Vucevic Putback Layup
+   4. [08:33] Giddey STEAL : Poole Bad Pass Turnover
+   5. [08:17] Sarr S.FOUL on Josh Giddey
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+✅ NEW PLAY: Giddey Free Throw 1 of 3
+🏀 Updated State: Q1 08:17 | WAS 8 - CHI 16
+
+--- ITERATION 18/20 ---
+📡 Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🏀 Game State: Q1 08:17 | WAS 8 - CHI 16
+📋 Recent plays context:
+   1. [08:51] BULLS OFF.REBOUND
+   2. [08:51] Vucevic Putback Layup
+   3. [08:33] Giddey STEAL : Poole Bad Pass Turnover
+   4. [08:17] Sarr S.FOUL on Josh Giddey
+   5. [08:17] Giddey Free Throw 1 of 3
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+✅ NEW PLAY: Giddey Free Throw 2 of 3
+🏀 Updated State: Q1 08:17 | WAS 8 - CHI 17
+
+--- ITERATION 19/20 ---
+📡 Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🏀 Game State: Q1 08:17 | WAS 8 - CHI 17
+📋 Recent plays context:
+   1. [08:51] Vucevic Putback Layup
+   2. [08:33] Giddey STEAL : Poole Bad Pass Turnover
+   3. [08:17] Sarr S.FOUL on Josh Giddey
+   4. [08:17] Giddey Free Throw 1 of 3
+   5. [08:17] Giddey Free Throw 2 of 3
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+✅ NEW PLAY: Wizards Timeout: Regular
+🏀 Updated State: Q1 08:17 | WAS 8 - CHI 17
+
+--- ITERATION 20/20 ---
+📡 Sending to model: projects/utopian-outlook-470922-q2/locations/us-central1/endpoints/4062830704562536448
+🏀 Game State: Q1 08:17 | WAS 8 - CHI 17
+📋 Recent plays context:
+   1. [08:33] Giddey STEAL : Poole Bad Pass Turnover
+   2. [08:17] Sarr S.FOUL on Josh Giddey
+   3. [08:17] Giddey Free Throw 1 of 3
+   4. [08:17] Giddey Free Throw 2 of 3
+   5. [08:17] Wizards Timeout: Regular
+🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)
+✅ NEW PLAY: Giddey Free Throw 3 of 3
+2025-09-10 20:11:44,048 - NBA_Orchestrator - INFO -    ✅ 22400530_2024-2025_0001_1757535072728: 20/20 predictions, 10.0% scoring (100.0%)
+2025-09-10 20:11:44,048 - NBA_Orchestrator - INFO - 
+🎯 Multithreaded Orchestration Complete!
+2025-09-10 20:11:44,048 - NBA_Orchestrator - INFO -    Completed: 1/1 (100.0%)
+2025-09-10 20:11:44,048 - NBA_Orchestrator - INFO -    Failed: 0
+2025-09-10 20:11:44,049 - NBA_Orchestrator - INFO -    Total time: 0.5 minutes
+2025-09-10 20:11:44,049 - NBA_Orchestrator - INFO -    Avg per simulation: 31.3 seconds
+2025-09-10 20:11:44,049 - NBA_Orchestrator - INFO -    Results saved to: minimal_test.db
+🏀 Updated State: Q1 08:17 | WAS 8 - CHI 18
+
+✅ Rolling sequence completed! 20 iterations done.
+
+📈 SCORING SUMMARY:
+   🏀 Scoring plays: 2/20
+   📋 Non-scoring plays: 18/20
+   📊 Scoring rate: 10.0%
+
+📊 Final Analysis:
+Success rate: 100.0%
+Average scoring rate: 10.0%
