@@ -21,6 +21,16 @@ from pathlib import Path
 plt.style.use('default')
 sns.set_palette("husl")
 
+# ================================================================================
+# DATABASE CONFIGURATION - Change database path here only
+# ================================================================================
+# To use a different database file, simply change the path below:
+# Examples:
+#   DATABASE_PATH = "enhanced_simulation_results_20250915_113427.db"  # Specific timestamp
+#   DATABASE_PATH = "enhanced_simulation_results_latest.db"           # Latest results
+#   DATABASE_PATH = "enhanced_simulation_results_current.db"          # Current results
+DATABASE_PATH = "enhanced_simulation_results_20250915_114707.db"
+
 # Define helper functions needed for the table display
 def load_actual_game_results():
     """Load actual game results from CSV file."""
@@ -36,7 +46,7 @@ def load_actual_game_results():
         return pd.DataFrame()
 
 # Get the simulation summary first, but delay table display until after betting functions are defined
-summary_df = show_game_summary()
+summary_df = show_game_summary(DATABASE_PATH)
 
 # ================================================================================
 # BETTING ANALYSIS INTEGRATION
@@ -286,7 +296,7 @@ def load_actual_game_results():
         print(f"❌ Error loading actual results: {e}")
         return pd.DataFrame()
 
-def get_simulation_betting_recommendations(actual_results_df, db_path="enhanced_simulation_results_current.db"):
+def get_simulation_betting_recommendations(actual_results_df, db_path=DATABASE_PATH):
     """
     Determine betting recommendations based on simulation results using new logic:
     

@@ -1,8 +1,5 @@
 #!/usr/bin/env pwsh
-# NBA Predictions GCP Monitoring Script - Pure PowerShell Syntax
-
-Write-Host "NBA Predictions GCP Monitoring Dashboard" -ForegroundColor Green
-Write-Host "=" * 60
+# NBA Predictions GCP Monitoring Script - PURE PowerShell (no bash syntax)
 
 function Get-VMStatus {
     Write-Host "`n🖥️  VM Status:" -ForegroundColor Cyan
@@ -21,7 +18,8 @@ function Get-VMStatus {
 function Get-ProcessStatus {
     Write-Host "`n🔄 Process Status:" -ForegroundColor Cyan
     try {
-        $processes = gcloud compute ssh nba-orchestrator --zone=us-central1-a --project=utopian-outlook-470922-q2 --ssh-flag="-batch" --command="ps aux | grep enhanced_orchestrator | grep -v grep" 2>$null
+        $cmd = "ps aux | grep enhanced_orchestrator | grep -v grep"
+        $processes = gcloud compute ssh nba-orchestrator --zone=us-central1-a --project=utopian-outlook-470922-q2 --ssh-flag="-batch" --command=$cmd 2>$null
         
         if ($processes -and $processes.Trim()) {
             Write-Host "   ✅ Enhanced orchestrator running:" -ForegroundColor Green
@@ -46,21 +44,24 @@ function Get-ProcessStatus {
 function Get-RecentLogs {
     Write-Host "`n📋 Recent Log Entries:" -ForegroundColor Cyan
     try {
-        # Try each log file individually 
-        $logFiles = @("big_run_fixed.log", "big_run_multithreaded.log", "big_run_simulation.log", "orchestrator_gcp.log")
+        # Try each log file individually using separate commands
+        $logFiles = @("big_run_fixed.log", "big_run_multithreaded.log", "big_run_simulation.log")
         $foundLog = $false
         
         foreach ($logFile in $logFiles) {
-            # First check if file exists
-            $fileExists = gcloud compute ssh nba-orchestrator --zone=us-central1-a --project=utopian-outlook-470922-q2 --ssh-flag="-batch" --command="test -f $logFile && echo 'exists' || echo 'missing'" 2>$null
+            # Check if file exists (separate command)
+            $testCmd = "test -f $logFile"
+            $fileExists = gcloud compute ssh nba-orchestrator --zone=us-central1-a --project=utopian-outlook-470922-q2 --ssh-flag="-batch" --command=$testCmd 2>$null
+            $exitCode = $LASTEXITCODE
             
-            if ($fileExists -match "exists") {
-                # File exists, get the logs
-                $logs = gcloud compute ssh nba-orchestrator --zone=us-central1-a --project=utopian-outlook-470922-q2 --ssh-flag="-batch" --command="tail -10 $logFile | strings | grep -E 'ITERATION|NEW PLAY|Game State|ERROR|threads'" 2>$null
+            if ($exitCode -eq 0) {
+                # File exists, get the logs (separate command)
+                $logCmd = "tail -10 $logFile | strings | grep -E 'ITERATION|NEW PLAY|Game State|ERROR|threads' | tail -5"
+                $logs = gcloud compute ssh nba-orchestrator --zone=us-central1-a --project=utopian-outlook-470922-q2 --ssh-flag="-batch" --command=$logCmd 2>$null
                 
                 if ($logs -and $logs.Trim()) {
-                    Write-Host "   📄 From $logFile (most recent):" -ForegroundColor Yellow
-                    $logs -split "`n" | Select-Object -Last 5 | ForEach-Object {
+                    Write-Host "   📄 From $logFile:" -ForegroundColor Yellow
+                    $logs -split "`n" | ForEach-Object {
                         if ($_ -and $_.Trim()) {
                             Write-Host "     $_" -ForegroundColor White
                         }
@@ -75,14 +76,15 @@ function Get-RecentLogs {
             Write-Host "   ⚠️  No recent log entries found" -ForegroundColor Yellow
         }
     } catch {
-        Write-Host "   ❌ Cannot retrieve logs" -ForegroundColor Red
+        Write-Host "   ❌ Cannot retrieve logs: $_" -ForegroundColor Red
     }
 }
 
 function Get-DatabaseStats {
     Write-Host "`n🗄️  Database Status:" -ForegroundColor Cyan
     try {
-        $dbFiles = gcloud compute ssh nba-orchestrator --zone=us-central1-a --project=utopian-outlook-470922-q2 --ssh-flag="-batch" --command="ls -lh *.db 2>/dev/null" 2>$null
+        $dbCmd = "ls -lh *.db 2>/dev/null"
+        $dbFiles = gcloud compute ssh nba-orchestrator --zone=us-central1-a --project=utopian-outlook-470922-q2 --ssh-flag="-batch" --command=$dbCmd 2>$null
         
         if ($dbFiles -and $dbFiles.Trim()) {
             Write-Host "   📊 Database files:" -ForegroundColor Green
@@ -98,20 +100,41 @@ function Get-DatabaseStats {
             Write-Host "   ⚠️  No database files found" -ForegroundColor Yellow
         }
     } catch {
-        Write-Host "   ❌ Cannot check database files" -ForegroundColor Red
+        Write-Host "   ❌ Cannot check database files: $_" -ForegroundColor Red
     }
 }
 
 function Show-Menu {
     Write-Host "`n🎮 Options:" -ForegroundColor Cyan
     Write-Host "   r - Refresh dashboard"
-    Write-Host "   l - View live logs (tail -f)"
+    Write-Host "   l - View live logs"
     Write-Host "   s - SSH to VM"
     Write-Host "   d - Download latest database"
     Write-Host "   q - Quit"
     
     $choice = Read-Host "`nEnter choice (r/l/s/d/q)"
     return $choice
+}
+
+function Start-LiveLogs {
+    Write-Host "`nStarting live log view (Ctrl+C to return)..." -ForegroundColor Yellow
+    Start-Sleep -Seconds 1
+    
+    # Try each log file until we find one
+    $logFiles = @("big_run_fixed.log", "big_run_multithreaded.log", "big_run_simulation.log")
+    
+    foreach ($logFile in $logFiles) {
+        $testCmd = "test -f $logFile"
+        gcloud compute ssh nba-orchestrator --zone=us-central1-a --project=utopian-outlook-470922-q2 --ssh-flag="-batch" --command=$testCmd 2>$null
+        
+        if ($LASTEXITCODE -eq 0) {
+            $tailCmd = "tail -f $logFile"
+            gcloud compute ssh nba-orchestrator --zone=us-central1-a --project=utopian-outlook-470922-q2 --ssh-flag="-batch" --command=$tailCmd
+            return
+        }
+    }
+    
+    Write-Host "No log files found to monitor" -ForegroundColor Red
 }
 
 # Main monitoring loop
@@ -130,11 +153,7 @@ do {
     
     switch ($choice) {
         "l" {
-            Write-Host "`nStarting live log view (Ctrl+C to return)..." -ForegroundColor Yellow
-            Start-Sleep -Seconds 1
-            # Try different log files in order of preference
-            $logCommand = "tail -f big_run_fixed.log 2>/dev/null || tail -f big_run_multithreaded.log 2>/dev/null || tail -f big_run_simulation.log 2>/dev/null || echo 'No log files found'"
-            gcloud compute ssh nba-orchestrator --zone=us-central1-a --project=utopian-outlook-470922-q2 --ssh-flag="-batch" --command="$logCommand"
+            Start-LiveLogs
         }
         "s" {
             Write-Host "`nConnecting to VM..." -ForegroundColor Yellow
@@ -142,7 +161,6 @@ do {
         }
         "d" {
             Write-Host "`nDownloading latest database..." -ForegroundColor Yellow
-            # Try to download the most recent database
             $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
             gcloud compute scp "nba-orchestrator:enhanced_simulation_results_multithreaded.db" "./enhanced_simulation_results_$timestamp.db" --zone=us-central1-a --project=utopian-outlook-470922-q2 --scp-flag="-batch"
             Write-Host "Download completed as enhanced_simulation_results_$timestamp.db!" -ForegroundColor Green
@@ -153,7 +171,6 @@ do {
             break
         }
         default {
-            # Default is refresh (including "r")
             Start-Sleep -Seconds 1
         }
     }
