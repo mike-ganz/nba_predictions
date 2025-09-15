@@ -29,7 +29,164 @@ sns.set_palette("husl")
 #   DATABASE_PATH = "enhanced_simulation_results_20250915_113427.db"  # Specific timestamp
 #   DATABASE_PATH = "enhanced_simulation_results_latest.db"           # Latest results
 #   DATABASE_PATH = "enhanced_simulation_results_current.db"          # Current results
-DATABASE_PATH = "enhanced_simulation_results_20250915_114707.db"
+DATABASE_PATH = "enhanced_simulation_results_current.db"
+
+# Historical database path (contains previous runs to include in analysis)
+HISTORICAL_DATABASE_PATH = r"C:\Users\micha\nba_predictions\enhanced_simulation_results.db"
+
+# Define helper functions needed for combining databases
+def get_combined_raw_simulation_data(db_paths=[DATABASE_PATH, HISTORICAL_DATABASE_PATH]):
+    """
+    Get raw simulation data from multiple databases and combine before grouping.
+    This prevents duplicate games when the same game exists in multiple databases.
+    
+    Args:
+        db_paths: List of database paths to query
+    
+    Returns:
+        Combined pandas DataFrame with all raw simulation records
+    """
+    combined_data = []
+    
+    for db_path in db_paths:
+        if not Path(db_path).exists():
+            continue
+            
+        try:
+            conn = sqlite3.connect(db_path)
+            # Get ALL simulation records (raw data) instead of pre-grouped data
+            raw_query = """
+            SELECT 
+                game_id,
+                season_year,
+                status,
+                successful_predictions,
+                duration_seconds,
+                final_score
+            FROM simulation_runs
+            """
+            
+            df = pd.read_sql_query(raw_query, conn)
+            conn.close()
+            
+            if not df.empty:
+                df['source_database'] = db_path  # Track which database each record came from
+                combined_data.append(df)
+                
+        except Exception as e:
+            continue
+    
+    if combined_data:
+        result = pd.concat(combined_data, ignore_index=True)
+        return result
+    else:
+        return pd.DataFrame()
+
+def get_combined_simulation_data(query_type="summary", db_paths=[DATABASE_PATH, HISTORICAL_DATABASE_PATH]):
+    """
+    Get properly aggregated simulation data from multiple databases.
+    Combines raw data first, then groups to avoid duplicates.
+    
+    Args:
+        query_type: Type of aggregation needed ("summary" or "betting")
+        db_paths: List of database paths to query
+    
+    Returns:
+        Properly grouped DataFrame without duplicates
+    """
+    # Get all raw data first
+    raw_data = get_combined_raw_simulation_data(db_paths)
+    
+    if raw_data.empty:
+        return pd.DataFrame()
+    
+    if query_type == "summary":
+        # Group the combined raw data for summary display
+        completed_games = raw_data[raw_data['status'] == 'game_ended']
+        
+        if completed_games.empty:
+            return pd.DataFrame()
+        
+        # Group by game_id and season_year across ALL databases
+        summary_grouped = completed_games.groupby(['game_id', 'season_year']).agg({
+            'status': 'count',  # total_sims (count any column)
+            'successful_predictions': ['mean', 'min', 'max'],
+            'duration_seconds': 'mean',
+            'final_score': lambda x: ','.join(x.dropna().astype(str)),  # all_scores
+            'source_database': lambda x: '|'.join(set(x))  # track all source databases
+        }).reset_index()
+        
+        # Flatten multi-level column names properly
+        if isinstance(summary_grouped.columns, pd.MultiIndex):
+            summary_grouped.columns = [col[0] if col[1] == '' else f"{col[0]}_{col[1]}" for col in summary_grouped.columns.values]
+        
+        # Create a mapping based on actual column names
+        current_columns = list(summary_grouped.columns)
+        
+        # Find and rename columns based on patterns
+        column_renames = {}
+        
+        for col in current_columns:
+            if 'status' in str(col) and 'count' in str(col):
+                column_renames[col] = 'completed_sims'
+            elif 'successful_predictions' in str(col) and 'mean' in str(col):
+                column_renames[col] = 'avg_predictions'
+            elif 'successful_predictions' in str(col) and 'min' in str(col):
+                column_renames[col] = 'min_predictions'
+            elif 'successful_predictions' in str(col) and 'max' in str(col):
+                column_renames[col] = 'max_predictions'
+            elif 'duration_seconds' in str(col) and 'mean' in str(col):
+                column_renames[col] = 'avg_duration_min'
+            elif 'final_score' in str(col):
+                column_renames[col] = 'all_scores'
+            elif 'source_database' in str(col):
+                column_renames[col] = 'source_databases'
+        
+        # Apply all renames at once
+        summary_grouped = summary_grouped.rename(columns=column_renames)
+        
+        # Convert duration from seconds to minutes (with safety check)
+        if 'avg_duration_min' in summary_grouped.columns:
+            summary_grouped['avg_duration_min'] = (summary_grouped['avg_duration_min'] / 60).round(1)
+        if 'avg_predictions' in summary_grouped.columns:
+            summary_grouped['avg_predictions'] = summary_grouped['avg_predictions'].round(1)
+        
+        # Add other required fields for compatibility
+        if 'completed_sims' in summary_grouped.columns:
+            summary_grouped['total_sims'] = summary_grouped['completed_sims']  # For now, assume all are completed
+        else:
+            summary_grouped['total_sims'] = 0
+            
+        summary_grouped['error_sims'] = 0  # We filtered to only completed games
+        
+        if 'all_scores' in summary_grouped.columns:
+            summary_grouped['final_scores'] = summary_grouped['all_scores']  # For compatibility
+        else:
+            summary_grouped['final_scores'] = ''
+        
+        return summary_grouped
+        
+    elif query_type == "betting":
+        # Group for betting analysis
+        completed_games = raw_data[raw_data['status'] == 'game_ended']
+        
+        if completed_games.empty:
+            return pd.DataFrame()
+            
+        betting_grouped = completed_games.groupby(['game_id', 'season_year']).agg({
+            'status': 'count',  # total_sims (count any column)
+            'final_score': lambda x: ','.join(x.dropna().astype(str)),  # all_scores
+            'source_database': lambda x: '|'.join(set(x))
+        }).reset_index()
+        
+        betting_grouped.columns = [
+            'game_id', 'season_year', 'completed_sims', 'all_scores', 'source_databases'
+        ]
+        betting_grouped['total_sims'] = betting_grouped['completed_sims']
+        
+        return betting_grouped
+    
+    return pd.DataFrame()
 
 # Define helper functions needed for the table display
 def load_actual_game_results():
@@ -46,7 +203,78 @@ def load_actual_game_results():
         return pd.DataFrame()
 
 # Get the simulation summary first, but delay table display until after betting functions are defined
-summary_df = show_game_summary(DATABASE_PATH)
+# Use combined data from both current and historical databases
+combined_summary = get_combined_simulation_data("summary")
+
+# Process the combined data to create the summary DataFrame (similar to show_game_summary)
+if not combined_summary.empty:
+    # Calculate success rate
+    combined_summary['success_rate'] = (combined_summary['completed_sims'] / combined_summary['total_sims'] * 100).round(1)
+    
+    # Parse scores and calculate statistics (similar to original show_game_summary function)
+    def parse_scores_for_stats(all_scores_str):
+        """Parse scores from the all_scores string and calculate median statistics."""
+        if pd.isna(all_scores_str) or not all_scores_str:
+            return None, None, None
+            
+        scores = []
+        score_strings = [s.strip() for s in all_scores_str.split(',') if s.strip()]
+        
+        for score_str in score_strings:
+            try:
+                # Parse format: "AWAY_TEAM SCORE - HOME_TEAM SCORE"
+                if ' - ' in score_str:
+                    away_part, home_part = score_str.split(' - ')
+                    away_score = int(away_part.split()[-1])
+                    home_score = int(home_part.split()[-1])
+                    scores.append((away_score, home_score))
+            except (ValueError, IndexError):
+                continue
+        
+        if scores:
+            away_scores = [s[0] for s in scores]
+            home_scores = [s[1] for s in scores]
+            score_diffs = [away - home for away, home in scores]
+            
+            return np.median(score_diffs), np.median(away_scores), np.median(home_scores)
+        return None, None, None
+    
+    # Calculate median statistics for each game
+    combined_summary[['med_score_diff', 'med_away_score', 'med_home_score']] = combined_summary['all_scores'].apply(
+        lambda x: pd.Series(parse_scores_for_stats(x))
+    )
+    
+    # Format the 'Done' column to match original display (checkmarks + count)
+    def format_done_column(completed_sims):
+        if completed_sims > 0:
+            return f"✅ {int(completed_sims)}"
+        else:
+            return "❌ 0"
+    
+    combined_summary['done_formatted'] = combined_summary['completed_sims'].apply(format_done_column)
+    
+    # Reorder columns to match the expected structure from show_game_summary
+    # The display_betting_table function expects specific column positions
+    summary_df = combined_summary[[
+        'game_id',           # 0
+        'season_year',       # 1  
+        'total_sims',        # 2
+        'done_formatted',    # 3 - Done (formatted with checkmarks)
+        'error_sims',        # 4
+        'avg_predictions',   # 5
+        'min_predictions',   # 6
+        'max_predictions',   # 7
+        'avg_duration_min',  # 8
+        'med_score_diff',    # 9 - MedDiff
+        'med_away_score',    # 10 - MedAway  
+        'med_home_score',    # 11 - MedHome
+        'success_rate',      # 12
+        'all_scores',        # 13
+        'final_scores',      # 14
+        'source_databases'   # 15
+    ]]
+else:
+    summary_df = pd.DataFrame()
 
 # ================================================================================
 # BETTING ANALYSIS INTEGRATION
@@ -296,7 +524,7 @@ def load_actual_game_results():
         print(f"❌ Error loading actual results: {e}")
         return pd.DataFrame()
 
-def get_simulation_betting_recommendations(actual_results_df, db_path=DATABASE_PATH):
+def get_simulation_betting_recommendations(actual_results_df, use_combined_data=True):
     """
     Determine betting recommendations based on simulation results using new logic:
     
@@ -306,29 +534,33 @@ def get_simulation_betting_recommendations(actual_results_df, db_path=DATABASE_P
     Returns DataFrame with detailed betting analysis for each game.
     """
     
-    # Load raw simulation data to get individual scores
-    if not Path(db_path).exists():
-        print(f"❌ Database file not found: {db_path}")
-        return pd.DataFrame()
-    
-    conn = sqlite3.connect(db_path)
-    
-    # Get raw simulation data with individual scores
-    query = """
-    SELECT 
-        game_id,
-        season_year,
-        COUNT(*) as total_sims,
-        SUM(CASE WHEN status = 'game_ended' THEN 1 ELSE 0 END) as completed_sims,
-        GROUP_CONCAT(final_score) as all_scores
-    FROM simulation_runs 
-    WHERE status = 'game_ended'  -- Only include completed games
-    GROUP BY game_id, season_year
-    ORDER BY game_id, season_year
-    """
-    
-    sim_df = pd.read_sql_query(query, conn)
-    conn.close()
+    if use_combined_data:
+        # Get properly grouped simulation data from combined databases (no duplicates)
+        sim_df = get_combined_simulation_data("betting")
+    else:
+        # Legacy single database approach (kept for backward compatibility)
+        if not Path(DATABASE_PATH).exists():
+            print(f"❌ Database file not found: {DATABASE_PATH}")
+            return pd.DataFrame()
+        
+        conn = sqlite3.connect(DATABASE_PATH)
+        
+        # Get raw simulation data with individual scores
+        query = """
+        SELECT 
+            game_id,
+            season_year,
+            COUNT(*) as total_sims,
+            SUM(CASE WHEN status = 'game_ended' THEN 1 ELSE 0 END) as completed_sims,
+            GROUP_CONCAT(final_score) as all_scores
+        FROM simulation_runs 
+        WHERE status = 'game_ended'  -- Only include completed games
+        GROUP BY game_id, season_year
+        ORDER BY game_id, season_year
+        """
+        
+        sim_df = pd.read_sql_query(query, conn)
+        conn.close()
     
     if sim_df.empty:
         print("⚠️ No simulation data found!")

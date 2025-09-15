@@ -155,9 +155,10 @@ do {
         }
         "d" {
             Write-Host "`nDownloading latest database..." -ForegroundColor Yellow
-            $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-            gcloud compute scp "nba-orchestrator:enhanced_simulation_results_multithreaded.db" "./enhanced_simulation_results_$timestamp.db" --zone=us-central1-a --project=utopian-outlook-470922-q2 --scp-flag="-batch"
-            Write-Host "Download completed as enhanced_simulation_results_$timestamp.db!" -ForegroundColor Green
+            # $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+            gcloud compute scp "nba-orchestrator:enhanced_simulation_results_multithreaded.db" "./enhanced_simulation_results_current.db" --zone=us-central1-a --project=utopian-outlook-470922-q2 --scp-flag="-batch"
+            Write-Host "Download completed as enhanced_simulation_results_current.db!" -ForegroundColor Green
+            # Write-Host "Download completed as enhanced_simulation_results_$timestamp.db!" -ForegroundColor Green
             Read-Host "Press Enter to continue"
         }
         "q" {
