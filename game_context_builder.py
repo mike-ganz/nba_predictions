@@ -18,6 +18,8 @@ try:
     from analysis.player_stats import get_player_pca_score
     from game.team_utils import determine_home_away_teams
     from config.settings import config
+    # Import compact format conversion functions
+    from generate_training_data import convert_verbose_to_compact
     DATA_SYSTEM_AVAILABLE = True
 except ImportError:
     print("⚠️ Data loading system not available - using sample contexts only")
@@ -58,19 +60,37 @@ class GameContextBuilder:
                           start_time: str = "12:00", recent_plays_count: int = 20, 
                           for_first_n_plays: bool = False) -> Dict[str, Any]:
         """
-        Build a complete game context for a specific game.
+        Build a complete game context for a specific game in compact format.
         
         Args:
             game_id: NBA game ID
             start_quarter: Starting quarter (1-4)
             start_time: Starting time (MM:SS format)
             recent_plays_count: Number of recent plays to include
-            for_first_n_plays: If True, excludes recent_plays (for Stage 1 / first_N_plays mode)
+            for_first_n_plays: If True, excludes plays array (for Stage 1 / first_N_plays mode)
+            
+        Returns:
+            Dict in compact format with 'a', 'h', 'as', 'hs', 'ap', 'hp', 'L', 'p' fields
         """
+        # First build verbose format using existing logic
         if self.play_by_play_data is not None:
-            return self._build_from_data(game_id, start_quarter, start_time, recent_plays_count, for_first_n_plays)
+            verbose_context = self._build_from_data(game_id, start_quarter, start_time, recent_plays_count, for_first_n_plays)
         else:
-            return self._build_sample_context(game_id, for_first_n_plays)
+            verbose_context = self._build_sample_context(game_id, for_first_n_plays)
+        
+        # Convert to compact format
+        if DATA_SYSTEM_AVAILABLE:
+            try:
+                compact_context = convert_verbose_to_compact(verbose_context)
+                print(f"✅ Converted context to compact format: {len(str(compact_context))} chars")
+                return compact_context
+            except Exception as e:
+                print(f"⚠️ Warning: Failed to convert to compact format: {e}")
+                print("Falling back to verbose format")
+                return verbose_context
+        else:
+            # No conversion available, return verbose format
+            return verbose_context
     
     def _build_from_data(self, game_id: str, start_quarter: int, 
                         start_time: str, recent_plays_count: int, for_first_n_plays: bool = False) -> Dict[str, Any]:

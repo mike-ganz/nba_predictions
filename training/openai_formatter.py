@@ -50,7 +50,104 @@ class OpenAIFormatter(BaseFormatter):
         """Return the platform name."""
         return "OpenAI"
     
-    def create_training_data(self, df: pd.DataFrame, generation_mode: str = "remaining_plays") -> List[Dict[str, Any]]:
+    def _is_compact_format(self, json_data: Dict[str, Any]) -> bool:
+        """Check if the JSON data is in compact format."""
+        if not isinstance(json_data, dict):
+            return False
+        
+        # Check for compact format indicators
+        compact_keys = {'a', 'h', 'as', 'hs', 'ap', 'hp'}
+        verbose_keys = {'away_team', 'home_team'}
+        
+        has_compact = any(key in json_data for key in compact_keys)
+        has_verbose = any(key in json_data for key in verbose_keys)
+        
+        return has_compact and not has_verbose
+    
+    def _convert_compact_to_verbose_for_formatter(self, compact_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert compact format to verbose format for formatter processing.
+        This is a simplified conversion focused on what the formatter needs.
+        """
+        try:
+            away_abbrev = compact_data.get('a', 'AWAY')
+            home_abbrev = compact_data.get('h', 'HOME')
+            
+            # Convert team stats
+            away_stats_array = compact_data.get('as', [110.0, 110.0, 100.0, 2])
+            home_stats_array = compact_data.get('hs', [110.0, 110.0, 100.0, 2])
+            
+            # Convert plays to verbose format
+            plays_array = compact_data.get('p', [])
+            recent_plays = []
+            
+            for play_tuple in plays_array:
+                if len(play_tuple) >= 6:
+                    quarter = play_tuple[0]
+                    time_seconds = play_tuple[1]
+                    score_array = play_tuple[2]
+                    actor = play_tuple[3]
+                    event_code = play_tuple[4]
+                    
+                    # Handle both scoring and non-scoring formats
+                    if len(play_tuple) == 7:
+                        points = play_tuple[5]
+                        lineup_id = play_tuple[6]
+                    else:
+                        points = None
+                        lineup_id = play_tuple[5]
+                    
+                    # Convert time back to MM:SS
+                    minutes = time_seconds // 60
+                    seconds = time_seconds % 60
+                    time_remaining = f"{minutes:02d}:{seconds:02d}"
+                    
+                    # Build score string
+                    score_str = f"{away_abbrev} {score_array[0]} - {home_abbrev} {score_array[1]}"
+                    
+                    # Create verbose play object
+                    play = {
+                        'quarter': quarter,
+                        'time_remaining': time_remaining,
+                        'description': f"Play: {event_code}",
+                        'score': score_str,
+                        'shot_details': {
+                            'team': away_abbrev if actor[0] == 'A' else home_abbrev,
+                            'points': points
+                        } if points else {'team': None, 'points': None}
+                    }
+                    recent_plays.append(play)
+            
+            # Build verbose format
+            verbose_data = {
+                'away_team': {
+                    'name': away_abbrev,
+                    'stats': {
+                        'OEFF': away_stats_array[0],
+                        'DEFF': away_stats_array[1],
+                        'PACE': away_stats_array[2],
+                        'REST_DAYS': away_stats_array[3]
+                    }
+                },
+                'home_team': {
+                    'name': home_abbrev,
+                    'stats': {
+                        'OEFF': home_stats_array[0],
+                        'DEFF': home_stats_array[1],
+                        'PACE': home_stats_array[2],
+                        'REST_DAYS': home_stats_array[3]
+                    }
+                },
+                'recent_plays': recent_plays
+            }
+            
+            return verbose_data
+            
+        except Exception as e:
+            print(f"⚠️ Warning: Failed to convert compact to verbose: {e}")
+            return compact_data  # Return original if conversion fails
+    
+    def create_training_data(self, df: pd.DataFrame, generation_mode: str = "remaining_plays", n_total: int = None) -> List[Dict[str, Any]]:
         """
         Convert our JSON training data into OpenAI fine-tuning JSONL format.
         Handles two generation modes:
@@ -67,9 +164,14 @@ class OpenAIFormatter(BaseFormatter):
         training_examples = []
         
         if generation_mode == "first_N_plays":
-            # Mode 2: Single entry per game with first N plays as targets  
+            # Mode 2: Single entry per game with first N plays as targets
+            # Load raw data to ensure proper sequential play selection
+            from generate_training_data import load_play_by_play_data
+            raw_df = load_play_by_play_data('2023-2024')
+            
             for game_id in sorted(df['game_id'].unique()):
-                game_df = df[df['game_id'] == game_id].sort_values('play_id').reset_index(drop=True)
+                game_df = df[df['game_id'] == game_id].sort_values('play_id')
+                raw_game_df = raw_df[raw_df['game_id'] == game_id].sort_values('play_id').reset_index(drop=True)
                 
                 # Find the first row with valid JSON context (should be the first row)
                 context_row = None
@@ -77,9 +179,14 @@ class OpenAIFormatter(BaseFormatter):
                     json_data = game_df.iloc[i]['json_training_data']
                     if json_data and json_data.strip() and json_data.strip() != "{}":
                         try:
-                            # Test if it's valid JSON and has team data
+                            # Test if it's valid JSON and has team data (verbose or compact)
                             parsed = json.loads(json_data)
                             if 'away_team' in parsed and 'home_team' in parsed:
+                                # Verbose format
+                                context_row = game_df.iloc[i]
+                                break
+                            elif self._is_compact_format(parsed):
+                                # Compact format - convert and use
                                 context_row = game_df.iloc[i]
                                 break
                         except json.JSONDecodeError:
@@ -91,8 +198,13 @@ class OpenAIFormatter(BaseFormatter):
                         training_examples.append(example)
         else:
             # Mode 1: Standard processing (remaining_plays)
+            # Load raw data to ensure proper sequential play selection
+            from generate_training_data import load_play_by_play_data
+            raw_df = load_play_by_play_data('2023-2024')
+            
             for game_id in sorted(df['game_id'].unique()):
                 game_df = df[df['game_id'] == game_id].sort_values('play_id').reset_index(drop=True)
+                raw_game_df = raw_df[raw_df['game_id'] == game_id].sort_values('play_id').reset_index(drop=True)
                 
                 for i in range(len(game_df) - 1):  # -1 because we need a next play
                     # Skip rows with invalid JSON data
@@ -100,29 +212,54 @@ class OpenAIFormatter(BaseFormatter):
                     if not current_json_data or current_json_data.strip() == "" or current_json_data.strip() == "{}":
                         continue
                     
-                    example = self._create_training_example(game_df, i)
+                    example = self._create_training_example(game_df, i, raw_game_df)
                     if example:
                         training_examples.append(example)
         
         return training_examples
     
-    def _create_training_example(self, game_df: pd.DataFrame, current_index: int) -> Optional[Dict[str, Any]]:
+    def _create_training_example(self, game_df: pd.DataFrame, current_index: int, raw_game_df: pd.DataFrame = None) -> Optional[Dict[str, Any]]:
         """
         Create a single OpenAI training example from current and next plays.
         
         Args:
-            game_df: DataFrame for a single game, sorted by play_id
-            current_index: Index of current play
+            game_df: DataFrame for a single game (filtered training data)
+            current_index: Index of current play in filtered data
+            raw_game_df: Raw game DataFrame for finding sequential next play
             
         Returns:
             dict or None: OpenAI training example or None if creation failed
         """
         try:
             current_row = game_df.iloc[current_index]
-            next_row = game_df.iloc[current_index + 1]
             
-            # Parse the current JSON context
-            current_json = json.loads(current_row['json_training_data'])
+            # Find the actual next play in sequence using play_id
+            current_play_id = current_row['play_id']
+            
+            if raw_game_df is not None:
+                # Find the next sequential play in raw data
+                current_raw_index = None
+                for idx, row in raw_game_df.iterrows():
+                    if row['play_id'] == current_play_id:
+                        current_raw_index = idx
+                        break
+                
+                if current_raw_index is not None and current_raw_index < len(raw_game_df) - 1:
+                    next_row = raw_game_df.iloc[current_raw_index + 1]
+                else:
+                    return None  # No next play found
+            else:
+                # Fallback to old method if raw data not available
+                if current_index + 1 >= len(game_df):
+                    return None
+                next_row = game_df.iloc[current_index + 1]
+            
+            # Parse the current JSON context and convert if compact
+            current_json_raw = json.loads(current_row['json_training_data'])
+            if self._is_compact_format(current_json_raw):
+                current_json = self._convert_compact_to_verbose_for_formatter(current_json_raw)
+            else:
+                current_json = current_json_raw
             
             # Create the next play response
             assistant_response = self._create_next_play_response(
@@ -307,12 +444,8 @@ class OpenAIFormatter(BaseFormatter):
         ])
         
         if is_non_scoring_play and points_scored > 0:
-            # This should not happen - debug log the issue
-            print(f"⚠️ Scoring mismatch detected:")
-            print(f"   Description: {next_row['description']}")
-            print(f"   Scores: {prev_away_score}-{prev_home_score} → {next_row['away_score']}-{next_row['home_score']}")
-            print(f"   Calculated: {scoring_team} +{points_scored}")
-            # Force correction for obvious non-scoring plays
+            # Silent correction for obvious non-scoring plays
+            # (Data gaps in play-by-play are common and expected)
             scoring_team, points_scored = None, 0
         
         # Format score
@@ -348,18 +481,99 @@ class OpenAIFormatter(BaseFormatter):
                 # "y_coord": None   # Commented out - can be re-enabled later
             }
         
-        # Create the assistant response with restructured shot_details and added player
+        # Create compact format assistant response
         next_player = next_row.get('player')
-        return {
-            "next_play": {
-                "quarter": int(next_quarter),
-                "time_remaining": str(next_time),
-                "score": str(score),
-                "players_on_court": extract_players_on_court(next_row, current_json['away_team']['name'], current_json['home_team']['name']),
-                "player": str(next_player) if pd.notna(next_player) else None,  # NEW: Player from original data
-                "description": process_play_description(next_row),
-                "shot_details": shot_details  # RENAMED: scoring -> shot_details with additional fields
+        
+        # Convert time to seconds (next_time is already in MM:SS format)
+        time_parts = str(next_time).split(':')
+        if len(time_parts) >= 2:
+            time_seconds = int(time_parts[0]) * 60 + int(time_parts[1])
+        else:
+            time_seconds = 720  # Default 12:00
+        
+        # Create score array
+        next_away_score = int(next_row.get('away_score', 0) or 0)
+        next_home_score = int(next_row.get('home_score', 0) or 0)
+        score_array = [next_away_score, next_home_score]
+        
+        # Create actor
+        away_team = current_json['away_team']['name']
+        home_team = current_json['home_team']['name']
+        
+        # Simple actor mapping based on team (simplified for formatter)
+        if scoring_team == away_team:
+            actor = ["A", 0]  # Away team, simplified index
+        elif scoring_team == home_team:
+            actor = ["H", 0]  # Home team, simplified index
+        else:
+            actor = ["A", -1]  # Default to away team event
+        
+        # Use structured event code mapping for better accuracy
+        from generate_training_data import map_structured_to_event_code, map_description_to_event_code
+        
+        # Check if structured data is available (type, event_type fields)
+        if all(key in next_row for key in ['type', 'event_type']):
+            # Use structured mapping when available (much more accurate)
+            event_code, mapped_points = map_structured_to_event_code(next_row)
+            
+            # Use mapped points if available, otherwise use calculated points
+            if mapped_points is not None:
+                points_scored = mapped_points
+        else:
+            # Fall back to description parsing
+            description = next_row.get('description', '')
+            
+            # Calculate score delta for proper event mapping
+            prev_away_score, prev_home_score = self._get_previous_scores(game_df, current_index)
+            score_delta = max(0, max(
+                next_away_score - prev_away_score,  # Away team scored
+                next_home_score - prev_home_score   # Home team scored  
+            ))
+            
+            # Build shot_details for event mapping
+            shot_details = {
+                'team': scoring_team,
+                'points': points_scored if points_scored > 0 else None
             }
+            
+            # Use the comprehensive mapping function
+            event_code, mapped_points = map_description_to_event_code(
+                description, shot_details, score_delta
+            )
+            
+            # Use mapped points if available, otherwise use calculated points
+            if mapped_points is not None:
+                points_scored = mapped_points
+        
+        # Default lineup ID
+        lineup_id = 0
+        
+        # Create compact play tuple - ensure all numbers are regular Python ints for JSON serialization
+        if points_scored and points_scored > 0:
+            # Scoring play: [q, t, score, actor, event, pts, lineup_id]
+            play_tuple = [
+                int(next_quarter), 
+                int(time_seconds), 
+                [int(score_array[0]), int(score_array[1])], 
+                actor, 
+                event_code, 
+                int(points_scored), 
+                int(lineup_id)
+            ]
+        else:
+            # Non-scoring play: [q, t, score, actor, event, lineup_id]
+            play_tuple = [
+                int(next_quarter), 
+                int(time_seconds), 
+                [int(score_array[0]), int(score_array[1])], 
+                actor, 
+                event_code, 
+                int(lineup_id)
+            ]
+        
+        # Return compact format response
+        return {
+            "y": play_tuple
         }
     
     def _get_previous_scores(self, game_df: pd.DataFrame, current_index: int) -> Tuple[int, int]:

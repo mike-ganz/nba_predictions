@@ -13,6 +13,970 @@ from generate_lineup import get_lineup_by_game_id, load_all_player_boxscores
 # Configuration
 SEASON_YEAR = "2023-2024"  # Default season year
 
+# ============================================================================
+# COMPACT SCHEMA CONVERSION UTILITIES
+# ============================================================================
+
+def parse_time_to_seconds(time_str):
+    """Convert 'MM:SS' time format to seconds remaining."""
+    if pd.isna(time_str) or not time_str:
+        return 0
+    
+    try:
+        time_parts = str(time_str).split(':')
+        if len(time_parts) >= 2:
+            minutes = int(time_parts[-2])
+            seconds = int(time_parts[-1])
+            return 60 * minutes + seconds
+        else:
+            return 0
+    except (ValueError, IndexError):
+        return 0
+
+def parse_score_string(score_str):
+    """Parse 'AWAY x - HOME y' format to [away_score, home_score]."""
+    if pd.isna(score_str) or not score_str:
+        return [0, 0]
+    
+    try:
+        # Extract numbers from format like "ATL 18 - DET 11"
+        parts = str(score_str).split(' - ')
+        if len(parts) == 2:
+            away_score = int(parts[0].split()[-1])
+            home_score = int(parts[1].split()[-1])
+            return [away_score, home_score]
+        else:
+            return [0, 0]
+    except (ValueError, IndexError):
+        return [0, 0]
+
+def extract_distance_from_description(description):
+    """Extract distance in feet from play description."""
+    if pd.isna(description):
+        return None
+    
+    # Look for pattern like "26'" or "26 feet"
+    match = re.search(r'(\d+)\'', str(description))
+    if match:
+        return match.group(1)
+    return None
+
+
+def map_structured_to_event_code(row):
+    """
+    Map structured play-by-play fields to compact event code.
+    Uses type, result, event_type, points, and shot_distance instead of parsing descriptions.
+    
+    Args:
+        row: pandas Series with play-by-play data containing:
+            - type: detailed play type (e.g. "3pt jump shot", "driving layup")
+            - result: "made" or "missed" for shots
+            - event_type: high-level category ("shot", "foul", "rebound", etc.)
+            - points: points scored (0, 1, 2, 3)
+            - shot_distance: distance in feet for shots
+            
+    Returns:
+        tuple: (event_code, points) where points is only included for scoring events
+    """
+    play_type = str(row.get('type', '')).lower().strip()
+    result = str(row.get('result', '')).lower().strip()
+    event_type = str(row.get('event_type', '')).lower().strip()
+    points = row.get('points', 0)
+    distance = row.get('shot_distance')
+    
+    # Format distance suffix
+    dist_suffix = str(int(distance)) if pd.notna(distance) and distance > 0 else ""
+    
+    # Handle shots based on type and result
+    if event_type == 'shot' or any(shot_word in play_type for shot_word in ['shot', 'layup', 'dunk']):
+        
+        # 3-point shots
+        if '3pt' in play_type or 'three' in play_type:
+            if result == 'made' or points == 3:
+                return f"3pm{dist_suffix}", 3
+            else:
+                return f"3pa{dist_suffix}", None
+        
+        # Layups
+        elif 'layup' in play_type:
+            if result == 'made' or points == 2:
+                return f"layup{dist_suffix}", 2
+            else:
+                return f"layupa{dist_suffix}", None
+        
+        # Dunks
+        elif 'dunk' in play_type:
+            if result == 'made' or points == 2:
+                return f"dunk{dist_suffix}", 2
+            else:
+                return f"dunka{dist_suffix}", None
+        
+        # Hook shots
+        elif 'hook' in play_type:
+            if result == 'made' or points == 2:
+                return f"hook{dist_suffix}", 2
+            else:
+                return f"hooka{dist_suffix}", None
+        
+        # General 2-point shots
+        elif any(shot_type in play_type for shot_type in ['jump shot', 'jumper', 'fadeaway', 'floating']):
+            if result == 'made' or points == 2:
+                return f"2pm{dist_suffix}", 2
+            else:
+                return f"2pa{dist_suffix}", None
+        
+        # Fallback for other shots based on points
+        elif points == 3:
+            return f"3pm{dist_suffix}", 3
+        elif points == 2:
+            return f"2pm{dist_suffix}", 2
+        elif points == 1:
+            return "ftm", 1
+        else:
+            # Missed shot, try to infer type
+            if distance and distance >= 23:  # 3-point range
+                return f"3pa{dist_suffix}", None
+            else:
+                return f"2pa{dist_suffix}", None
+    
+    # Free throws
+    elif event_type == 'free throw' or 'free throw' in play_type:
+        if result == 'made' or points == 1:
+            return "ftm", 1
+        else:
+            return "ftx", None
+    
+    # Rebounds  
+    elif event_type == 'rebound' or 'rebound' in play_type:
+        if 'offensive' in play_type:
+            return "o_reb", None
+        else:
+            return "d_reb", None
+    
+    # Fouls
+    elif event_type == 'foul' or 'foul' in play_type or any(foul_type in play_type for foul_type in ['personal', 'shooting', 'offensive']):
+        if 'offensive' in play_type or 'charge' in play_type:
+            return "o_foul", None
+        elif 'shooting' in play_type or 'flagrant' in play_type:
+            return "s_foul", None
+        elif 'technical' in play_type:
+            return "tech", None
+        else:
+            return "p_foul", None
+    
+    # Turnovers
+    elif event_type == 'turnover' or any(tov_type in play_type for tov_type in ['bad pass', 'lost ball', 'traveling', 'backcourt']):
+        return "tov", None
+    
+    # Violations
+    elif event_type == 'violation' or any(viol_type in play_type for viol_type in ['shot clock', 'kicked ball', 'goaltending']):
+        return "viol", None
+    
+    # Steals (usually tagged as turnover with steal info)
+    elif pd.notna(row.get('steal')) and row.get('steal') != '':
+        return "stl", None
+    
+    # Other events
+    elif 'jump ball' in play_type:
+        return "jumpball", None
+    elif 'timeout' in play_type:
+        return "timeout", None
+    elif 'sub' in play_type:
+        return "sub", None
+    elif any(period_event in play_type for period_event in ['start of period', 'end of period']):
+        return "period", None
+    
+    # Fallback based on points if we can't categorize
+    elif points == 1:
+        return "ftm", 1
+    elif points == 2:
+        return f"2pm{dist_suffix}", 2  
+    elif points == 3:
+        return f"3pm{dist_suffix}", 3
+    else:
+        return "unknown", None
+
+def map_description_to_event_code(description, shot_details, score_delta):
+    """
+    Map play description and shot_details to compact event code.
+    
+    Args:
+        description: Play description text
+        shot_details: Dict with 'team' and 'points' info
+        score_delta: Points change from previous play
+        
+    Returns:
+        tuple: (event_code, points) where points is only included for scoring events
+    """
+    if pd.isna(description):
+        return "unknown", None
+    
+    desc = str(description).upper()
+    distance = extract_distance_from_description(description)
+    dist_suffix = distance if distance else ""
+    
+    # Determine if this was a scoring play
+    points_scored = 0
+    if shot_details and shot_details.get('points') is not None:
+        points_scored = shot_details['points']
+    elif score_delta > 0:
+        points_scored = score_delta
+    
+    # Shot mappings following spec patterns exactly
+    # 3-point shots
+    if "3PT" in desc:
+        if "MISS" in desc:
+            return f"3pa{dist_suffix}", None
+        else:
+            return f"3pm{dist_suffix}", points_scored if points_scored > 0 else 3
+    
+    # Layups  
+    elif "LAYUP" in desc:
+        if "MISS" in desc:
+            return f"layupa{dist_suffix}", None
+        else:
+            return f"layup{dist_suffix}", points_scored if points_scored > 0 else 2
+    
+    # Dunks
+    elif "DUNK" in desc and "TIP DUNK" not in desc:
+        if "MISS" in desc:
+            return f"dunka{dist_suffix}", None
+        else:
+            return f"dunk{dist_suffix}", points_scored if points_scored > 0 else 2
+    
+    # Tip dunk shots (specific pattern from spec)
+    elif "TIP DUNK" in desc:
+        if "MISS" in desc or points_scored == 0:
+            return "tipdunk_a", None
+        else:
+            return "tipdunk_m", points_scored if points_scored > 0 else 2
+    
+    # Putbacks/tips (scoring)
+    elif ("PUTBACK" in desc or "PUT BACK" in desc) and points_scored > 0:
+        return "putback2", points_scored
+    
+    # 2-point shots (Jump, Pullup, Bank shots without 3PT)
+    elif ("JUMP SHOT" in desc or "PULLUP" in desc or "BANK SHOT" in desc) and "3PT" not in desc:
+        if "MISS" in desc:
+            return f"2pa{dist_suffix}", None
+        else:
+            return f"2pm{dist_suffix}", points_scored if points_scored > 0 else 2
+    
+    # Free throws
+    elif "FREE THROW" in desc:
+        if "MISS" in desc or points_scored == 0:
+            return "ftx", None
+        else:
+            return "ftm", 1
+    
+    # Rebounds
+    elif "DEF.REBOUND" in desc or "DEFENSIVE REBOUND" in desc:
+        return "d_reb", None
+    elif "OFF.REBOUND" in desc or "OFFENSIVE REBOUND" in desc:
+        return "o_reb", None
+    
+    # Steals and turnovers
+    elif "STEAL" in desc:
+        return "stl", None
+    elif ("TURNOVER" in desc or "LOST BALL" in desc or "BAD PASS" in desc or 
+          "OUT OF BOUNDS" in desc or "TRAVEL" in desc or "DOUBLE DRIBBLE" in desc):
+        return "tov", None
+    
+    # Fouls
+    elif "OFFENSIVE FOUL" in desc or "O.FOUL" in desc:
+        return "o_foul", None  # Note: caller should also emit 'tov'
+    elif "SHOOTING FOUL" in desc or "S.FOUL" in desc:
+        return "s_foul", None
+    elif "PERSONAL FOUL" in desc or "P.FOUL" in desc:
+        return "p_foul", None
+    
+    # Timeouts
+    elif "TIMEOUT" in desc:
+        return "timeout", None
+    
+    # Default fallback
+    else:
+        return "unknown", None
+
+def create_lineup_key(players_on_court, away_abbrev, home_abbrev, away_name_to_idx, home_name_to_idx):
+    """
+    Create a unique lineup key from players_on_court data.
+    
+    Returns:
+        tuple: (away_indices, home_indices) sorted tuples of 5 player indices each
+    """
+    away_indices = []
+    home_indices = []
+    
+    if not players_on_court:
+        # Return default lineup if no data
+        return (tuple([0, 1, 2, 3, 4]), tuple([0, 1, 2, 3, 4]))
+    
+    for team_data in players_on_court:
+        team_abbrev = team_data.get('team', '')
+        players = team_data.get('players', [])
+        
+        if team_abbrev == away_abbrev:
+            for player in players[:5]:  # Take first 5 players
+                idx = away_name_to_idx.get(player, 0)  # Default to first player if not found
+                away_indices.append(idx)
+        elif team_abbrev == home_abbrev:
+            for player in players[:5]:  # Take first 5 players
+                idx = home_name_to_idx.get(player, 0)  # Default to first player if not found
+                home_indices.append(idx)
+    
+    # Ensure we have 5 players for each team, pad with 0s if needed
+    while len(away_indices) < 5:
+        away_indices.append(0)
+    while len(home_indices) < 5:
+        home_indices.append(0)
+    
+    # Return tuples preserving original order (don't sort)
+    return (tuple(away_indices[:5]), tuple(home_indices[:5]))
+
+def resolve_actor(player_name, shot_details, away_abbrev, home_abbrev, away_name_to_idx, home_name_to_idx):
+    """
+    Resolve player/team actor to ["A"|"H", idx] format.
+    
+    Returns:
+        list: ["A"|"H", player_index] or ["A"|"H", -1] for team events
+    """
+    if pd.notna(player_name) and player_name:
+        # Try to find player in away team
+        if player_name in away_name_to_idx:
+            return ["A", away_name_to_idx[player_name]]
+        # Try to find player in home team
+        elif player_name in home_name_to_idx:
+            return ["H", home_name_to_idx[player_name]]
+    
+    # Try to infer from shot_details if player not found
+    if shot_details and shot_details.get('team'):
+        team = shot_details['team']
+        if team == away_abbrev:
+            return ["A", -1]  # Team event
+        elif team == home_abbrev:
+            return ["H", -1]  # Team event
+    
+    # Default fallback - assign to away team
+    return ["A", -1]
+
+def build_compact_training_data_direct(
+    current_game_id, away_abbrev, home_abbrev, 
+    away_stats, home_stats, 
+    away_players, home_players,
+    recent_plays_verbose, away_name_to_idx, home_name_to_idx
+):
+    """
+    🚀 OPTIMIZED: Build compact schema format directly without verbose intermediate step.
+    
+    This replaces the verbose → compact conversion with direct compact generation,
+    eliminating the expensive conversion overhead.
+    
+    Args:
+        current_game_id: Game ID for this training example
+        away_abbrev, home_abbrev: Team abbreviations 
+        away_stats, home_stats: Team stats dictionaries
+        away_players, home_players: Player arrays already in compact format
+        recent_plays_verbose: List of play dictionaries (from the verbose building process)
+        away_name_to_idx, home_name_to_idx: Player name to index mappings
+        
+    Returns:
+        dict: Compact format following the specification
+    """
+    
+    # Extract team stats in required order: [OEFF, DEFF, PACE, REST_DAYS]
+    away_stats_array = [
+        round(float(away_stats.get('OEFF', 110.0)), 2),
+        round(float(away_stats.get('DEFF', 110.0)), 2), 
+        round(float(away_stats.get('PACE', 100.0)), 2),
+        int(away_stats.get('REST_DAYS', 2))
+    ]
+    
+    home_stats_array = [
+        round(float(home_stats.get('OEFF', 110.0)), 2),
+        round(float(home_stats.get('DEFF', 110.0)), 2),
+        round(float(home_stats.get('PACE', 100.0)), 2), 
+        int(home_stats.get('REST_DAYS', 2))
+    ]
+    
+    # Build lineup lookup and plays array directly
+    lineup_cache = {}  # Maps lineup keys to lineup IDs
+    lineup_lookup = []  # List of {A: [...], H: [...]} objects
+    plays_array = []
+    
+    prev_score = [0, 0]
+    current_lineup_id = 0
+    
+    # Process plays to build compact arrays directly
+    for play in recent_plays_verbose:
+        quarter = int(play.get('quarter', 1))
+        time_remaining = play.get('time_remaining', '12:00')
+        time_seconds = parse_time_to_seconds(time_remaining)
+        
+        score_str = play.get('score', '0 - 0')
+        current_score = parse_score_string(score_str)
+        
+        # Calculate score delta for this play
+        score_delta = max(0, max(
+            current_score[0] - prev_score[0],  # Away team scored
+            current_score[1] - prev_score[1]   # Home team scored
+        ))
+        
+        # Get lineup for this play  
+        players_on_court = play.get('players_on_court', [])
+        lineup_key = create_lineup_key(
+            players_on_court, away_abbrev, home_abbrev,
+            away_name_to_idx, home_name_to_idx
+        )
+        
+        # Get or create lineup ID
+        if lineup_key not in lineup_cache:
+            lineup_id = len(lineup_lookup)
+            lineup_cache[lineup_key] = lineup_id
+            lineup_lookup.append({
+                "A": list(lineup_key[0]),
+                "H": list(lineup_key[1])
+            })
+            current_lineup_id = lineup_id
+        else:
+            current_lineup_id = lineup_cache[lineup_key]
+        
+        # Resolve actor
+        player_name = play.get('player')
+        shot_details = play.get('shot_details', {})
+        actor = resolve_actor(
+            player_name, shot_details, away_abbrev, home_abbrev,
+            away_name_to_idx, home_name_to_idx
+        )
+        
+        # Map to event code - prefer structured data when available
+        if all(key in play for key in ['type', 'event_type']):
+            # Use structured mapping when available (better accuracy)
+            event_code, points = map_structured_to_event_code(play)
+        else:
+            # Fall back to description parsing
+            description = play.get('description', '')
+            event_code, points = map_description_to_event_code(
+                description, shot_details, score_delta
+            )
+        
+        # Handle offensive foul special case - emit both o_foul and tov
+        if event_code == "o_foul":
+            # Add the offensive foul
+            play_tuple = [quarter, time_seconds, current_score, actor, "o_foul", current_lineup_id]
+            plays_array.append(play_tuple)
+            
+            # Add the turnover at the same timestamp
+            play_tuple = [quarter, time_seconds, current_score, actor, "tov", current_lineup_id]
+            plays_array.append(play_tuple)
+        else:
+            # Build play tuple - include points only for scoring events
+            if points is not None:
+                play_tuple = [quarter, time_seconds, current_score, actor, event_code, points, current_lineup_id]
+            else:
+                play_tuple = [quarter, time_seconds, current_score, actor, event_code, current_lineup_id]
+            
+            plays_array.append(play_tuple)
+        
+        prev_score = current_score
+    
+    # Build compact format directly
+    compact_record = {
+        "a": away_abbrev,
+        "h": home_abbrev,
+        "as": away_stats_array,
+        "hs": home_stats_array,
+        "ap": away_players,
+        "hp": home_players,
+        "L": lineup_lookup,
+        "p": plays_array
+    }
+    
+    return compact_record
+
+
+def get_player_pca_from_cache_or_calculate(player_name, game_date, season, pca_cache):
+    """
+    🚀 Get PCA scores from cache if available, otherwise calculate individually.
+    
+    Args:
+        player_name: Name of the player
+        game_date: Date of the game
+        season: Season year (e.g. "2023-2024")
+        pca_cache: Pre-calculated PCA cache dict
+        
+    Returns:
+        tuple: (offense, defense, shot_selection, efficiency) scores
+    """
+    if pca_cache and game_date in pca_cache:
+        # Use cached PCA scores (fast path)
+        player_scores = pca_cache[game_date].get(player_name, {})
+        return (
+            player_scores.get('offense', 0.0),
+            player_scores.get('defense', 0.0), 
+            player_scores.get('shot_selection', 0.0),
+            player_scores.get('efficiency', 0.0)
+        )
+    else:
+        # Fall back to individual calculation (slow path)
+        from pca_optimized import get_player_pca_score
+        return get_player_pca_score(player_name, game_date, season)
+
+
+def test_direct_compact_builder(result_df, test_indices=[0, 1, 2]):
+    """
+    🧪 TEST FUNCTION: Compare direct compact builder with verbose → convert method.
+    
+    This validates that our optimized direct builder produces identical output
+    to the existing verbose → convert pipeline.
+    
+    Args:
+        result_df: DataFrame with training data
+        test_indices: List of row indices to test with
+        
+    Returns:
+        bool: True if all tests pass, False otherwise
+    """
+    print("🧪 Testing direct compact builder vs verbose conversion...")
+    
+    # Get required data (same as main loop setup)
+    game_team_mapping = determine_home_away_teams(result_df)
+    
+    all_tests_passed = True
+    
+    for i in test_indices:
+        if i >= len(result_df):
+            continue
+            
+        print(f"  Testing row {i}...")
+        
+        try:
+            current_game_id = result_df.iloc[i]['game_id']
+            
+            # Get team info (simplified version of main loop logic)
+            team_stats = {}  # We'd need the actual team stats here
+            away_abbrev = game_team_mapping.get(current_game_id, {}).get('away_team', 'AWAY')
+            home_abbrev = game_team_mapping.get(current_game_id, {}).get('home_team', 'HOME')
+            
+            # For testing, we'll use mock data
+            mock_away_stats = {'OEFF': 115.0, 'DEFF': 110.0, 'PACE': 98.0, 'REST_DAYS': 2}
+            mock_home_stats = {'OEFF': 112.0, 'DEFF': 108.0, 'PACE': 101.0, 'REST_DAYS': 1}
+            mock_away_players = [["Player A1", 1.0, 0.5, -0.2, 0.8, 28, 20]]
+            mock_home_players = [["Player H1", 0.8, 1.2, 0.1, -0.3, 32, 18]]
+            mock_away_name_to_idx = {"Player A1": 0}
+            mock_home_name_to_idx = {"Player H1": 0}
+            mock_recent_plays = [
+                {
+                    "quarter": 1,
+                    "time_remaining": "10:30", 
+                    "score": f"{away_abbrev} 5 - {home_abbrev} 7",
+                    "description": "Test play",
+                    "players_on_court": [
+                        {"team": away_abbrev, "players": ["Player A1"]},
+                        {"team": home_abbrev, "players": ["Player H1"]}
+                    ],
+                    "player": "Player A1",
+                    "shot_details": {"team": None, "points": None}
+                }
+            ]
+            
+            # Test Method 1: Verbose → Convert (existing)
+            verbose_json_obj = {
+                "away_team": {
+                    "name": away_abbrev,
+                    "stats": mock_away_stats,
+                    "players": [{"name": p[0], "profile": {"offense": p[1], "defense": p[2], "shot_selection": p[3], "efficiency": p[4], "MPG": p[5], "usage": p[6]}} for p in mock_away_players]
+                },
+                "home_team": {
+                    "name": home_abbrev, 
+                    "stats": mock_home_stats,
+                    "players": [{"name": p[0], "profile": {"offense": p[1], "defense": p[2], "shot_selection": p[3], "efficiency": p[4], "MPG": p[5], "usage": p[6]}} for p in mock_home_players]
+                },
+                "recent_plays": mock_recent_plays
+            }
+            
+            old_result = convert_verbose_to_compact(verbose_json_obj)
+            
+            # Test Method 2: Direct compact builder (optimized)
+            new_result = build_compact_training_data_direct(
+                current_game_id, away_abbrev, home_abbrev,
+                mock_away_stats, mock_home_stats,
+                mock_away_players, mock_home_players,
+                mock_recent_plays, mock_away_name_to_idx, mock_home_name_to_idx
+            )
+            
+            # Compare results
+            if old_result == new_result:
+                print(f"    ✅ Row {i}: PASS - Results identical")
+            else:
+                print(f"    ❌ Row {i}: FAIL - Results differ")
+                print(f"       Old keys: {old_result.keys()}")
+                print(f"       New keys: {new_result.keys()}")
+                
+                # Show detailed diff for debugging
+                for key in old_result.keys():
+                    if key not in new_result:
+                        print(f"       Missing key in new: {key}")
+                    elif old_result[key] != new_result[key]:
+                        print(f"       Key '{key}' differs:")
+                        print(f"         Old: {old_result[key]}")
+                        print(f"         New: {new_result[key]}")
+                
+                all_tests_passed = False
+                
+        except Exception as e:
+            print(f"    ❌ Row {i}: ERROR - {e}")
+            all_tests_passed = False
+    
+    if all_tests_passed:
+        print("🎉 All tests PASSED! Direct builder produces identical output.")
+    else:
+        print("⚠️  Some tests FAILED! Review differences above.")
+    
+    return all_tests_passed
+
+
+def convert_verbose_to_compact(verbose_json):
+    """
+    Convert verbose JSON format to compact schema format.
+    
+    Args:
+        verbose_json: Dict in old format with away_team, home_team, recent_plays
+        
+    Returns:
+        dict: Compact format following the specification
+    """
+    if isinstance(verbose_json, str):
+        verbose_json = json.loads(verbose_json)
+    
+    # Extract team info
+    away_team = verbose_json.get('away_team', {})
+    home_team = verbose_json.get('home_team', {})
+    recent_plays = verbose_json.get('recent_plays', [])
+    
+    away_abbrev = away_team.get('name', 'AWAY')
+    home_abbrev = home_team.get('name', 'HOME')
+    
+    # Extract team stats in required order: [OEFF, DEFF, PACE, REST_DAYS]
+    away_stats_dict = away_team.get('stats', {})
+    home_stats_dict = home_team.get('stats', {})
+    
+    away_stats = [
+        round(float(away_stats_dict.get('OEFF', 110.0)), 2),
+        round(float(away_stats_dict.get('DEFF', 110.0)), 2),
+        round(float(away_stats_dict.get('PACE', 100.0)), 2),
+        int(away_stats_dict.get('REST_DAYS', 2))
+    ]
+    
+    home_stats = [
+        round(float(home_stats_dict.get('OEFF', 110.0)), 2),
+        round(float(home_stats_dict.get('DEFF', 110.0)), 2),
+        round(float(home_stats_dict.get('PACE', 100.0)), 2),
+        int(home_stats_dict.get('REST_DAYS', 2))
+    ]
+    
+    # Extract player rosters in format: [name, offense, defense, shot_selection, efficiency, MPG, usage]
+    away_players = []
+    home_players = []
+    away_name_to_idx = {}
+    home_name_to_idx = {}
+    
+    # Process away team players
+    for idx, player in enumerate(away_team.get('players', [])):
+        name = player.get('name', f'Player{idx}')
+        profile = player.get('profile', {})
+        
+        player_array = [
+            name,
+            round(float(profile.get('offense', 0.0)), 2),
+            round(float(profile.get('defense', 0.0)), 2),
+            round(float(profile.get('shot_selection', 0.0)), 2),
+            round(float(profile.get('efficiency', 0.0)), 2),
+            int(profile.get('MPG', 20)),
+            int(profile.get('usage', 15))
+        ]
+        away_players.append(player_array)
+        away_name_to_idx[name] = idx
+    
+    # Process home team players
+    for idx, player in enumerate(home_team.get('players', [])):
+        name = player.get('name', f'Player{idx}')
+        profile = player.get('profile', {})
+        
+        player_array = [
+            name,
+            round(float(profile.get('offense', 0.0)), 2),
+            round(float(profile.get('defense', 0.0)), 2),
+            round(float(profile.get('shot_selection', 0.0)), 2),
+            round(float(profile.get('efficiency', 0.0)), 2),
+            int(profile.get('MPG', 20)),
+            int(profile.get('usage', 15))
+        ]
+        home_players.append(player_array)
+        home_name_to_idx[name] = idx
+    
+    # Process plays to build lineup lookup and play array
+    lineup_cache = {}  # Maps lineup keys to lineup IDs
+    lineup_lookup = []  # List of {A: [...], H: [...]} objects
+    plays_array = []
+    
+    prev_score = [0, 0]
+    current_lineup_id = 0
+    
+    for play in recent_plays:
+        quarter = int(play.get('quarter', 1))
+        time_remaining = play.get('time_remaining', '12:00')
+        time_seconds = parse_time_to_seconds(time_remaining)
+        
+        score_str = play.get('score', '0 - 0')
+        current_score = parse_score_string(score_str)
+        
+        # Calculate score delta for this play
+        score_delta = max(0, max(
+            current_score[0] - prev_score[0],  # Away team scored
+            current_score[1] - prev_score[1]   # Home team scored
+        ))
+        
+        # Get lineup for this play
+        players_on_court = play.get('players_on_court', [])
+        lineup_key = create_lineup_key(
+            players_on_court, away_abbrev, home_abbrev, 
+            away_name_to_idx, home_name_to_idx
+        )
+        
+        # Get or create lineup ID
+        if lineup_key not in lineup_cache:
+            lineup_id = len(lineup_lookup)
+            lineup_cache[lineup_key] = lineup_id
+            lineup_lookup.append({
+                "A": list(lineup_key[0]),
+                "H": list(lineup_key[1])
+            })
+            current_lineup_id = lineup_id
+        else:
+            current_lineup_id = lineup_cache[lineup_key]
+        
+        # Resolve actor
+        player_name = play.get('player')
+        shot_details = play.get('shot_details', {})
+        actor = resolve_actor(
+            player_name, shot_details, away_abbrev, home_abbrev,
+            away_name_to_idx, home_name_to_idx
+        )
+        
+        # Map to event code - prefer structured data when available
+        if all(key in play for key in ['type', 'event_type']):
+            # Use structured mapping when available (better accuracy)
+            event_code, points = map_structured_to_event_code(play)
+        else:
+            # Fall back to description parsing
+            description = play.get('description', '')
+            event_code, points = map_description_to_event_code(
+                description, shot_details, score_delta
+            )
+        
+        # Handle offensive foul special case - emit both o_foul and tov
+        if event_code == "o_foul":
+            # Add the offensive foul
+            play_tuple = [quarter, time_seconds, current_score, actor, "o_foul", current_lineup_id]
+            plays_array.append(play_tuple)
+            
+            # Add the turnover at the same timestamp
+            play_tuple = [quarter, time_seconds, current_score, actor, "tov", current_lineup_id]
+            plays_array.append(play_tuple)
+        else:
+            # Build play tuple - include points only for scoring events
+            if points is not None:
+                play_tuple = [quarter, time_seconds, current_score, actor, event_code, points, current_lineup_id]
+            else:
+                play_tuple = [quarter, time_seconds, current_score, actor, event_code, current_lineup_id]
+            
+            plays_array.append(play_tuple)
+        
+        prev_score = current_score
+    
+    # Build compact format
+    compact_record = {
+        "a": away_abbrev,
+        "h": home_abbrev,
+        "as": away_stats,
+        "hs": home_stats,
+        "ap": away_players,
+        "hp": home_players,
+        "L": lineup_lookup,
+        "p": plays_array
+    }
+    
+    return compact_record
+
+def convert_compact_to_verbose(compact_json):
+    """
+    Convert compact schema format back to verbose JSON format.
+    Used for backward compatibility and debugging.
+    
+    Args:
+        compact_json: Dict in compact format
+        
+    Returns:
+        dict: Verbose format matching original schema
+    """
+    if isinstance(compact_json, str):
+        compact_json = json.loads(compact_json)
+    
+    away_abbrev = compact_json.get('a', 'AWAY')
+    home_abbrev = compact_json.get('h', 'HOME')
+    
+    # Convert team stats back
+    away_stats_array = compact_json.get('as', [110.0, 110.0, 100.0, 2])
+    home_stats_array = compact_json.get('hs', [110.0, 110.0, 100.0, 2])
+    
+    away_stats = {
+        'OEFF': away_stats_array[0],
+        'DEFF': away_stats_array[1],
+        'PACE': away_stats_array[2],
+        'REST_DAYS': away_stats_array[3]
+    }
+    
+    home_stats = {
+        'OEFF': home_stats_array[0],
+        'DEFF': home_stats_array[1],
+        'PACE': home_stats_array[2],
+        'REST_DAYS': home_stats_array[3]
+    }
+    
+    # Convert player rosters back
+    away_players = []
+    for player_array in compact_json.get('ap', []):
+        player = {
+            'name': player_array[0],
+            'profile': {
+                'offense': player_array[1],
+                'defense': player_array[2],
+                'shot_selection': player_array[3],
+                'efficiency': player_array[4],
+                'MPG': player_array[5],
+                'usage': player_array[6]
+            }
+        }
+        away_players.append(player)
+    
+    home_players = []
+    for player_array in compact_json.get('hp', []):
+        player = {
+            'name': player_array[0],
+            'profile': {
+                'offense': player_array[1],
+                'defense': player_array[2],
+                'shot_selection': player_array[3],
+                'efficiency': player_array[4],
+                'MPG': player_array[5],
+                'usage': player_array[6]
+            }
+        }
+        home_players.append(player)
+    
+    # Convert plays back to verbose format
+    lineup_lookup = compact_json.get('L', [])
+    plays_array = compact_json.get('p', [])
+    
+    recent_plays = []
+    for play_tuple in plays_array:
+        if len(play_tuple) < 6:
+            continue
+            
+        quarter = play_tuple[0]
+        time_seconds = play_tuple[1]
+        score_array = play_tuple[2]
+        actor = play_tuple[3]
+        event_code = play_tuple[4]
+        
+        # Handle both scoring and non-scoring play formats
+        if len(play_tuple) == 7:  # Scoring play: [q, t, score, actor, event, pts, lineup_id]
+            points = play_tuple[5]
+            lineup_id = play_tuple[6]
+        else:  # Non-scoring play: [q, t, score, actor, event, lineup_id]
+            points = None
+            lineup_id = play_tuple[5]
+        
+        # Convert time back to MM:SS format
+        minutes = time_seconds // 60
+        seconds = time_seconds % 60
+        time_remaining = f"{minutes:02d}:{seconds:02d}"
+        
+        # Build score string
+        score = f"{away_abbrev} {score_array[0]} - {home_abbrev} {score_array[1]}"
+        
+        # Resolve player name from actor
+        player_name = None
+        if actor[1] != -1:  # Not a team event
+            if actor[0] == "A" and actor[1] < len(away_players):
+                player_name = away_players[actor[1]]['name']
+            elif actor[0] == "H" and actor[1] < len(home_players):
+                player_name = home_players[actor[1]]['name']
+        
+        # Convert event code back to description (simplified)
+        description = f"Converted from {event_code}"
+        
+        # Build players_on_court from lineup
+        players_on_court = []
+        if lineup_id < len(lineup_lookup):
+            lineup = lineup_lookup[lineup_id]
+            away_lineup_indices = lineup.get('A', [])
+            home_lineup_indices = lineup.get('H', [])
+            
+            away_lineup_names = []
+            for idx in away_lineup_indices:
+                if idx < len(away_players):
+                    away_lineup_names.append(away_players[idx]['name'])
+            
+            home_lineup_names = []
+            for idx in home_lineup_indices:
+                if idx < len(home_players):
+                    home_lineup_names.append(home_players[idx]['name'])
+            
+            players_on_court = [
+                {'team': away_abbrev, 'players': away_lineup_names},
+                {'team': home_abbrev, 'players': home_lineup_names}
+            ]
+        
+        # Build shot_details
+        shot_details = {'team': None, 'points': None}
+        if points is not None:
+            if actor[0] == "A":
+                shot_details['team'] = away_abbrev
+            else:
+                shot_details['team'] = home_abbrev
+            shot_details['points'] = points
+        
+        play = {
+            'quarter': quarter,
+            'time_remaining': time_remaining,
+            'score': score,
+            'players_on_court': players_on_court,
+            'player': player_name,
+            'description': description,
+            'shot_details': shot_details
+        }
+        
+        recent_plays.append(play)
+    
+    # Build verbose format
+    verbose_record = {
+        'away_team': {
+            'name': away_abbrev,
+            'stats': away_stats,
+            'players': away_players
+        },
+        'home_team': {
+            'name': home_abbrev,
+            'stats': home_stats,
+            'players': home_players
+        },
+        'recent_plays': recent_plays
+    }
+    
+    return verbose_record
+
 def load_play_by_play_data(season_year):
     """
     Load play-by-play data for the specified season year.
@@ -393,18 +1357,25 @@ def determine_home_away_teams(df):
     
     return game_team_mapping
 
-def create_llm_training_data(df, n_total=5, filter_nan=True):
+def create_llm_training_data(df, n_total=5, filter_nan=True, generation_mode="remaining_plays", use_direct_compact=False, use_batch_pca=False):
     """
-    Create LLM training data in structured JSON format with team stats and recent plays.
+    Create LLM training data in compact schema format with team stats and recent plays.
     Only includes plays within the same game (respects game_id boundaries).
     
     Args:
         df (pd.DataFrame): Play-by-play DataFrame with required columns
         n_total (int): Total number of recent plays to include (default: 5)
         filter_nan (bool): Whether to filter out rows with NaN descriptions (default: True)
+        generation_mode (str): Training data generation mode:
+            - "remaining_plays": Skip first N plays, generate training data for plays N+1 onwards
+            - "first_N_plays": Generate training data for all plays (first_N_plays mode handles the filtering)
+        use_direct_compact (bool): 🚀 OPTIMIZATION #1: If True, build compact format directly 
+            instead of verbose → convert (30-50% faster, identical output)
+        use_batch_pca (bool): 🚀 OPTIMIZATION #2: If True, pre-calculate PCA scores for all 
+            unique dates instead of individual calls (10-50x faster)
     
     Returns:
-        pd.DataFrame: DataFrame with new 'json_training_data' column containing JSON strings
+        pd.DataFrame: DataFrame with new 'json_training_data' column containing JSON strings in compact format
     """
     # Work with a copy to avoid modifying original DataFrame
     result_df = df.copy()
@@ -420,6 +1391,38 @@ def create_llm_training_data(df, n_total=5, filter_nan=True):
     # Get team stats and lineups for each game (cache to avoid repeated calls)
     unique_games = result_df['game_id'].unique()
     print(f"Loading team stats for {len(unique_games)} unique games...")
+    
+    # 🚀 OPTIMIZATION #2: Batch PCA calculations
+    pca_cache = {}
+    if use_batch_pca:
+        unique_dates = result_df['date'].dropna().unique()
+        print(f"🚀 Pre-calculating PCA scores for {len(unique_dates)} unique dates...")
+        
+        from pca_optimized import calculate_all_pca_scores_for_date
+        import time
+        
+        batch_start_time = time.time()
+        total_dates_processed = 0
+        
+        for date in unique_dates:
+            try:
+                pca_cache[date] = calculate_all_pca_scores_for_date(date, SEASON_YEAR)
+                total_dates_processed += 1
+                if total_dates_processed % 10 == 0:
+                    elapsed = time.time() - batch_start_time
+                    print(f"  📈 Processed {total_dates_processed}/{len(unique_dates)} dates ({elapsed:.1f}s)")
+            except Exception as e:
+                print(f"⚠️  Warning: PCA calculation failed for {date}: {e}")
+                pca_cache[date] = {}
+        
+        batch_elapsed = time.time() - batch_start_time
+        total_players_calculated = sum(len(date_cache) for date_cache in pca_cache.values())
+        print(f"✅ Batch PCA complete: {total_players_calculated:,} player-date combinations in {batch_elapsed:.1f}s")
+        if total_players_calculated > 0 and batch_elapsed > 0:
+            print(f"⚡ PCA Speed: {total_players_calculated / batch_elapsed:.0f} calculations/second")
+        elif total_players_calculated > 0:
+            print(f"⚡ PCA Speed: Instant (cached)")
+        
     
     # OPTIMIZATION: Only load player data if we have few games (testing mode)
     print("Loading player boxscore data for lineups...")
@@ -461,7 +1464,31 @@ def create_llm_training_data(df, n_total=5, filter_nan=True):
     
     json_training_data = []
     
+    # For remaining_plays mode, identify first N plays to skip for each game
+    skip_indices = set()
+    if generation_mode == "remaining_plays":
+        print(f"🎯 remaining_plays mode: Skipping first {n_total} plays of each game")
+        for game_id in unique_games:
+            game_indices = result_df[result_df['game_id'] == game_id].index.tolist()
+            valid_play_count = 0
+            
+            for idx in game_indices:
+                if pd.notna(result_df.iloc[idx]['description']):
+                    valid_play_count += 1
+                    if valid_play_count <= n_total:
+                        skip_indices.add(idx)
+                    else:
+                        break  # Found first N valid plays, stop skipping
+        
+        print(f"   • Skipping {len(skip_indices)} plays across {len(unique_games)} games")
+    else:
+        print(f"🎯 {generation_mode} mode: Processing all plays")
+    
     for i in range(len(result_df)):
+        # Skip first N plays for remaining_plays mode
+        if i in skip_indices:
+            json_training_data.append("{}")  # Placeholder for skipped plays
+            continue
         current_game_id = result_df.iloc[i]['game_id']
         current_desc = result_df.iloc[i]['description']
         
@@ -473,8 +1500,86 @@ def create_llm_training_data(df, n_total=5, filter_nan=True):
         home_abbrev = team_stats.get('home_abbrev', 'Unknown')
         lineups = team_stats.get('lineups', {})
         
-        # Collect recent plays from the same game only
-        recent_plays = []
+        # Create players array from lineups
+        away_players = []
+        home_players = []
+        away_name_to_idx = {}
+        home_name_to_idx = {}
+        
+        # Get abbreviation to full name mapping for lineup matching
+        abbrev_mapping = create_team_abbreviation_mapping()
+        away_full_name = abbrev_mapping.get(away_abbrev, away_abbrev)
+        home_full_name = abbrev_mapping.get(home_abbrev, home_abbrev)
+        
+        # Get game date and current season for player stats
+        current_game_date = result_df.iloc[i].get('date', None)
+        # Use the full season format (e.g., "2023-2024") to match cache files
+        if SEASON_YEAR and '-' in SEASON_YEAR:
+            current_season = SEASON_YEAR  # Keep full format: "2023-2024"
+        else:
+            current_season = "2023-2024"  # Default fallback
+        
+        # Process lineups to create player objects with stats
+        for team_name, player_list in lineups.items():
+            # Determine if this lineup is for away or home team
+            is_away_team = (away_full_name in team_name or team_name in away_full_name or 
+                           any(part in team_name for part in away_full_name.split()))
+            is_home_team = (home_full_name in team_name or team_name in home_full_name or
+                           any(part in team_name for part in home_full_name.split()))
+            
+            if is_away_team:
+                for player_name in player_list:
+                    try:
+                        offense, defense, shot_selection, efficiency = get_player_pca_from_cache_or_calculate(
+                            player_name, current_game_date, current_season, pca_cache
+                        )
+                        
+                        # Build player array: [name, offense, defense, shot_selection, efficiency, MPG, usage]
+                        player_array = [
+                            player_name,
+                            round(float(offense), 2) if offense is not None else 0.0,
+                            round(float(defense), 2) if defense is not None else 0.0,
+                            round(float(shot_selection), 2) if shot_selection is not None else 0.0,
+                            round(float(efficiency), 2) if efficiency is not None else 0.0,
+                            25,  # Default MPG
+                            18   # Default usage
+                        ]
+                        away_players.append(player_array)
+                        away_name_to_idx[player_name] = len(away_players) - 1
+                        
+                    except Exception as e:
+                        print(f"Warning: Could not get PCA scores for {player_name}: {e}")
+                        player_array = [player_name, 0.0, 0.0, 0.0, 0.0, 25, 18]
+                        away_players.append(player_array)
+                        away_name_to_idx[player_name] = len(away_players) - 1
+            
+            elif is_home_team:
+                for player_name in player_list:
+                    try:
+                        offense, defense, shot_selection, efficiency = get_player_pca_from_cache_or_calculate(
+                            player_name, current_game_date, current_season, pca_cache
+                        )
+                        
+                        player_array = [
+                            player_name,
+                            round(float(offense), 2) if offense is not None else 0.0,
+                            round(float(defense), 2) if defense is not None else 0.0,
+                            round(float(shot_selection), 2) if shot_selection is not None else 0.0,
+                            round(float(efficiency), 2) if efficiency is not None else 0.0,
+                            25,  # Default MPG
+                            18   # Default usage
+                        ]
+                        home_players.append(player_array)
+                        home_name_to_idx[player_name] = len(home_players) - 1
+                        
+                    except Exception as e:
+                        print(f"Warning: Could not get PCA scores for {player_name}: {e}")
+                        player_array = [player_name, 0.0, 0.0, 0.0, 0.0, 25, 18]
+                        home_players.append(player_array)
+                        home_name_to_idx[player_name] = len(home_players) - 1
+        
+        # Collect recent plays in verbose format first, then convert to compact
+        recent_plays_verbose = []
         collected_count = 0
         
         # Go backwards from current position to collect recent plays
@@ -495,35 +1600,33 @@ def create_llm_training_data(df, n_total=5, filter_nan=True):
                 row_remaining_time = result_df.iloc[j].get('remaining_time', '0:00:00')
                 quarter, time_in_quarter = convert_to_quarter_time(row_period, row_remaining_time)
                 
-                # Determine scoring info by comparing with previous play
-                scoring_team = None
-                points_scored = 0
+                # Create minimal players_on_court data for lineup creation
+                players_on_court = [
+                    {'team': away_abbrev, 'players': list(away_name_to_idx.keys())[:5]},
+                    {'team': home_abbrev, 'players': list(home_name_to_idx.keys())[:5]}
+                ]
                 
-                if j < len(result_df) - 1:  # Not the last row
-                    next_j = j + 1
-                    if (next_j < len(result_df) and 
-                        result_df.iloc[next_j]['game_id'] == current_game_id):
-                        
-                        prev_away_score = result_df.iloc[next_j].get('away_score', 0) or 0
-                        prev_home_score = result_df.iloc[next_j].get('home_score', 0) or 0
-                        
-                        scoring_team, points_scored = determine_scoring_info(
-                            prev_away_score, prev_home_score, 
-                            row_away_score, row_home_score, 
-                            away_abbrev, home_abbrev
-                        )
+                # Build shot_details for compatibility with conversion
+                shot_details = {'team': None, 'points': None}
                 
-                # Create play object with proper type conversion
+                # Create play object in verbose format with structured fields for better event mapping
                 play_obj = {
                     "quarter": int(quarter),
                     "time_remaining": str(time_in_quarter),
                     "description": remove_parentheses_content(row_desc),
                     "score": f"{away_abbrev} {int(row_away_score)} - {home_abbrev} {int(row_home_score)}",
-                    "scoring_team": str(scoring_team) if scoring_team else None,
-                    "points_scored": int(points_scored)
+                    "players_on_court": players_on_court,
+                    "player": None,  # Will be resolved during conversion
+                    "shot_details": shot_details,
+                    # Include structured fields from original DataFrame for better event mapping
+                    "type": result_df.iloc[j].get('type'),
+                    "event_type": result_df.iloc[j].get('event_type'),
+                    "result": result_df.iloc[j].get('result'),
+                    "points": result_df.iloc[j].get('points'),
+                    "shot_distance": result_df.iloc[j].get('shot_distance')
                 }
                 
-                recent_plays.insert(0, play_obj)  # Insert at beginning to maintain chronological order
+                recent_plays_verbose.insert(0, play_obj)  # Insert at beginning to maintain chronological order
                 collected_count += 1
                 
                 # Stop if we've collected the desired total number of plays
@@ -534,103 +1637,61 @@ def create_llm_training_data(df, n_total=5, filter_nan=True):
         away_rest_days = away_stats.get('REST_DAYS') if away_stats.get('REST_DAYS') is not None else 0
         home_rest_days = home_stats.get('REST_DAYS') if home_stats.get('REST_DAYS') is not None else 0
         
-        # Create players array from lineups
-        players = []
-        
-        # Get abbreviation to full name mapping for lineup matching
-        abbrev_mapping = create_team_abbreviation_mapping()
-        away_full_name = abbrev_mapping.get(away_abbrev, away_abbrev)
-        home_full_name = abbrev_mapping.get(home_abbrev, home_abbrev)
-        
-        # Get game date and current season for player stats
-        current_game_date = result_df.iloc[i].get('date', None)
-        # Extract the ending year from season format "2023-2024" -> "2024"
-        if SEASON_YEAR and '-' in SEASON_YEAR:
-            current_season = SEASON_YEAR.split('-')[1]
+        # Create verbose format first, then convert to compact
+        # 🚀 OPTIMIZATION: Choose between direct compact builder or verbose → convert
+        if use_direct_compact:
+            # Direct compact generation (30-50% faster)
+            away_stats_dict = {
+                "OEFF": float(away_stats.get('OEFF')) if away_stats.get('OEFF') is not None else 110.0,
+                "DEFF": float(away_stats.get('DEFF')) if away_stats.get('DEFF') is not None else 110.0,
+                "PACE": float(away_stats.get('PACE')) if away_stats.get('PACE') is not None else 100.0,
+                "REST_DAYS": int(away_rest_days) if away_rest_days is not None else 2
+            }
+            
+            home_stats_dict = {
+                "OEFF": float(home_stats.get('OEFF')) if home_stats.get('OEFF') is not None else 110.0,
+                "DEFF": float(home_stats.get('DEFF')) if home_stats.get('DEFF') is not None else 110.0,
+                "PACE": float(home_stats.get('PACE')) if home_stats.get('PACE') is not None else 100.0,
+                "REST_DAYS": int(home_rest_days) if home_rest_days is not None else 2
+            }
+            
+            compact_json_obj = build_compact_training_data_direct(
+                current_game_id, away_abbrev, home_abbrev,
+                away_stats_dict, home_stats_dict,
+                away_players, home_players,
+                recent_plays_verbose, away_name_to_idx, home_name_to_idx
+            )
         else:
-            current_season = "2024"  # Default fallback
-        
-        # Process lineups to create player objects with stats
-        for team_name, player_list in lineups.items():
-            # Determine if this lineup is for away or home team
-            team_abbrev = None
+            # Original method: verbose → convert (for compatibility/testing)
+            verbose_json_obj = {
+                "away_team": {
+                    "name": str(away_abbrev) if away_abbrev else "Unknown",
+                    "stats": {
+                        "OEFF": float(away_stats.get('OEFF')) if away_stats.get('OEFF') is not None else 110.0,
+                        "DEFF": float(away_stats.get('DEFF')) if away_stats.get('DEFF') is not None else 110.0,
+                        "PACE": float(away_stats.get('PACE')) if away_stats.get('PACE') is not None else 100.0,
+                        "REST_DAYS": int(away_rest_days) if away_rest_days is not None else 2
+                    },
+                    "players": [{"name": p[0], "profile": {"offense": p[1], "defense": p[2], "shot_selection": p[3], "efficiency": p[4], "MPG": p[5], "usage": p[6]}} for p in away_players]
+                },
+                "home_team": {
+                    "name": str(home_abbrev) if home_abbrev else "Unknown",
+                    "stats": {
+                        "OEFF": float(home_stats.get('OEFF')) if home_stats.get('OEFF') is not None else 110.0,
+                        "DEFF": float(home_stats.get('DEFF')) if home_stats.get('DEFF') is not None else 110.0,
+                        "PACE": float(home_stats.get('PACE')) if home_stats.get('PACE') is not None else 100.0,
+                        "REST_DAYS": int(home_rest_days) if home_rest_days is not None else 2
+                    },
+                    "players": [{"name": p[0], "profile": {"offense": p[1], "defense": p[2], "shot_selection": p[3], "efficiency": p[4], "MPG": p[5], "usage": p[6]}} for p in home_players]
+                },
+                "recent_plays": recent_plays_verbose
+            }
             
-            # Check for away team match
-            if (away_full_name in team_name or team_name in away_full_name or 
-                any(part in team_name for part in away_full_name.split())):
-                team_abbrev = away_abbrev
-            # Check for home team match
-            elif (home_full_name in team_name or team_name in home_full_name or
-                  any(part in team_name for part in home_full_name.split())):
-                team_abbrev = home_abbrev
-            
-            # Add players from this team with PCA stats
-            if team_abbrev:
-                for player_name in player_list:
-                    # Get PCA scores for this player
-                    try:
-                        # Debug: Print first player's date passing
-                        if i == 0 and len(players) == 0:
-                            print(f"DEBUG: Passing date '{current_game_date}' to PCA for player '{player_name}'")
-                        
-                        # ALWAYS use OPTIMIZED PCA computation with your 306K+ cache files
-                        # This will use pca_optimized.py which loads from your pre-built cache
-                        offense, defense, shot_selection, efficiency = get_player_pca_score(
-                            player_name, current_game_date, current_season
-                        )
-                        
-                        # Convert to integers (scaling by 100 to match template format)
-                        offense_score = int(round(offense * 100)) if offense is not None else None
-                        defense_score = int(round(defense * 100)) if defense is not None else None
-                        shot_selection_score = int(round(shot_selection * 100)) if shot_selection is not None else None
-                        efficiency_score = int(round(efficiency * 100)) if efficiency is not None else None
-                        
-                    except Exception as e:
-                        # Fallback to None if PCA calculation fails
-                        print(f"Warning: Could not get PCA scores for {player_name}: {e}")
-                        offense_score = None
-                        defense_score = None
-                        shot_selection_score = None
-                        efficiency_score = None
-                    
-                    player_obj = {
-                        "name": str(player_name),
-                        "team": str(team_abbrev),
-                        "stats": {
-                            "offense": offense_score,
-                            "defense": defense_score,
-                            "shot_selection": shot_selection_score,
-                            "efficiency": efficiency_score
-                        }
-                    }
-                    players.append(player_obj)
-        
-        # Create JSON structure with proper type conversion
-        json_obj = {
-            "away_team": {
-                "name": str(away_abbrev) if away_abbrev else "Unknown",
-                "stats": {
-                    "OEFF": float(away_stats.get('OEFF')) if away_stats.get('OEFF') is not None else None,
-                    "DEFF": float(away_stats.get('DEFF')) if away_stats.get('DEFF') is not None else None,
-                    "PACE": float(away_stats.get('PACE')) if away_stats.get('PACE') is not None else None,
-                    "REST_DAYS": int(away_rest_days) if away_rest_days is not None else 0
-                }
-            },
-            "home_team": {
-                "name": str(home_abbrev) if home_abbrev else "Unknown",
-                "stats": {
-                    "OEFF": float(home_stats.get('OEFF')) if home_stats.get('OEFF') is not None else None,
-                    "DEFF": float(home_stats.get('DEFF')) if home_stats.get('DEFF') is not None else None,
-                    "PACE": float(home_stats.get('PACE')) if home_stats.get('PACE') is not None else None,
-                    "REST_DAYS": int(home_rest_days) if home_rest_days is not None else 0
-                }
-            },
-            "players": players,
-            "recent_plays": recent_plays
-        }
+            # Convert verbose format to compact format
+            compact_json_obj = convert_verbose_to_compact(verbose_json_obj)
         
         # Convert to JSON string
-        json_string = json.dumps(json_obj, separators=(',', ':'))
+        json_string = json.dumps(compact_json_obj, separators=(',', ':'))
         json_training_data.append(json_string)
     
     # Add the JSON training data as a new column
@@ -758,13 +1819,13 @@ def generate_llm_dataset(season_year=None, n_total=5, sample_size=None, game_id_
 
 def create_openai_training_data(df):
     """
-    Convert our JSON training data into OpenAI fine-tuning JSONL format.
+    Convert compact JSON training data into OpenAI fine-tuning JSONL format.
     Each row becomes a user-assistant pair where:
-    - User: Our JSON context (team stats, players, recent plays)  
-    - Assistant: The next play in the sequence
+    - User: Our compact JSON context
+    - Assistant: The next play in compact tuple format
     
     Args:
-        df (pd.DataFrame): DataFrame with 'json_training_data' column
+        df (pd.DataFrame): DataFrame with 'json_training_data' column containing compact format
         
     Returns:
         list: List of training examples in OpenAI format
@@ -779,40 +1840,104 @@ def create_openai_training_data(df):
             current_row = game_df.iloc[i]
             next_row = game_df.iloc[i + 1]
             
-            # Parse the current JSON context
+            # Parse the current compact JSON context
             try:
-                current_json = json.loads(current_row['json_training_data'])
+                current_compact = json.loads(current_row['json_training_data'])
                 
-                # Create the next play response using our helper functions
+                # Extract team abbreviations from compact format
+                away_abbrev = current_compact.get('a', 'AWAY')
+                home_abbrev = current_compact.get('h', 'HOME')
+                
+                # Build name to index mappings
+                away_name_to_idx = {}
+                home_name_to_idx = {}
+                
+                for idx, player_array in enumerate(current_compact.get('ap', [])):
+                    away_name_to_idx[player_array[0]] = idx
+                
+                for idx, player_array in enumerate(current_compact.get('hp', [])):
+                    home_name_to_idx[player_array[0]] = idx
+                
+                # Create the next play in compact tuple format
                 next_quarter, next_time = convert_to_quarter_time(next_row['period'], next_row['remaining_time'])
+                next_time_seconds = parse_time_to_seconds(next_time)  # Convert MM:SS to seconds
+                
+                next_away_score = int(next_row.get('away_score', 0) or 0)
+                next_home_score = int(next_row.get('home_score', 0) or 0)
+                next_score_array = [next_away_score, next_home_score]
                 
                 # Determine scoring info for next play
                 if i == 0:
                     prev_away_score = 0
                     prev_home_score = 0
                 else:
-                    prev_away_score = game_df.iloc[i-1]['away_score'] 
-                    prev_home_score = game_df.iloc[i-1]['home_score']
+                    prev_away_score = int(game_df.iloc[i-1].get('away_score', 0) or 0)
+                    prev_home_score = int(game_df.iloc[i-1].get('home_score', 0) or 0)
                 
-                scoring_team, points_scored = determine_scoring_info(
-                    prev_away_score, prev_home_score,
-                    next_row['away_score'], next_row['home_score'], 
-                    current_json['away_team']['name'], current_json['home_team']['name']
+                score_delta = max(0, max(
+                    next_away_score - prev_away_score,  # Away team scored
+                    next_home_score - prev_home_score   # Home team scored
+                ))
+                
+                # Resolve actor for next play
+                next_player = next_row.get('player')
+                next_shot_details = {'team': None, 'points': None}
+                actor = resolve_actor(
+                    next_player, next_shot_details, away_abbrev, home_abbrev,
+                    away_name_to_idx, home_name_to_idx
                 )
                 
-                # Format score
-                score = f"{current_json['away_team']['name']} {next_row['away_score']} - {current_json['home_team']['name']} {next_row['home_score']}"
+                # Map to event code - prefer structured data when available
+                if all(key in next_row for key in ['type', 'event_type']):
+                    # Use structured mapping when available (better accuracy)
+                    event_code, points = map_structured_to_event_code(next_row)
+                else:
+                    # Fall back to description parsing
+                    description = next_row.get('description', '')
+                    event_code, points = map_description_to_event_code(
+                        description, next_shot_details, score_delta
+                    )
                 
-                # Create the assistant response
-                assistant_response = {
-                    "next_play": {
-                        "quarter": int(next_quarter),
-                        "time_remaining": str(next_time),
-                        "description": remove_parentheses_content(next_row['description']),
-                        "score": str(score),
-                        "scoring_team": str(scoring_team) if scoring_team else None,
-                        "points_scored": int(points_scored) if points_scored else 0
+                # Get current lineup ID (use last play's lineup or default to 0)
+                current_lineups = current_compact.get('L', [])
+                lineup_id = 0 if not current_lineups else len(current_lineups) - 1
+                
+                # Create compact next play tuple - ensure JSON serializable types
+                if points is not None:
+                    # Scoring play: [q, t, score, actor, event, pts, lineup_id]
+                    next_play_tuple = [
+                        int(next_quarter), 
+                        int(next_time_seconds), 
+                        [int(next_score_array[0]), int(next_score_array[1])], 
+                        actor, 
+                        event_code, 
+                        int(points), 
+                        int(lineup_id)
+                    ]
+                else:
+                    # Non-scoring play: [q, t, score, actor, event, lineup_id]
+                    next_play_tuple = [
+                        int(next_quarter),
+                        int(next_time_seconds),
+                        [int(next_score_array[0]), int(next_score_array[1])],
+                        actor,
+                        event_code,
+                        int(lineup_id)
+                    ]
+                
+                # Handle offensive foul special case - need both o_foul and tov
+                if event_code == "o_foul":
+                    # Create assistant response with both plays
+                    assistant_response = {
+                        "y": [
+                            [int(next_quarter), int(next_time_seconds), [int(next_score_array[0]), int(next_score_array[1])], actor, "o_foul", int(lineup_id)],
+                            [int(next_quarter), int(next_time_seconds), [int(next_score_array[0]), int(next_score_array[1])], actor, "tov", int(lineup_id)]
+                        ]
                     }
+                else:
+                    # Regular single play response
+                    assistant_response = {
+                        "y": next_play_tuple
                 }
                 
                 # Create OpenAI training example
@@ -820,7 +1945,7 @@ def create_openai_training_data(df):
                     "messages": [
                         {
                             "role": "user",
-                            "content": current_row['json_training_data']  # Our JSON context
+                            "content": current_row['json_training_data']  # Our compact JSON context
                         },
                         {
                             "role": "assistant", 

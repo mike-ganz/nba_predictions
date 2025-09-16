@@ -87,6 +87,73 @@ class NBAResponseValidator:
         
         print(f"🔧 NBAResponseValidator initialized in {validation_mode} mode")
     
+    def _convert_compact_response_for_validation(self, compact_response: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert compact format response to verbose format for validation.
+        
+        Args:
+            compact_response: Response with "y" field containing play tuple(s)
+            context: Game context for reference
+            
+        Returns:
+            Dict with "next_play" field in verbose format
+        """
+        try:
+            y_data = compact_response.get("y")
+            if not y_data:
+                return {"error": "No 'y' field in compact response"}
+            
+            # Handle both single play tuple and array of play tuples
+            if isinstance(y_data, list) and len(y_data) > 0:
+                if isinstance(y_data[0], list):
+                    # Multiple plays (e.g., offensive foul + turnover)
+                    primary_play = y_data[0]
+                else:
+                    # Single play tuple
+                    primary_play = y_data
+            else:
+                return {"error": "Invalid 'y' data structure"}
+            
+            # Convert play tuple to verbose format
+            if len(primary_play) < 6:
+                return {"error": f"Play tuple too short: {len(primary_play)} elements"}
+            
+            quarter = primary_play[0]
+            time_seconds = primary_play[1]
+            score_array = primary_play[2] if len(primary_play[2]) >= 2 else [0, 0]
+            actor = primary_play[3]
+            event_code = primary_play[4]
+            
+            # Handle both scoring and non-scoring formats
+            if len(primary_play) == 7:  # Scoring: [q, t, score, actor, event, pts, lineup_id]
+                points = primary_play[5]
+                lineup_id = primary_play[6]
+            else:  # Non-scoring: [q, t, score, actor, event, lineup_id]
+                points = None
+                lineup_id = primary_play[5]
+            
+            # Convert time back to MM:SS format
+            minutes = time_seconds // 60
+            seconds = time_seconds % 60
+            time_remaining = f"{minutes:02d}:{seconds:02d}"
+            
+            # Create verbose format next_play
+            next_play = {
+                "quarter": quarter,
+                "time_remaining": time_remaining,
+                "description": f"Predicted {event_code}",
+                "score": f"AWAY {score_array[0]} - HOME {score_array[1]}",
+                "shot_details": {
+                    "team": actor[0] if points else None,
+                    "points": points
+                }
+            }
+            
+            return {"next_play": next_play}
+            
+        except Exception as e:
+            return {"error": f"Conversion failed: {e}"}
+    
     def _init_minimal_tracking(self):
         """Initialize minimal state tracking for fast mode."""
         # Only track absolute essentials for fast validation
@@ -149,6 +216,7 @@ class NBAResponseValidator:
     def validate_response(self, response_text: str, context: Dict[str, Any]) -> Tuple[ValidationResult, List[ValidationError], str]:
         """
         Validate a model response against expected format with configurable validation depth.
+        Supports both verbose and compact schema formats.
         
         Args:
             response_text: Raw response text from the model
@@ -180,6 +248,30 @@ class NBAResponseValidator:
                 message=error_msg
             ))
             return ValidationResult.RETRY, self.errors, "JSON parse error"
+        
+        # Step 1.5: Check if this is compact format and convert if needed
+        if "y" in response_data and "next_play" not in response_data:
+            # This looks like compact format, convert to verbose for validation
+            try:
+                response_data = self._convert_compact_response_for_validation(response_data, context)
+                if "error" in response_data:
+                    self.errors.append(ValidationError(
+                        field_path="y",
+                        error_type="compact_format_error",
+                        expected="valid compact play tuple",
+                        actual="conversion_failed",
+                        message=response_data["error"]
+                    ))
+                    return ValidationResult.RETRY, self.errors, "Compact format conversion error"
+            except Exception as e:
+                self.errors.append(ValidationError(
+                    field_path="y",
+                    error_type="compact_format_error",
+                    expected="valid compact format",
+                    actual="conversion_exception",
+                    message=f"Failed to convert compact format: {e}"
+                ))
+                return ValidationResult.RETRY, self.errors, "Compact format exception"
         
         # Step 2: Validate top-level structure (always required)
         if not self._validate_top_level_structure(response_data):

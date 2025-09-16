@@ -100,7 +100,7 @@ class Config:
         except (ValueError, IndexError):
             return "2022-2023"  # Default fallback
     
-                    def _get_file_mapping(self) -> Dict[str, str]:
+    def _get_file_mapping(self) -> Dict[str, str]:
         """Get mapping of season years to file paths."""
         
         # Check if running on GCP (environment variable set)

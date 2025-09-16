@@ -73,9 +73,15 @@ def calculate_player_stats(player_name, max_date=None, current_season=None):
     # If current_season is provided and different from loaded SEASON_YEAR, load that season's data
     if current_season and current_season != SEASON_YEAR:
         try:
-            # Convert current_season year to season format (e.g., "2024" -> "2023-2024")
-            season_year = int(current_season)
-            season_format = f"{season_year-1}-{current_season}"
+            # Handle both single year (e.g., "2024") and full format (e.g., "2023-2024")
+            if "-" in current_season:
+                # Already in proper format (e.g., "2023-2024")
+                season_format = current_season
+            else:
+                # Convert single year to season format (e.g., "2024" -> "2023-2024")
+                season_year = int(current_season)
+                season_format = f"{season_year-1}-{current_season}"
+            
             temp_df = load_player_data(season_format)
             player_df = temp_df[temp_df['PLAYER \nFULL NAME'] == player_name]
         except (ValueError, FileNotFoundError):

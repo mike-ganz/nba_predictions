@@ -26,7 +26,98 @@ class GeminiFormatter(BaseFormatter):
         """Return the platform name."""
         return "Gemini"
     
-    def create_training_data(self, df: pd.DataFrame, generation_mode: str = "remaining_plays") -> List[Dict[str, Any]]:
+    def _is_compact_format(self, json_data: Dict[str, Any]) -> bool:
+        """Check if the JSON data is in compact format."""
+        if not isinstance(json_data, dict):
+            return False
+        # Quick check for compact vs verbose format
+        return ('a' in json_data and 'h' in json_data and 
+                'away_team' not in json_data and 'home_team' not in json_data)
+    
+    def _convert_compact_to_verbose_for_gemini(self, compact_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert compact format to verbose format for Gemini formatter processing.
+        This is a simplified conversion focused on what the formatter needs.
+        """
+        try:
+            away_abbrev = compact_data.get('a', 'AWAY')
+            home_abbrev = compact_data.get('h', 'HOME')
+            
+            # Convert team stats
+            away_stats_array = compact_data.get('as', [110.0, 110.0, 100.0, 2])
+            home_stats_array = compact_data.get('hs', [110.0, 110.0, 100.0, 2])
+            
+            # Convert plays to verbose format
+            plays_array = compact_data.get('p', [])
+            recent_plays = []
+            
+            for play_tuple in plays_array:
+                if len(play_tuple) >= 6:
+                    quarter = play_tuple[0]
+                    time_seconds = play_tuple[1]
+                    score_array = play_tuple[2]
+                    actor = play_tuple[3]
+                    event_code = play_tuple[4]
+                    
+                    # Handle both scoring and non-scoring formats
+                    if len(play_tuple) == 7:
+                        points = play_tuple[5]
+                        lineup_id = play_tuple[6]
+                    else:
+                        points = None
+                        lineup_id = play_tuple[5]
+                    
+                    # Convert time back to MM:SS
+                    minutes = time_seconds // 60
+                    seconds = time_seconds % 60
+                    time_remaining = f"{minutes:02d}:{seconds:02d}"
+                    
+                    # Build score string
+                    score_str = f"{away_abbrev} {score_array[0]} - {home_abbrev} {score_array[1]}"
+                    
+                    # Create verbose play object
+                    play = {
+                        'quarter': quarter,
+                        'time_remaining': time_remaining,
+                        'description': f"Play: {event_code}",
+                        'score': score_str,
+                        'shot_details': {
+                            'team': away_abbrev if actor[0] == 'A' else home_abbrev,
+                            'points': points
+                        } if points else {'team': None, 'points': None}
+                    }
+                    recent_plays.append(play)
+            
+            # Build verbose format
+            verbose_data = {
+                'away_team': {
+                    'name': away_abbrev,
+                    'stats': {
+                        'OEFF': away_stats_array[0],
+                        'DEFF': away_stats_array[1],
+                        'PACE': away_stats_array[2],
+                        'REST_DAYS': away_stats_array[3]
+                    }
+                },
+                'home_team': {
+                    'name': home_abbrev,
+                    'stats': {
+                        'OEFF': home_stats_array[0],
+                        'DEFF': home_stats_array[1],
+                        'PACE': home_stats_array[2],
+                        'REST_DAYS': home_stats_array[3]
+                    }
+                },
+                'recent_plays': recent_plays
+            }
+            
+            return verbose_data
+            
+        except Exception as e:
+            print(f"⚠️ Warning: Failed to convert compact to verbose for Gemini: {e}")
+            return compact_data  # Return original if conversion fails
+    
+    def create_training_data(self, df: pd.DataFrame, generation_mode: str = "remaining_plays", n_total: int = None) -> List[Dict[str, Any]]:
         """
         Convert our JSON training data into Gemini fine-tuning JSONL format.
         Handles two generation modes:
@@ -44,8 +135,15 @@ class GeminiFormatter(BaseFormatter):
         
         if generation_mode == "first_N_plays":
             # Mode 2: Single entry per game with first N plays as targets
+            from generate_training_data import load_play_by_play_data
+            # Load original play-by-play data for complete game information
+            raw_df = load_play_by_play_data('2023-2024')
+            
             for game_id in sorted(df['game_id'].unique()):
+                # Get filtered training data for context
                 game_df = df[df['game_id'] == game_id].sort_values('play_id').reset_index(drop=True)
+                # Get full raw game data for play generation
+                raw_game_df = raw_df[raw_df['game_id'] == game_id].sort_values('play_id').reset_index(drop=True)
                 
                 # Find the first row with valid JSON context (should be the first row)
                 context_row = None
@@ -53,22 +151,30 @@ class GeminiFormatter(BaseFormatter):
                     json_data = game_df.iloc[i]['json_training_data']
                     if json_data and json_data.strip() and json_data.strip() != "{}":
                         try:
-                            # Test if it's valid JSON and has team data
+                            # Test if it's valid JSON and has team data (verbose or compact)
                             parsed = json.loads(json_data)
                             if 'away_team' in parsed and 'home_team' in parsed:
+                                context_row = game_df.iloc[i]
+                                break
+                            elif self._is_compact_format(parsed):
                                 context_row = game_df.iloc[i]
                                 break
                         except json.JSONDecodeError:
                             continue
                 
-                if context_row is not None:
-                    example = self._create_first_n_plays_example(game_df, context_row)
+                if context_row is not None and len(raw_game_df) > 0:
+                    example = self._create_first_n_plays_example(raw_game_df, context_row, n_total)
                     if example:
                         training_examples.append(example)
         else:
             # Mode 1: Standard remaining_plays pairs
+            # Load raw data to ensure proper sequential play selection
+            from generate_training_data import load_play_by_play_data
+            raw_df = load_play_by_play_data('2023-2024')
+            
             for game_id in sorted(df['game_id'].unique()):
                 game_df = df[df['game_id'] == game_id].sort_values('play_id').reset_index(drop=True)
+                raw_game_df = raw_df[raw_df['game_id'] == game_id].sort_values('play_id').reset_index(drop=True)
                 
                 # Create training examples for consecutive plays  
                 for i in range(len(game_df) - 1):  # -1 because we need a next play
@@ -77,29 +183,170 @@ class GeminiFormatter(BaseFormatter):
                     if not current_json_data or current_json_data.strip() == "" or current_json_data.strip() == "{}":
                         continue
                     
-                    example = self._create_training_example(game_df, i)
+                    example = self._create_training_example(game_df, i, raw_game_df)
                     if example:
                         training_examples.append(example)
         
         return training_examples
     
-    def _create_training_example(self, game_df: pd.DataFrame, current_index: int) -> Optional[Dict[str, Any]]:
+    def _create_compact_play_tuple(self, row: pd.Series, context_json: Dict[str, Any], game_df: pd.DataFrame) -> Optional[List]:
+        """
+        Create a compact play tuple from a DataFrame row for first_N_plays mode.
+        
+        Args:
+            row: DataFrame row with play data
+            context_json: Current game context for team names and player lookups
+            game_df: Full game DataFrame for scoring calculations
+            
+        Returns:
+            list: Compact play tuple [quarter, time_seconds, score_array, actor, event_code, points?, lineup_id?]
+        """
+        try:
+            # Get quarter and time
+            quarter, time_in_quarter = convert_to_quarter_time(
+                row['period'], row['remaining_time']
+            )
+            
+            # Convert time to seconds
+            time_parts = str(time_in_quarter).split(':')
+            if len(time_parts) >= 2:
+                time_seconds = int(time_parts[0]) * 60 + int(time_parts[1])
+            else:
+                time_seconds = 720  # Default 12:00
+            
+            # Create score array
+            away_score = int(row.get('away_score', 0) or 0)
+            home_score = int(row.get('home_score', 0) or 0)
+            score_array = [away_score, home_score]
+            
+            # Determine team names based on format
+            if self._is_compact_format(context_json):
+                away_team_name = context_json['a']
+                home_team_name = context_json['h']
+            else:
+                away_team_name = context_json['away_team']['name']
+                home_team_name = context_json['home_team']['name']
+            
+            # Create actor - simplified for first_N_plays
+            player_name = row.get('player')
+            team_name = row.get('team', '')
+            
+            if team_name == away_team_name or (not team_name and player_name):
+                actor = ["A", -1]  # Away team, simplified index
+            elif team_name == home_team_name:
+                actor = ["H", -1]  # Home team, simplified index  
+            else:
+                actor = ["A", -1]  # Default to away team
+            
+            # Use structured event code mapping for better accuracy
+            from generate_training_data import map_structured_to_event_code, map_description_to_event_code
+            
+            # Check if structured data is available (type, event_type fields)
+            if all(key in row for key in ['type', 'event_type']):
+                # Use structured mapping when available (much more accurate)
+                event_code, mapped_points = map_structured_to_event_code(row)
+            else:
+                # Fall back to description parsing
+                description = row.get('description', '')
+                
+                # Calculate score delta for proper event mapping
+                prev_away_score, prev_home_score = 0, 0  # Simplified for first plays
+                if game_df is not None:
+                    current_row_index = None
+                    for pos_idx in range(len(game_df)):
+                        if (game_df.iloc[pos_idx]['play_id'] == row['play_id'] and 
+                            game_df.iloc[pos_idx]['game_id'] == row['game_id']):
+                            current_row_index = pos_idx
+                            break
+                    
+                    if current_row_index is not None and current_row_index > 0:
+                        prev_row = game_df.iloc[current_row_index - 1]
+                        prev_away_score = prev_row.get('away_score', 0) or 0
+                        prev_home_score = prev_row.get('home_score', 0) or 0
+                
+                score_delta = max(0, max(
+                    away_score - prev_away_score,  # Away team scored
+                    home_score - prev_home_score   # Home team scored
+                ))
+                
+                # Build shot_details for event mapping
+                shot_details = {
+                    'team': team_name,
+                    'points': score_delta if score_delta > 0 else None
+                }
+                
+                # Use the comprehensive mapping function
+                event_code, mapped_points = map_description_to_event_code(
+                    description, shot_details, score_delta
+                )
+            
+            # Build the compact play tuple
+            play_tuple = [
+                int(quarter),
+                int(time_seconds),
+                score_array,
+                actor,
+                event_code
+            ]
+            
+            # Add points if this is a scoring event
+            if mapped_points is not None and mapped_points > 0:
+                play_tuple.append(int(mapped_points))
+            else:
+                play_tuple.append(0)
+            
+            # Add lineup ID if available (simplified for first_N_plays)
+            # For now, omit lineup_id since it's optional and complex to calculate
+            
+            return play_tuple
+            
+        except Exception as e:
+            # Silent failure - this is expected for some plays with incomplete data
+            return None
+    
+    def _create_training_example(self, game_df: pd.DataFrame, current_index: int, raw_game_df: pd.DataFrame = None) -> Optional[Dict[str, Any]]:
         """
         Create a single Gemini training example from current and next plays.
         
         Args:
-            game_df: DataFrame for a single game, sorted by play_id
-            current_index: Index of current play
+            game_df: DataFrame for a single game (filtered training data)
+            current_index: Index of current play in filtered data
+            raw_game_df: Raw game DataFrame for finding sequential next play
             
         Returns:
             dict or None: Gemini training example or None if creation failed
         """
         try:
             current_row = game_df.iloc[current_index]
+            
+            # Find the actual next play in sequence using play_id
+            current_play_id = current_row['play_id']
+            
+            if raw_game_df is not None:
+                # Find the next sequential play in raw data
+                current_raw_index = None
+                for idx, row in raw_game_df.iterrows():
+                    if row['play_id'] == current_play_id:
+                        current_raw_index = idx
+                        break
+                
+                if current_raw_index is not None and current_raw_index < len(raw_game_df) - 1:
+                    next_row = raw_game_df.iloc[current_raw_index + 1]
+                else:
+                    return None  # No next play found
+            else:
+                # Fallback to old method if raw data not available
+                if current_index + 1 >= len(game_df):
+                    return None
             next_row = game_df.iloc[current_index + 1]
             
-            # Parse the current JSON context
-            current_json = json.loads(current_row['json_training_data'])
+            # Parse the current JSON context and convert if compact
+            current_json_raw = json.loads(current_row['json_training_data'])
+            if self._is_compact_format(current_json_raw):
+                # For Gemini, we need to convert compact to verbose for compatibility with existing logic
+                current_json = self._convert_compact_to_verbose_for_gemini(current_json_raw)
+            else:
+                current_json = current_json_raw
             
             # Create the next play response
             assistant_response = self._create_next_play_response(
@@ -141,7 +388,7 @@ class GeminiFormatter(BaseFormatter):
             print(f"Warning: Skipped Gemini training example due to error: {e}")
             return None
     
-    def _create_first_n_plays_example(self, game_df: pd.DataFrame, context_row: pd.Series) -> Optional[Dict[str, Any]]:
+    def _create_first_n_plays_example(self, game_df: pd.DataFrame, context_row: pd.Series, n_total: int = None) -> Optional[Dict[str, Any]]:
         """
         Create a single first-N-plays Gemini training example.
         
@@ -158,7 +405,8 @@ class GeminiFormatter(BaseFormatter):
             
             # Get first N non-null plays from the raw DataFrame data
             first_plays = []
-            n_total = DEFAULT_N_TOTAL_PLAYS  # Number of plays to include (configurable)
+            if n_total is None:
+                n_total = DEFAULT_N_TOTAL_PLAYS  # Fallback to default if not specified
             
             for i in range(len(game_df)):
                 if len(first_plays) >= n_total:
@@ -166,13 +414,14 @@ class GeminiFormatter(BaseFormatter):
                     
                 row = game_df.iloc[i]
                 if pd.notna(row.get('description')):
-                    # Create play object similar to recent_plays format
-                    play_obj = self._create_play_object(row, context_json, game_df)
-                    first_plays.append(play_obj)
+                    # Create compact play tuple instead of verbose play object
+                    play_tuple = self._create_compact_play_tuple(row, context_json, game_df)
+                    if play_tuple:
+                        first_plays.append(play_tuple)
             
-            # Create the response with first N plays (matching OpenAI format)
+            # Create the response with first N plays in compact format
             assistant_response = {
-                "next_plays": first_plays  # Changed from "first_N_plays" to "next_plays" for consistency
+                "y": first_plays  # Array of compact play tuples
             }
             
             # Create Gemini training example using GenerateContent format
@@ -231,6 +480,14 @@ class GeminiFormatter(BaseFormatter):
         scoring_team = None
         points_scored = 0
         
+        # Determine team names based on format (needed for score formatting)
+        if self._is_compact_format(current_json):
+            away_team_name = current_json['a']
+            home_team_name = current_json['h']
+        else:
+            away_team_name = current_json['away_team']['name']
+            home_team_name = current_json['home_team']['name']
+        
         # Find the current row index in the game DataFrame using positional index
         current_row_index = None
         for pos_idx in range(len(game_df)):
@@ -251,12 +508,11 @@ class GeminiFormatter(BaseFormatter):
             scoring_team, points_scored = determine_scoring_info(
                 prev_away_score, prev_home_score,
                 curr_away_score, curr_home_score,
-                current_json['away_team']['name'], current_json['home_team']['name']
+                away_team_name, home_team_name
             )
         
-        # Format score
-        away_team_name = current_json['away_team']['name']
-        home_team_name = current_json['home_team']['name']
+        # Format score (use the already determined team names)
+        # away_team_name and home_team_name are set above based on format
         score = f"{away_team_name} {int(row.get('away_score', 0) or 0)} - {home_team_name} {int(row.get('home_score', 0) or 0)}"
         
         # Get player
@@ -291,7 +547,7 @@ class GeminiFormatter(BaseFormatter):
             "quarter": int(quarter),
             "time_remaining": str(time_in_quarter),
             "score": score,
-            "players_on_court": extract_players_on_court(row, current_json['away_team']['name'], current_json['home_team']['name']),
+            "players_on_court": extract_players_on_court(row, away_team_name, home_team_name),
             "player": str(player) if pd.notna(player) else None,
             "description": process_play_description(row),
             "shot_details": shot_details  # Use shot_details format consistent with other formatters
@@ -316,13 +572,21 @@ class GeminiFormatter(BaseFormatter):
             next_row['period'], next_row['remaining_time']
         )
         
+        # Determine team names based on format
+        if self._is_compact_format(current_json):
+            away_team_name = current_json['a']
+            home_team_name = current_json['h']
+        else:
+            away_team_name = current_json['away_team']['name']
+            home_team_name = current_json['home_team']['name']
+        
         # Determine scoring info for next play
         prev_away_score, prev_home_score = self._get_previous_scores(game_df, current_index)
         
         scoring_team, points_scored = determine_scoring_info(
             prev_away_score, prev_home_score,
             next_row['away_score'], next_row['home_score'], 
-            current_json['away_team']['name'], current_json['home_team']['name']
+            away_team_name, home_team_name
         )
         
         # VALIDATION: Check for obvious mismatches (steal/turnover/miss with scoring)
@@ -332,17 +596,13 @@ class GeminiFormatter(BaseFormatter):
         ])
         
         if is_non_scoring_play and points_scored > 0:
-            # This should not happen - debug log the issue
-            print(f"⚠️ Scoring mismatch detected:")
-            print(f"   Description: {next_row['description']}")
-            print(f"   Scores: {prev_away_score}-{prev_home_score} → {next_row['away_score']}-{next_row['home_score']}")
-            print(f"   Calculated: {scoring_team} +{points_scored}")
-            # Force correction for obvious non-scoring plays
+            # Silent correction for obvious non-scoring plays
+            # (Data gaps in play-by-play are common and expected)
             scoring_team, points_scored = None, 0
         
         # Format score
-        score = (f"{current_json['away_team']['name']} {next_row['away_score']} - "
-                f"{current_json['home_team']['name']} {next_row['home_score']}")
+        score = (f"{away_team_name} {next_row['away_score']} - "
+                f"{home_team_name} {next_row['home_score']}")
         
         # Create shot_details object - populated only for shots
         next_event_type = next_row.get('event_type', '')
@@ -369,18 +629,99 @@ class GeminiFormatter(BaseFormatter):
                 # "y_coord": None   # Commented out - can be re-enabled later
             }
         
-        # Create the assistant response with shot_details and player info
+        # Create compact format assistant response for Gemini
         next_player = next_row.get('player')
-        return {
-            "next_play": {
-                "quarter": int(next_quarter),
-                "time_remaining": str(next_time),
-                "score": str(score),
-                "players_on_court": extract_players_on_court(next_row, current_json['away_team']['name'], current_json['home_team']['name']),
-                "player": str(next_player) if pd.notna(next_player) else None,
-                "description": process_play_description(next_row),
-                "shot_details": shot_details
+        
+        # Convert time to seconds (next_time is already in MM:SS format)
+        time_parts = str(next_time).split(':')
+        if len(time_parts) >= 2:
+            time_seconds = int(time_parts[0]) * 60 + int(time_parts[1])
+        else:
+            time_seconds = 720  # Default 12:00
+        
+        # Create score array
+        next_away_score = int(next_row.get('away_score', 0) or 0)
+        next_home_score = int(next_row.get('home_score', 0) or 0)
+        score_array = [next_away_score, next_home_score]
+        
+        # Create actor
+        away_team = away_team_name
+        home_team = home_team_name
+        
+        # Simple actor mapping based on team (simplified for formatter)
+        if scoring_team == away_team:
+            actor = ["A", 0]  # Away team, simplified index
+        elif scoring_team == home_team:
+            actor = ["H", 0]  # Home team, simplified index
+        else:
+            actor = ["A", -1]  # Default to away team event
+        
+        # Use structured event code mapping for better accuracy
+        from generate_training_data import map_structured_to_event_code, map_description_to_event_code
+        
+        # Check if structured data is available (type, event_type fields)
+        if all(key in next_row for key in ['type', 'event_type']):
+            # Use structured mapping when available (much more accurate)
+            event_code, mapped_points = map_structured_to_event_code(next_row)
+            
+            # Use mapped points if available, otherwise use calculated points
+            if mapped_points is not None:
+                points_scored = mapped_points
+        else:
+            # Fall back to description parsing
+            description = next_row.get('description', '')
+            
+            # Calculate score delta for proper event mapping
+            prev_away_score, prev_home_score = self._get_previous_scores(game_df, current_index)
+            score_delta = max(0, max(
+                next_away_score - prev_away_score,  # Away team scored
+                next_home_score - prev_home_score   # Home team scored  
+            ))
+            
+            # Build shot_details for event mapping
+            shot_details = {
+                'team': scoring_team,
+                'points': points_scored if points_scored > 0 else None
             }
+            
+            # Use the comprehensive mapping function
+            event_code, mapped_points = map_description_to_event_code(
+                description, shot_details, score_delta
+            )
+            
+            # Use mapped points if available, otherwise use calculated points
+            if mapped_points is not None:
+                points_scored = mapped_points
+        
+        # Default lineup ID
+        lineup_id = 0
+        
+        # Create compact play tuple - ensure all numbers are regular Python ints for JSON serialization
+        if points_scored and points_scored > 0:
+            # Scoring play: [q, t, score, actor, event, pts, lineup_id]
+            play_tuple = [
+                int(next_quarter), 
+                int(time_seconds), 
+                [int(score_array[0]), int(score_array[1])], 
+                actor, 
+                event_code, 
+                int(points_scored), 
+                int(lineup_id)
+            ]
+        else:
+            # Non-scoring play: [q, t, score, actor, event, lineup_id]
+            play_tuple = [
+                int(next_quarter), 
+                int(time_seconds), 
+                [int(score_array[0]), int(score_array[1])], 
+                actor, 
+                event_code, 
+                int(lineup_id)
+            ]
+        
+        # Return compact format response
+        return {
+            "y": play_tuple
         }
     
     def _get_previous_scores(self, game_df: pd.DataFrame, current_index: int) -> tuple[int, int]:
