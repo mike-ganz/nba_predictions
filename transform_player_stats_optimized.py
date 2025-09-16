@@ -125,8 +125,9 @@ def build_all_player_stats_vectorized(df, target_dates):
     for i, target_date in enumerate(target_dates):
         print(f"📅 Processing date {i+1}/{len(target_dates)}: {target_date}")
         
-        # 🚀 VECTORIZED: Filter all data up to target date in one operation
-        filtered_df = df[df['DATE'] <= pd.to_datetime(target_date)]
+        # 🚀 VECTORIZED: Filter all data up to target date in one operation  
+        # 🔧 FIX: Use < instead of <= to match individual method behavior
+        filtered_df = df[df['DATE'] < pd.to_datetime(target_date)]
         
         # 🚀 VECTORIZED: Group by player and sum all stats at once
         player_stats = filtered_df.groupby('PLAYER \nFULL NAME').agg({
@@ -215,7 +216,8 @@ def calculate_player_stats(player_name, max_date=None, current_season=None):
         
     # Handle special full season cache key
     if max_date is not None and not str(max_date).endswith('_FULL_SEASON'):
-        player_df = player_df[player_df['DATE'] <= pd.to_datetime(max_date)]
+        # 🔧 FIX: Use < instead of <= to match individual method behavior  
+        player_df = player_df[player_df['DATE'] < pd.to_datetime(max_date)]
     # If max_date is None or ends with '_FULL_SEASON', use all games (no date filtering)
     
     # Check if we have sufficient games after date filtering
@@ -234,7 +236,7 @@ def calculate_player_stats(player_name, max_date=None, current_season=None):
             prev_season = f"{current_start_year-1}-{current_end_year-1}"
             
             # Avoid infinite recursion - only go back to certain known seasons
-            if prev_season in ["2021-2022", "2020-2021", "2019-2020"]:
+            if prev_season in ["2022-2023", "2021-2022", "2020-2021", "2019-2020"]:
                 print(f"🔄 {player_name}: Only {games_played} games in {season_to_use}, falling back to {prev_season}")
                 
                 # Try to get previous season data WITHOUT recursion (use full season stats)

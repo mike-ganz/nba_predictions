@@ -85,7 +85,7 @@ def load_all_player_stats_for_date(max_date, current_season=None, min_games=5):
                     prev_season = f"{current_start_year-1}-{current_end_year-1}"
                     
                     # Only attempt fallback for known valid seasons
-                    if prev_season in ["2021-2022", "2020-2021", "2019-2020"]:
+                    if prev_season in ["2022-2023", "2021-2022", "2020-2021", "2019-2020"]:
                         print(f"🔄 {player}: Only {stats.get('GP', 0)} games in {current_season}, falling back to {prev_season}")
                         
                         # Use None for max_date to prevent recursion
@@ -212,7 +212,21 @@ def get_player_pca_score(player_name, max_date, current_season=None, log_queue=N
     player_scores = all_pca_results.get(player_name, {})
     
     if not player_scores:
-        print(f"⚠️ No PCA scores found for {player_name} on {max_date}")
+        # 🔇 OPTIMIZATION: Reduce log spam by using a global counter for missing PCA scores
+        global _missing_pca_count, _last_warning_date
+        if '_missing_pca_count' not in globals():
+            _missing_pca_count = {}
+        if '_last_warning_date' not in globals():
+            _last_warning_date = None
+            
+        date_key = str(max_date)
+        _missing_pca_count[date_key] = _missing_pca_count.get(date_key, 0) + 1
+        
+        # Only log periodically instead of for every player
+        if _last_warning_date != date_key and _missing_pca_count[date_key] % 20 == 1:  # Every 20th missing player
+            print(f"⚠️ No historical data for PCA calculations on {max_date} ({_missing_pca_count[date_key]} players affected so far)")
+            _last_warning_date = date_key
+        
         return 0.0, 0.0, 0.0, 0.0
     
     # Prepare cache data
@@ -232,6 +246,17 @@ def get_player_pca_score(player_name, max_date, current_season=None, log_queue=N
         cache_data['shot_selection'],
         cache_data['efficiency']
     )
+
+def print_pca_summary():
+    """Print a summary of PCA calculation issues instead of spamming individual warnings."""
+    global _missing_pca_count
+    if '_missing_pca_count' in globals() and _missing_pca_count:
+        print(f"\n📊 PCA Summary:")
+        total_missing = sum(_missing_pca_count.values())
+        print(f"   • Total players with missing PCA data: {total_missing:,}")
+        print(f"   • Affected dates: {len(_missing_pca_count)}")
+        print(f"   • Note: Early season games lack historical data for PCA calculations")
+        print(f"   • Players use default scores (0.0) when historical data unavailable")
 
 def batch_cache_pca_scores(max_date, current_season=None):
     """Cache PCA scores for all players for a specific date."""
