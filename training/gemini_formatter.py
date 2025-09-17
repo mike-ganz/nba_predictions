@@ -117,7 +117,7 @@ class GeminiFormatter(BaseFormatter):
             print(f"⚠️ Warning: Failed to convert compact to verbose for Gemini: {e}")
             return compact_data  # Return original if conversion fails
     
-    def create_training_data(self, df: pd.DataFrame, generation_mode: str = "remaining_plays", n_total: int = None) -> List[Dict[str, Any]]:
+    def create_training_data(self, df: pd.DataFrame, generation_mode: str = "remaining_plays", n_total: int = None, season: str = None) -> List[Dict[str, Any]]:
         """
         Convert our JSON training data into Gemini fine-tuning JSONL format.
         Handles two generation modes:
@@ -136,8 +136,25 @@ class GeminiFormatter(BaseFormatter):
         if generation_mode == "first_N_plays":
             # Mode 2: Single entry per game with first N plays as targets
             from generate_training_data import load_play_by_play_data
+            
+            # Determine season from data or parameter
+            if season is None:
+                # Try to detect season from game IDs
+                if len(df) > 0:
+                    sample_game_id = str(df['game_id'].iloc[0])
+                    if sample_game_id.startswith('222'):
+                        season = '2022-2023'
+                    elif sample_game_id.startswith('223'):
+                        season = '2023-2024'
+                    elif sample_game_id.startswith('224'):
+                        season = '2024-2025'
+                    else:
+                        season = '2023-2024'  # Default fallback
+                else:
+                    season = '2023-2024'  # Default fallback
+            
             # Load original play-by-play data for complete game information
-            raw_df = load_play_by_play_data('2023-2024')
+            raw_df = load_play_by_play_data(season)
             
             for game_id in sorted(df['game_id'].unique()):
                 # Get filtered training data for context
@@ -170,7 +187,23 @@ class GeminiFormatter(BaseFormatter):
             # Mode 1: Standard remaining_plays pairs
             # Load raw data to ensure proper sequential play selection
             from generate_training_data import load_play_by_play_data
-            raw_df = load_play_by_play_data('2023-2024')
+            
+            # Determine season from data or parameter (same logic as first_N_plays)
+            if season is None:
+                if len(df) > 0:
+                    sample_game_id = str(df['game_id'].iloc[0])
+                    if sample_game_id.startswith('222'):
+                        season = '2022-2023'
+                    elif sample_game_id.startswith('223'):
+                        season = '2023-2024'
+                    elif sample_game_id.startswith('224'):
+                        season = '2024-2025'
+                    else:
+                        season = '2023-2024'  # Default fallback
+                else:
+                    season = '2023-2024'  # Default fallback
+            
+            raw_df = load_play_by_play_data(season)
             
             for game_id in sorted(df['game_id'].unique()):
                 game_df = df[df['game_id'] == game_id].sort_values('play_id').reset_index(drop=True)

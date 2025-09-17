@@ -684,10 +684,10 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
             
             # Update context with initial plays (format-dependent)
             if is_compact:
-                # Compact format: expect plays array in response
-                if "p" in stage1_json:
-                    optimized_context.update_plays(stage1_json["p"])
-                    log_config.log_normal(f"✅ Added {len(stage1_json['p'])} play tuples to context")
+                # Compact format: expect "y" field with play tuples array in response  
+                if "y" in stage1_json:
+                    optimized_context.update_plays(stage1_json["y"])
+                    log_config.log_normal(f"✅ Added {len(stage1_json['y'])} play tuples to context")
                 elif "next_plays" in stage1_json:
                     # Fallback: convert verbose next_plays to compact format
                     # This is for backward compatibility during transition
@@ -710,7 +710,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                     optimized_context.update_plays(play_tuples)
                     log_config.log_normal(f"✅ Converted and added {len(play_tuples)} play tuples to context")
                 else:
-                    log_config.log_normal("⚠️ Warning: No 'p' or 'next_plays' found in Stage 1 response")
+                    log_config.log_normal("⚠️ Warning: No 'y' or 'next_plays' found in Stage 1 response")
                     optimized_context.update_plays([])
             else:
                 # Verbose format: expect next_plays array

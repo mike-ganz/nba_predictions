@@ -28,20 +28,28 @@ def main():
                        help='Process only first N games (for testing)')
     parser.add_argument('--n-total', type=int, default=5,
                        help='Number of recent plays per sequence (default: 5)')
-    parser.add_argument('--output-prefix', type=str, default='nba_2023_2024',
-                       help='Output filename prefix')
+    parser.add_argument('--output-prefix', type=str, default=None,
+                       help='Output filename prefix (default: nba_{season})')
     parser.add_argument('--format', type=str, default='gemini',
                        choices=['csv', 'openai', 'gemini'],
                        help='Output format to generate (default: gemini)')
     parser.add_argument('--generation-mode', type=str, default='remaining_plays',
                        choices=['remaining_plays', 'first_N_plays'],
                        help='Training data generation mode (default: remaining_plays)')
+    parser.add_argument('--season', type=str, default='2023-2024',
+                       choices=['2022-2023', '2023-2024', '2024-2025'],
+                       help='NBA season to generate data for (default: 2023-2024)')
     
     args = parser.parse_args()
     
-    print("🏀 NBA 2023-2024 SEASON TRAINING DATA GENERATOR")
+    # Set default output prefix based on season if not provided
+    if args.output_prefix is None:
+        args.output_prefix = f"nba_{args.season.replace('-', '_')}"
+    
+    print(f"🏀 NBA {args.season.upper()} SEASON TRAINING DATA GENERATOR")
     print("=" * 60)
     print(f"📊 Parameters:")
+    print(f"   • Season: {args.season}")
     print(f"   • Plays per sequence: {args.n_total}")
     print(f"   • Sample limit: {args.sample or 'None (full dataset)'}")
     print(f"   • Games limit: {args.games or 'None (all games)'}")
@@ -53,9 +61,9 @@ def main():
         print(f"     → Sequence generation (~low volume, 1 per game)")
     print()
     
-    # Load 2023-2024 season data 
-    print("📂 Loading 2023-2024 play-by-play data...")
-    season_df = load_play_by_play_data("2023-2024")
+    # Load season data 
+    print(f"📂 Loading {args.season} play-by-play data...")
+    season_df = load_play_by_play_data(args.season)
     print(f"✅ Loaded {len(season_df):,} plays from {season_df['game_id'].nunique():,} games")
     
     # Optional: Limit to first N games for testing
@@ -131,7 +139,7 @@ def main():
             
         elif args.format == 'gemini':
             gemini_formatter = GeminiFormatter()
-            gemini_examples = gemini_formatter.create_training_data(training_df, generation_mode=args.generation_mode, n_total=args.n_total)
+            gemini_examples = gemini_formatter.create_training_data(training_df, generation_mode=args.generation_mode, n_total=args.n_total, season=args.season)
             filename = f"{args.output_prefix}_gemini_compact_{args.generation_mode}_{timestamp}.jsonl"
             with open(filename, 'w') as f:
                 for example in gemini_examples:

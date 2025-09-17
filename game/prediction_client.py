@@ -274,29 +274,74 @@ class BasePredictionClient(ABC):
     def _validate_stage1_response(self, response_text: str, context: Dict[str, Any]) -> Tuple[ValidationResult, list, str]:
         """
         Validate Stage 1 response which should return multiple plays.
-        Expected format: {"next_plays": [play1, play2, ..., playN]}
+        Expected formats: 
+        - Verbose: {"next_plays": [play1, play2, ..., playN]}
+        - Compact: {"p": [[play_tuple1], [play_tuple2], ..., [play_tupleN]]}
         """
         try:
             response_data = json.loads(response_text.strip())
         except json.JSONDecodeError as e:
             return ValidationResult.RETRY, [], f"JSON parse error: {str(e)}"
         
-        # Check for next_plays array
-        if "next_plays" not in response_data:
-            return ValidationResult.RETRY, [], "Missing 'next_plays' field"
+        # Check for plays array - handle both compact ("y") and verbose ("next_plays") formats
+        next_plays = None
         
-        next_plays = response_data["next_plays"]
+        if "y" in response_data:
+            # Compact format - convert play tuples to minimal verbose format for validation
+            play_tuples = response_data["y"]
+            if not isinstance(play_tuples, list):
+                return ValidationResult.RETRY, [], "'y' field must be an array"
+            
+            next_plays = []
+            for i, play_tuple in enumerate(play_tuples):
+                if not isinstance(play_tuple, list) or len(play_tuple) < 6:
+                    return ValidationResult.RETRY, [], f"Play tuple {i+1} invalid format"
+                
+                # Convert tuple to minimal play object for validation
+                quarter = play_tuple[0]
+                time_seconds = play_tuple[1]
+                score_array = play_tuple[2] if len(play_tuple[2]) >= 2 else [0, 0]
+                actor = play_tuple[3]
+                event_code = play_tuple[4]
+                
+                # Convert time back to MM:SS format
+                minutes = time_seconds // 60
+                seconds = time_seconds % 60
+                time_remaining = f"{minutes:02d}:{seconds:02d}"
+                
+                # Create minimal play object
+                play = {
+                    "quarter": quarter,
+                    "time_remaining": time_remaining,
+                    "description": f"Predicted {event_code}",  # Satisfies validation requirement
+                    "score": f"AWAY {score_array[0]} - HOME {score_array[1]}",
+                    "_compact_format": True
+                }
+                next_plays.append(play)
+                
+        elif "next_plays" in response_data:
+            # Verbose format - use as-is
+            next_plays = response_data["next_plays"]
+        else:
+            return ValidationResult.RETRY, [], "Missing 'next_plays' field (verbose) or 'y' field (compact)"
         
         # Validate it's an array
         if not isinstance(next_plays, list):
-            return ValidationResult.RETRY, [], "'next_plays' must be an array"
+            if "y" in response_data:
+                return ValidationResult.RETRY, [], "'y' field must be an array"
+            else:
+                return ValidationResult.RETRY, [], "'next_plays' must be an array"
         
         # Check array length (should have reasonable number of plays)
         if len(next_plays) == 0:
-            return ValidationResult.RETRY, [], "'next_plays' array cannot be empty"
+            if "y" in response_data:
+                return ValidationResult.RETRY, [], "'y' array cannot be empty"
+            else:
+                return ValidationResult.RETRY, [], "'next_plays' array cannot be empty"
         
         if len(next_plays) > 50:  # Reasonable upper limit
-            return ValidationResult.RETRY, [], f"'next_plays' array too large ({len(next_plays)} plays)"
+            field_name = "'y'" if "y" in response_data else "'next_plays'"
+            return ValidationResult.RETRY, [], f"{field_name} array too large ({len(next_plays)} plays)"
         
         # Basic validation of each play (less strict than Stage 2)
         for i, play in enumerate(next_plays):
