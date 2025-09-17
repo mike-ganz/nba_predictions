@@ -13,7 +13,7 @@ def get_nth_jsonl_entry(file_path, n):
 
 if __name__ == "__main__":
     # Usage: python this_script.py N
-    file_path = r"C:\Users\micha\nba_predictions\data\training\gemini_remainingplays_2324.jsonl"
+    file_path = r"C:\Users\micha\nba_predictions\data\training\nba_2023_2024_gemini_compact_remaining_plays_20250916_175518.jsonl"
     if len(sys.argv) != 2:
         print("Usage: python script.py N")
         sys.exit(1)
