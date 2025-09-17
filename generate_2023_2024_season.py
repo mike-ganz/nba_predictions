@@ -105,17 +105,66 @@ def main():
         # Optional: Sample for testing
         if args.sample and len(training_df) > args.sample:
             print(f"\n🔬 Sampling {args.sample} examples for testing...")
-            training_df = training_df.sample(n=args.sample, random_state=42).reset_index(drop=True)
+            
+            if args.generation_mode == "first_N_plays":
+                # For first_N_plays mode, only sample rows with actual context data (not empty "{}")
+                valid_rows = training_df[training_df['json_training_data'] != "{}"].copy()
+                print(f"   Found {len(valid_rows):,} valid rows with context data out of {len(training_df):,} total")
+                
+                if len(valid_rows) > args.sample:
+                    training_df = valid_rows.sample(n=args.sample, random_state=42).reset_index(drop=True)
+                else:
+                    training_df = valid_rows.reset_index(drop=True)
+                    print(f"   Using all {len(training_df):,} valid rows (less than requested sample size)")
+            else:
+                # Standard random sampling for remaining_plays mode
+                training_df = training_df.sample(n=args.sample, random_state=42).reset_index(drop=True)
+            
             print(f"✅ Sampled to {len(training_df):,} examples")
         
         # Verify compact format
         print(f"\n🔍 Verifying compact format...")
-        sample_json = json.loads(training_df.iloc[0]['json_training_data'])
-        format_type = "✅ COMPACT" if 'a' in sample_json else "❌ VERBOSE"
-        print(f"   Format: {format_type}")
-        print(f"   Keys: {list(sample_json.keys())}")
-        print(f"   Teams: {sample_json.get('a', 'N/A')} vs {sample_json.get('h', 'N/A')}")
-        print(f"   Plays: {len(sample_json.get('p', []))}")
+        
+        # Check if json_training_data column exists and has valid data
+        if 'json_training_data' not in training_df.columns:
+            print(f"❌ ERROR: 'json_training_data' column missing from training DataFrame")
+            print(f"   Available columns: {list(training_df.columns)}")
+            return 1
+            
+        sample_json_str = training_df.iloc[0]['json_training_data']
+        
+        # Debug the raw JSON string
+        print(f"   Raw JSON string length: {len(str(sample_json_str))}")
+        if pd.isna(sample_json_str) or sample_json_str == "" or sample_json_str == "{}":
+            print(f"❌ ERROR: json_training_data is empty or null")
+            print(f"   Sample value: '{sample_json_str}'")
+            
+            # For first_N_plays mode, this is expected - the contexts should be clean
+            if args.generation_mode == "first_N_plays":
+                print(f"✅ This is expected for first_N_plays mode - contexts should be clean without 'p' field")
+                print(f"   Skipping format verification for first_N_plays mode")
+            else:
+                return 1
+        else:
+            try:
+                sample_json = json.loads(sample_json_str)
+                format_type = "✅ COMPACT" if 'a' in sample_json else "❌ VERBOSE"
+                print(f"   Format: {format_type}")
+                print(f"   Keys: {list(sample_json.keys())}")
+                print(f"   Teams: {sample_json.get('a', 'N/A')} vs {sample_json.get('h', 'N/A')}")
+                
+                # For first_N_plays mode, 'p' field should be missing (clean context)
+                if args.generation_mode == "first_N_plays":
+                    has_plays = 'p' in sample_json
+                    print(f"   Has plays field: {'❌ UNEXPECTED' if has_plays else '✅ CORRECT (clean context)'}")
+                    print(f"   Clean context verified for first_N_plays mode")
+                else:
+                    print(f"   Plays: {len(sample_json.get('p', []))}")
+                    
+            except json.JSONDecodeError as e:
+                print(f"❌ ERROR: Invalid JSON in json_training_data: {e}")
+                print(f"   Sample content: '{sample_json_str[:200]}...' (truncated)")
+                return 1
         
         # Generate output in specified format
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

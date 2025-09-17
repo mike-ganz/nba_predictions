@@ -114,6 +114,13 @@ class BasePredictionClient(ABC):
                 # Make prediction
                 response_content, usage_stats = self.predict(context, model_id, max_tokens, temperature)
                 
+                # Log full Stage 1 response for debugging
+                if stage1_mode:
+                    print(f"\n🔍 STAGE 1 MODEL RESPONSE (Attempt {attempt + 1}/{max_retries + 1}):")
+                    print("=" * 80)
+                    print(response_content)
+                    print("=" * 80)
+                
                 # Validate response (different logic for Stage 1 vs Stage 2)
                 if stage1_mode:
                     validation_result, validation_errors, reason = self._validate_stage1_response(response_content, context)

@@ -303,8 +303,14 @@ class CompactGameContext:
         self.update_plays(new_plays)
     
     def get_base_context_for_stage1(self) -> Dict[str, Any]:
-        """Get base context without plays for Stage 1 (clean context)."""
-        return self.base_compact.copy()
+        """Get base context without plays for Stage 1 (matching clean training format)."""
+        context = self.base_compact.copy()
+        
+        # Ensure no plays field for Stage 1 (matching training data format)
+        if 'p' in context:
+            del context['p']
+        
+        return context
     
     def get_cache_stats(self) -> Dict[str, int]:
         """Get caching statistics for debugging."""

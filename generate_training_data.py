@@ -364,7 +364,8 @@ def build_compact_training_data_direct(
     current_game_id, away_abbrev, home_abbrev, 
     away_stats, home_stats, 
     away_players, home_players,
-    recent_plays_verbose, away_name_to_idx, home_name_to_idx
+    recent_plays_verbose, away_name_to_idx, home_name_to_idx,
+    for_first_n_plays=False
 ):
     """
     🚀 OPTIMIZED: Build compact schema format directly without verbose intermediate step.
@@ -488,9 +489,13 @@ def build_compact_training_data_direct(
         "hs": home_stats_array,
         "ap": away_players,
         "hp": home_players,
-        "L": lineup_lookup,
-        "p": plays_array
+        "L": lineup_lookup
     }
+    
+    # For first_N_plays mode, exclude the "p" field to create clean contexts
+    # For regular mode, include recent plays 
+    if not for_first_n_plays:
+        compact_record["p"] = plays_array
     
     return compact_record
 
@@ -642,7 +647,7 @@ def test_direct_compact_builder(result_df, test_indices=[0, 1, 2]):
     return all_tests_passed
 
 
-def convert_verbose_to_compact(verbose_json):
+def convert_verbose_to_compact(verbose_json, for_first_n_plays=False):
     """
     Convert verbose JSON format to compact schema format.
     
@@ -809,9 +814,13 @@ def convert_verbose_to_compact(verbose_json):
         "hs": home_stats,
         "ap": away_players,
         "hp": home_players,
-        "L": lineup_lookup,
-        "p": plays_array
+        "L": lineup_lookup
     }
+    
+    # For first_N_plays mode, exclude the "p" field to create clean contexts
+    # For regular mode, include recent plays
+    if not for_first_n_plays:
+        compact_record["p"] = plays_array
     
     return compact_record
 
@@ -1681,7 +1690,8 @@ def create_llm_training_data(df, n_total=5, filter_nan=True, generation_mode="re
                 current_game_id, away_abbrev, home_abbrev,
                 away_stats_dict, home_stats_dict,
                 away_players, home_players,
-                recent_plays_verbose, away_name_to_idx, home_name_to_idx
+                recent_plays_verbose, away_name_to_idx, home_name_to_idx,
+                for_first_n_plays=(generation_mode == "first_N_plays")
             )
         else:
             # Original method: verbose → convert (for compatibility/testing)
@@ -1710,7 +1720,7 @@ def create_llm_training_data(df, n_total=5, filter_nan=True, generation_mode="re
             }
             
             # Convert verbose format to compact format
-            compact_json_obj = convert_verbose_to_compact(verbose_json_obj)
+            compact_json_obj = convert_verbose_to_compact(verbose_json_obj, for_first_n_plays=(generation_mode == "first_N_plays"))
         
         # Convert to JSON string
         json_string = json.dumps(compact_json_obj, separators=(',', ':'))

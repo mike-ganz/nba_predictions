@@ -795,7 +795,11 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                     
                     # Complete the compact record
                     compact_record["L"] = lineup_lookup
-                    compact_record["p"] = plays_array
+                    
+                    # For first_N_plays mode, exclude the "p" field to create clean contexts
+                    # For regular mode, include recent plays
+                    if generation_mode != "first_N_plays":
+                        compact_record["p"] = plays_array
                     
                     # 🚀 Fast JSON serialization
                     json_training_data[original_idx] = json.dumps(compact_record, separators=(',', ':'), ensure_ascii=False)
