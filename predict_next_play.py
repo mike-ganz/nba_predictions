@@ -37,6 +37,7 @@ the appropriate prediction client.
 
 import json
 import os
+import re
 from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 from game.prediction_client import PredictionClientFactory, BasePredictionClient
@@ -216,7 +217,7 @@ class CompactGameContext:
         self._current_full_json: Optional[str] = None
         self._current_plays_hash: Optional[str] = None
         
-        print(f"🚀 CompactGameContext initialized - base context cached ({len(self._base_json_cached)} chars)")
+        # CompactGameContext initialized with cached base context
     
     def _hash_plays(self, plays: list) -> str:
         """Create a hash key for play tuples."""
@@ -373,6 +374,181 @@ class LoggingConfig:
 log_config = LoggingConfig()
 
 
+def format_play_description(play_tuple: list, game_context: Dict[str, Any]) -> str:
+    """Convert a play tuple to human-readable description with player names."""
+    if len(play_tuple) < 5:
+        return "Invalid play"
+    
+    try:
+        quarter = play_tuple[0]
+        time_seconds = play_tuple[1] 
+        score_array = play_tuple[2] if len(play_tuple[2]) >= 2 else [0, 0]
+        actor = play_tuple[3]  # [team, player_index]
+        event_code = play_tuple[4]
+        points = play_tuple[5] if len(play_tuple) > 5 else 0
+        
+        # Extract team and player info
+        if isinstance(actor, list) and len(actor) >= 2:
+            team_code = str(actor[0]).upper() if actor[0] else "?"
+            player_index = int(actor[1]) if isinstance(actor[1], (int, str)) else -1
+        else:
+            team_code = "?"
+            player_index = -1
+            
+        # Get player name from context (only if player_index is valid)
+        player_name = "Unknown"
+        if isinstance(game_context, dict) and player_index >= 0:
+            # Determine if compact or verbose format
+            if "ap" in game_context and "hp" in game_context:
+                # Compact format: "ap" = away players, "hp" = home players
+                if team_code == "A" and isinstance(game_context.get("ap"), list):
+                    players = game_context["ap"]
+                    if player_index < len(players) and isinstance(players[player_index], list) and len(players[player_index]) > 0:
+                        player_name = players[player_index][0]  # First element is name
+                        # Debug: Show team assignment
+                        away_team = game_context.get("A", "AWAY")
+                        print(f"DEBUG SCORING: {player_name} is on AWAY team ({away_team})")
+                        
+                elif team_code == "H" and isinstance(game_context.get("hp"), list):
+                    players = game_context["hp"]  
+                    if player_index < len(players) and isinstance(players[player_index], list) and len(players[player_index]) > 0:
+                        player_name = players[player_index][0]  # First element is name
+                        # Debug: Show team assignment  
+                        home_team = game_context.get("H", "HOME")
+                        print(f"DEBUG SCORING: {player_name} is on HOME team ({home_team})")
+                        
+            elif "away_team" in game_context and "home_team" in game_context:
+                # Verbose format: nested structure
+                if team_code == "A" and "players" in game_context.get("away_team", {}):
+                    players = game_context["away_team"]["players"]
+                    if player_index < len(players):
+                        player_name = players[player_index].get("name", "Unknown")
+                elif team_code == "H" and "players" in game_context.get("home_team", {}):
+                    players = game_context["home_team"]["players"]
+                    if player_index < len(players):
+                        player_name = players[player_index].get("name", "Unknown")
+        
+        # Format player name (last name for professional commentary)
+        if player_name and player_name != "Unknown":
+            try:
+                # Extract last name or use full name if no spaces
+                name_parts = player_name.strip().split()
+                if len(name_parts) >= 2:
+                    display_name = name_parts[-1]  # Last name
+                else:
+                    display_name = name_parts[0] if name_parts else "Unknown"
+            except:
+                display_name = player_name[:10]  # Fallback: truncate
+        else:
+            # If player_index is -1, no specific player is involved
+            display_name = None if player_index == -1 else "Player"
+        
+        # Parse event code into description
+        event_lower = event_code.lower()
+        
+        # Shot attempts and makes
+        if event_lower.startswith('2p'):
+            # 2-point shots: 2pm7 = 2-point make 7 feet, 2pa12 = 2-point attempt 12 feet
+            is_make = 'm' in event_lower
+            # Extract distance more carefully - get digits after 'pm' or 'pa'
+            distance_match = re.search(r'2p[ma](\d+)', event_lower)
+            distance = distance_match.group(1) if distance_match else ""
+            action = "made" if is_make else "missed"
+            if display_name is None:
+                return f"{distance}' jumper {action}" if distance else f"2-point shot {action}"
+            return f"{display_name} {action} {distance}' jumper" if distance else f"{display_name} {action} jumper"
+            
+        elif event_lower.startswith('3p'):
+            # 3-point shots: 3pm24 = 3-point make 24 feet
+            is_make = 'm' in event_lower
+            # Extract distance more carefully - get digits after 'pm' or 'pa'
+            distance_match = re.search(r'3p[ma](\d+)', event_lower)
+            distance = distance_match.group(1) if distance_match else ""
+            action = "made" if is_make else "missed"
+            if display_name is None:
+                return f"{distance}' three-pointer {action}" if distance else f"Three-pointer {action}"
+            return f"{display_name} {action} {distance}' three-pointer" if distance else f"{display_name} {action} three-pointer"
+            
+        elif 'layup' in event_lower:
+            # Layups: layup, layupa3 = layup attempt 3 feet
+            if 'a' in event_lower:
+                if display_name is None:
+                    return "Layup missed"
+                return f"{display_name} missed layup"
+            else:
+                if display_name is None:
+                    return "Layup made"
+                return f"{display_name} made layup"
+                
+        elif 'dunk' in event_lower:
+            # Dunks: dunk1, dunk2
+            if display_name is None:
+                return "Dunk"
+            return f"{display_name} dunked"
+            
+        elif 'hook' in event_lower:
+            # Hook shots: hook4 = hook shot 4 feet
+            distance_match = re.search(r'hook(\d+)', event_lower)
+            distance = distance_match.group(1) if distance_match else ""
+            if display_name is None:
+                return f"Hook shot ({distance}')" if distance else "Hook shot"
+            return f"{display_name} hook shot ({distance}')" if distance else f"{display_name} hook shot"
+            
+        elif event_lower == 'ftm':
+            if display_name is None:
+                return "Free throw made"
+            return f"{display_name} made free throw"
+        elif event_lower == 'fta':
+            if display_name is None:
+                return "Free throw missed"
+            return f"{display_name} missed free throw"
+            
+        # Rebounds  
+        elif event_lower == 'd_reb':
+            if display_name is None:
+                return "Defensive rebound"
+            return f"{display_name} defensive rebound"
+        elif event_lower == 'o_reb':
+            if display_name is None:
+                return "Offensive rebound"
+            return f"{display_name} offensive rebound"
+            
+        # Turnovers and fouls
+        elif event_lower == 'tov':
+            if display_name is None:
+                return "Turnover"
+            return f"{display_name} turnover"
+        elif event_lower == 'p_foul':
+            if display_name is None:
+                return "Personal foul"
+            return f"{display_name} personal foul"
+        elif event_lower == 's_foul':
+            if display_name is None:
+                return "Shooting foul"
+            return f"{display_name} shooting foul"
+        elif event_lower == 't_foul':
+            if display_name is None:
+                return "Technical foul"
+            return f"{display_name} technical foul"
+            
+        # Other events
+        elif event_lower == 'sub':
+            return "Substitution"  # No player name needed for substitutions
+        elif event_lower == 'jumpball':
+            return "Jump ball"  # No player name needed
+        elif event_lower == 'timeout':
+            return "Timeout"  # No player name needed
+            
+        # Fallback for unknown events
+        else:
+            if display_name is None:
+                return event_code  # Just show the event code if no player name
+            return f"{display_name} {event_code}"
+            
+    except Exception as e:
+        return f"Play parsing error: {str(e)[:30]}"
+
+
 def get_prediction_platform() -> str:
     """Get the prediction platform from environment variable or default to OpenAI."""
     load_dotenv()
@@ -407,7 +583,7 @@ def is_compact_format(context: Dict[str, Any]) -> bool:
     
     return has_compact and not has_verbose
 
-def parse_compact_response(response_content: str) -> Dict[str, Any]:
+def parse_compact_response(response_content: str, game_context: Dict[str, Any] = None) -> Dict[str, Any]:
     """
     Parse compact format response and extract play tuple(s).
     
@@ -454,12 +630,23 @@ def parse_compact_response(response_content: str) -> Dict[str, Any]:
                     seconds = time_seconds % 60
                     time_remaining = f"{minutes:02d}:{seconds:02d}"
                     
+                    # Get team names for score formatting
+                    away_team = game_context.get("A", "AWAY") if isinstance(game_context, dict) else "AWAY"
+                    home_team = game_context.get("H", "HOME") if isinstance(game_context, dict) else "HOME"
+                    
+                    # Debug: Show raw model response details
+                    print(f"DEBUG MODEL RESPONSE: Raw play tuple = {primary_play}")
+                    print(f"DEBUG MODEL RESPONSE: actor={actor}, event={event_code}, points={points}")
+                    if points is not None and points > 0:
+                        print(f"DEBUG SCORING: Model generated score_array={score_array}, actor={actor}, event={event_code}, points={points}")
+                        print(f"DEBUG SCORING: This means {away_team} {score_array[0]} - {home_team} {score_array[1]}")
+                    
                     # Create verbose-compatible response
                     next_play = {
                         "quarter": quarter,
                         "time_remaining": time_remaining,
                         "description": f"Predicted {event_code}",
-                        "score": f"AWAY {score_array[0]} - HOME {score_array[1]}",
+                        "score": f"{away_team} {score_array[0]} - {home_team} {score_array[1]}",
                         "shot_details": {
                             "team": actor[0] if points else None,
                             "points": points
@@ -500,7 +687,7 @@ def convert_compact_play_to_tuple(next_play: Dict[str, Any], context: Dict[str, 
             time_seconds = 720  # Default 12:00
         
         # Parse score
-        score_str = next_play.get('score', 'AWAY 0 - HOME 0')
+        score_str = next_play.get('score', 'AWAY 0 - HOME 0')  # Fallback will be parsed correctly
         try:
             parts = score_str.split(' - ')
             away_score = int(parts[0].split()[-1])
@@ -538,24 +725,16 @@ def init_prediction_client() -> tuple[BasePredictionClient, Dict[str, str]]:
     platform = get_prediction_platform()
     validation_mode = os.getenv("VALIDATION_MODE", "fast")
     
-    print(f"🤖 Initializing {platform.upper()} client...")
-    print(f"🔧 Validation mode: {validation_mode.upper()} (set VALIDATION_MODE=fast/normal/strict to change)")
+    # Initializing prediction client
+    # Using validation mode: {validation_mode.upper()}
     
     try:
         client = PredictionClientFactory.create_client(platform, validation_mode)
         model_config = client.get_model_config()
         
-        print(f"✅ {platform.upper()} client initialized successfully")
-        print(f"📋 Model 1: {model_config['model_1_id']}")
-        print(f"📋 Model 2: {model_config['model_2_id']}")
+        # Client initialized successfully
         
-        # Show validation mode benefits
-        if validation_mode == "fast":
-            print(f"🚀 Fast validation mode: ~10-20% speed boost, essential checks only")
-        elif validation_mode == "normal":
-            print(f"⚖️ Normal validation mode: balanced speed and validation coverage")
-        else:
-            print(f"🔍 Strict validation mode: comprehensive checks, slower but thorough")
+        # Validation mode configured
         
         return client, model_config
         
@@ -585,7 +764,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
     
     # Detect format and initialize appropriate context manager
     is_compact = is_compact_format(game_context)
-    log_config.log_normal(f"🔍 Detected format: {'Compact' if is_compact else 'Verbose'}")
+    # Format detection complete
     
     if is_compact:
         # Use compact context manager
@@ -623,7 +802,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
         log_config.log_normal("Using clean context (no recent_plays) - matching first_N_plays training mode")
         
         # Get clean base context (teams, players, stats only - no plays)
-        log_config.log_normal(f"Sending to model: {model_config['model_1_id']}")
+        # Sending to Stage 1 model
         log_config.log_verbose(f"Clean context size: {len(optimized_context._base_json_cached)} characters")
         
         if is_compact:
@@ -677,7 +856,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                 return results
             
             log_config.log_verbose(f"Stage 1 tokens: {stage1_usage.get('completion_tokens', 'N/A')} / 5000")
-            log_config.log_normal("Stage 1 completed!")
+            # Stage 1 completed
             
             results["stage1_response"] = stage1_content
             
@@ -693,7 +872,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                 # Compact format: expect "y" field with play tuples array in response  
                 if "y" in stage1_json:
                     optimized_context.update_plays(stage1_json["y"])
-                    log_config.log_normal(f"✅ Added {len(stage1_json['y'])} play tuples to context")
+                    # Added play tuples to context
                 elif "next_plays" in stage1_json:
                     # Fallback: convert verbose next_plays to compact format
                     # This is for backward compatibility during transition
@@ -732,7 +911,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
             raise
     
     # === ROLLING ITERATIONS ===
-    log_config.log_normal(f"\n🔄 Starting {n_iterations} rolling iterations...")
+    # Starting rolling iterations
     
     try:
         for iteration in range(n_iterations):
@@ -740,7 +919,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
             
             # Get optimized JSON (cached where possible)
             iteration_json = optimized_context.get_json()
-            log_config.log_normal(f"📡 Sending to model: {model_config['model_2_id']}")
+            # Sending to Stage 2 model
             log_config.log_verbose(f"📊 Context size: {len(iteration_json)} characters")
             
             # Display plays count based on format
@@ -767,12 +946,15 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                         minutes = time_seconds // 60
                         seconds = time_seconds % 60
                         current_time = f"{minutes:02d}:{seconds:02d}"
-                        current_score = f"AWAY {score_array[0]} - HOME {score_array[1]}"
+                        # Get team names from context
+                        away_team = game_context.get("A", "AWAY") if isinstance(game_context, dict) else "AWAY"
+                        home_team = game_context.get("H", "HOME") if isinstance(game_context, dict) else "HOME"
+                        current_score = f"{away_team} {score_array[0]} - {home_team} {score_array[1]}"
                         
                         log_config.log_normal(f"🏀 Game State: Q{current_quarter} {current_time} | {current_score}")
                         
                         # Show last 5 play tuples for context
-                        log_config.log_normal("📋 Recent play tuples:")
+                        log_config.log_normal("📋 Recent plays:")
                         recent_to_show = current_plays[-5:]
                         for i, play_tuple in enumerate(recent_to_show, 1):
                             if len(play_tuple) >= 5:
@@ -780,8 +962,8 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                                 t_sec = play_tuple[1]
                                 t_min = t_sec // 60
                                 t_s = t_sec % 60
-                                event = play_tuple[4] if len(play_tuple) > 4 else 'unknown'
-                                log_config.log_normal(f"   {i}. Q{q} [{t_min:02d}:{t_s:02d}] {event}")
+                                play_description = format_play_description(play_tuple, game_context)
+                                log_config.log_normal(f"   {i}. Q{q} [{t_min:02d}:{t_s:02d}] {play_description}")
                 else:
                     # Verbose format: play objects
                     latest_play = current_plays[-1]
@@ -908,7 +1090,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                 # Compact format: expect "y" field with play tuple(s)
                 if "y" in stage2_json:
                     # Parse compact response
-                    parsed_response = parse_compact_response(stage2_content)
+                    parsed_response = parse_compact_response(stage2_content, game_context)
                     if "next_play" in parsed_response:
                         next_play = parsed_response["next_play"]
                         
@@ -919,7 +1101,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                         new_time = next_play.get('time_remaining', 'N/A')
                         event_code = next_play.get('_compact_event_code', 'unknown')
                         
-                        log_config.log_normal(f"✅ NEW PLAY: {event_code} - {play_desc}")
+                        # Enhanced play description will be shown after tuple conversion
                         log_config.log_normal(f"🏀 Updated State: Q{new_quarter} {new_time} | {new_score}")
                         
                         # Check for scoring information
@@ -933,6 +1115,27 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                         
                         # Convert to compact tuple and update context
                         play_tuple = convert_compact_play_to_tuple(next_play, optimized_context.get_context_dict())
+                        
+                        # Show enhanced play description with player names
+                        if play_tuple:
+                            enhanced_desc = format_play_description(play_tuple, game_context)
+                            log_config.log_normal(f"✅ NEW PLAY: {enhanced_desc}")
+                            
+                            # Debug: Check for scoring inconsistencies
+                            if len(play_tuple) >= 6:
+                                old_score = optimized_context.current_plays[-1][2] if optimized_context.current_plays else [0, 0]
+                                new_score = play_tuple[2]
+                                away_diff = new_score[0] - old_score[0] 
+                                home_diff = new_score[1] - old_score[1]
+                                if away_diff > 0 or home_diff > 0:
+                                    actor = play_tuple[3]
+                                    event = play_tuple[4]
+                                    away_team = game_context.get("A", "AWAY")
+                                    home_team = game_context.get("H", "HOME") 
+                                    print(f"DEBUG SCORE CHANGE: {old_score} → {new_score}")
+                                    print(f"DEBUG SCORE CHANGE: Away ({away_team}) +{away_diff}, Home ({home_team}) +{home_diff}")
+                                    print(f"DEBUG SCORE CHANGE: Actor={actor}, Event={event}")
+                        
                         from config.settings import DEFAULT_N_TOTAL_PLAYS
                         optimized_context.add_play_tuple(play_tuple, DEFAULT_N_TOTAL_PLAYS)
                     else:
@@ -1018,7 +1221,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                     log_config.log_minimal("🏁 Breaking out of prediction loop - game ended")
                     break
         
-        log_config.log_normal(f"\n✅ Rolling sequence completed! {n_iterations} iterations done.")
+        # log_config.log_normal(f"\n✅ Rolling sequence completed! {n_iterations} iterations done.")
         
         # 📊 SCORING ANALYSIS SUMMARY
         scoring_plays = 0
@@ -1036,20 +1239,20 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                 else:
                     non_scoring_plays += 1
         
-        log_config.log_normal(f"\n📈 SCORING SUMMARY:")
-        log_config.log_normal(f"   🏀 Scoring plays: {scoring_plays}/{scoring_plays + non_scoring_plays}")
-        log_config.log_normal(f"   📋 Non-scoring plays: {non_scoring_plays}/{scoring_plays + non_scoring_plays}")
-        if scoring_plays + non_scoring_plays > 0:
-            scoring_rate = (scoring_plays / (scoring_plays + non_scoring_plays)) * 100
-            log_config.log_normal(f"   📊 Scoring rate: {scoring_rate:.1f}%")
+        # log_config.log_normal(f"\n📈 SCORING SUMMARY:")
+        # log_config.log_normal(f"   🏀 Scoring plays: {scoring_plays}/{scoring_plays + non_scoring_plays}")
+        # log_config.log_normal(f"   📋 Non-scoring plays: {non_scoring_plays}/{scoring_plays + non_scoring_plays}")
+        # if scoring_plays + non_scoring_plays > 0:
+        #     scoring_rate = (scoring_plays / (scoring_plays + non_scoring_plays)) * 100
+        #     log_config.log_normal(f"   📊 Scoring rate: {scoring_rate:.1f}%")
         
         # 🚀 PERFORMANCE SUMMARY (debug mode)
         if log_config.should_show_context_details():
             final_cache_stats = optimized_context.get_cache_stats()
-            log_config.log_verbose(f"\n🚀 PERFORMANCE SUMMARY:")
-            log_config.log_verbose(f"   📊 Final cache stats: {final_cache_stats}")
-            cache_hit_ratio = (final_cache_stats['plays_cache_size'] / max(n_iterations, 1)) * 100
-            log_config.log_verbose(f"   ⚡ Estimated JSON cache efficiency: {cache_hit_ratio:.1f}%")
+            # log_config.log_verbose(f"\n🚀 PERFORMANCE SUMMARY:")
+            # log_config.log_verbose(f"   📊 Final cache stats: {final_cache_stats}")
+            # cache_hit_ratio = (final_cache_stats['plays_cache_size'] / max(n_iterations, 1)) * 100
+            # log_config.log_verbose(f"   ⚡ Estimated JSON cache efficiency: {cache_hit_ratio:.1f}%")
         
         return results
         
@@ -1188,7 +1391,7 @@ def main():
                 print("❌ Could not parse Stage 1 response")
         
         # Show rolling iterations
-        print(f"\n🔄 ROLLING ITERATIONS ({len(results.get('iterations', []))} completed):")
+        # print(f"\n🔄 ROLLING ITERATIONS ({len(results.get('iterations', []))} completed):")
         for iteration_data in results.get("iterations", []):
             iteration_num = iteration_data.get("iteration", "?")
             print(f"\n--- Iteration {iteration_num} ---")

@@ -131,7 +131,18 @@ def main():
             print(f"   Available columns: {list(training_df.columns)}")
             return 1
             
-        sample_json_str = training_df.iloc[0]['json_training_data']
+        # Find a non-empty training example (skip the ones that are correctly empty in remaining_plays mode)
+        sample_json_str = None
+        for idx, row in training_df.iterrows():
+            json_str = row['json_training_data']
+            if json_str and json_str != '{}' and len(json_str) > 10:
+                sample_json_str = json_str
+                print(f"   Using training example at index {idx} for verification")
+                break
+        
+        if sample_json_str is None:
+            # If we can't find any non-empty examples, use the first one for error reporting
+            sample_json_str = training_df.iloc[0]['json_training_data']
         
         # Debug the raw JSON string
         print(f"   Raw JSON string length: {len(str(sample_json_str))}")

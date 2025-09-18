@@ -114,12 +114,7 @@ class BasePredictionClient(ABC):
                 # Make prediction
                 response_content, usage_stats = self.predict(context, model_id, max_tokens, temperature)
                 
-                # Log full Stage 1 response for debugging
-                if stage1_mode:
-                    print(f"\n🔍 STAGE 1 MODEL RESPONSE (Attempt {attempt + 1}/{max_retries + 1}):")
-                    print("=" * 80)
-                    print(response_content)
-                    print("=" * 80)
+                # Stage 1 response logging disabled for cleaner output
                 
                 # Validate response (different logic for Stage 1 vs Stage 2)
                 if stage1_mode:
@@ -361,7 +356,7 @@ class BasePredictionClient(ABC):
                 if field not in play:
                     return ValidationResult.RETRY, [], f"Play {i+1} missing required field: {field}"
         
-        print(f"Stage 1 validation passed: {len(next_plays)} plays received")
+        # Stage 1 validation passed
         return ValidationResult.VALID, [], "Valid Stage 1 response"
     
     @abstractmethod
@@ -539,7 +534,7 @@ class GeminiPredictionClient(BasePredictionClient):
             ),
         )
         
-        print("🔧 Using Google GenAI SDK with thinking_budget=0 (thinking disabled)")
+        # Using Google GenAI SDK with thinking disabled
         
         # Generate content using streaming (but collect all chunks)
         response_text = ""

@@ -690,11 +690,11 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
             if pd.notna(row['description']):
                 # 🔥 CRITICAL FIX: Include structured fields for proper event mapping
                 play_data = {
-                    'quarter': int(row.get('quarter', 1)),
-                    'time_remaining': row.get('time_remaining', '12:00'),
+                    'quarter': int(row.get('period', 1)),  # FIX: Use 'period' not 'quarter'
+                    'time_remaining': row.get('remaining_time', '12:00'),  # FIX: Use 'remaining_time' not 'time_remaining'
                     'description': row['description'],
                     'score': f"{row.get('away_score', 0) or 0} - {row.get('home_score', 0) or 0}",
-                    'player': row.get('player', ''),
+                    'player': row.get('player'),
                     'players_on_court': row.get('players_on_court', []),
                     # ✅ Add structured fields for accurate event mapping (was missing!)
                     'type': row.get('type'),
@@ -710,8 +710,8 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
         
         # 🔥 ULTRA-OPTIMIZATION: Batch process entire game with single shared compact record base
         base_compact_record = {
-            "a": away_abbrev,
-            "h": home_abbrev,
+            "A": away_abbrev,
+            "H": home_abbrev,
             "as": away_stats_array,
             "hs": home_stats_array,
             "ap": away_players,
@@ -807,6 +807,8 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                 except Exception as e:
                     if processed_plays < 50000:
                         print(f"⚠️ Error in batch processing for game {game_id}, play {original_idx}: {e}")
+                        import traceback
+                        traceback.print_exc()
                     json_training_data[original_idx] = "{}"
             else:
                 json_training_data[original_idx] = "{}"

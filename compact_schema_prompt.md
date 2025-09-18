@@ -29,8 +29,8 @@ Migrate the basketball play-by-play pipeline from the verbose JSON to a **compac
 Represent a single record as:
 ```json
 {
-  "a": "CLE",                       // away team code
-  "h": "IND",                       // home team code
+  "A": "CLE",                       // away team code
+  "H": "IND",                       // home team code
 
   "as": [117.9,109.0,95.6,2],      // away stats: [OEFF, DEFF, PACE, REST_DAYS]
   "hs": [115.7,116.8,101.1,2],     // home stats
@@ -162,8 +162,8 @@ Encode `description` + `shot_details` into compact `event_code`s:
 ### Example A: CLE–IND (single lineup id; includes rosters/stats)
 ```json
 {
-  "a": "CLE",
-  "h": "IND",
+  "A": "CLE",
+  "H": "IND",
   "as": [117.9,109.0,95.6,2],
   "hs": [115.7,116.8,101.1,2],
   "ap": [

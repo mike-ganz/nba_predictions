@@ -483,8 +483,8 @@ def build_compact_training_data_direct(
     
     # Build compact format directly
     compact_record = {
-        "a": away_abbrev,
-        "h": home_abbrev,
+        "A": away_abbrev,
+        "H": home_abbrev,
         "as": away_stats_array,
         "hs": home_stats_array,
         "ap": away_players,
@@ -808,8 +808,8 @@ def convert_verbose_to_compact(verbose_json, for_first_n_plays=False):
     
     # Build compact format
     compact_record = {
-        "a": away_abbrev,
-        "h": home_abbrev,
+        "A": away_abbrev,
+        "H": home_abbrev,
         "as": away_stats,
         "hs": home_stats,
         "ap": away_players,

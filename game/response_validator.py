@@ -67,7 +67,7 @@ class NBAResponseValidator:
             validation_mode: "fast" (essential only), "normal" (balanced), "strict" (all checks)
         """
         self.validation_mode = validation_mode
-        print(f"🔧 Initializing NBAResponseValidator in '{validation_mode}' mode")
+        # Initializing NBAResponseValidator
         
         self.errors: List[ValidationError] = []
         
@@ -85,7 +85,7 @@ class NBAResponseValidator:
         # Performance optimization caches
         self._init_performance_caches()
         
-        print(f"🔧 NBAResponseValidator initialized in {validation_mode} mode")
+        # NBAResponseValidator initialized
     
     def _convert_compact_response_for_validation(self, compact_response: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """

@@ -79,17 +79,13 @@ class GameContextBuilder:
             verbose_context = self._build_sample_context(game_id, for_first_n_plays)
         
         # Convert to compact format
-        if DATA_SYSTEM_AVAILABLE:
-            try:
-                compact_context = convert_verbose_to_compact(verbose_context)
-                print(f"✅ Converted context to compact format: {len(str(compact_context))} chars")
-                return compact_context
-            except Exception as e:
-                print(f"⚠️ Warning: Failed to convert to compact format: {e}")
-                print("Falling back to verbose format")
-                return verbose_context
-        else:
-            # No conversion available, return verbose format
+        try:
+            from generate_training_data import convert_verbose_to_compact
+            compact_context = convert_verbose_to_compact(verbose_context)
+            return compact_context
+        except Exception as e:
+            print(f"⚠️ Warning: Failed to convert to compact format: {e}")
+            print("Falling back to verbose format")
             return verbose_context
     
     def _build_from_data(self, game_id: str, start_quarter: int, 
@@ -139,48 +135,55 @@ class GameContextBuilder:
             context["recent_plays"] = recent_plays
             print(f"✅ Built context: {away_team['name']} @ {home_team['name']}, {len(recent_plays)} recent plays")
         else:
-            print("🎯 Building clean context for first_N_plays mode (no recent_plays)")
-            print(f"✅ Built clean context: {away_team['name']} @ {home_team['name']}, ready for Stage 1")
+            # Building clean context for first_N_plays mode (no recent_plays)
+            pass
         return context
     
     def _determine_away_home_teams(self, game_data: pd.DataFrame) -> tuple[str, str]:
-        """Determine which team is away vs home using player assignments (optimized)."""
-        # Single combined operation to get unique teams and players
-        unique_teams = game_data['team'].dropna().unique()
+        """Determine away/home teams using first scoring plays.
         
-        if len(unique_teams) >= 2:
-            # Optimized: combine operations and use sets for faster lookups
-            away_series = game_data['away'].dropna()
-            home_series = game_data['home'].dropna()
+        Simple and reliable: First team to increment away_score = AWAY team,
+        first team to increment home_score = HOME team.
+        """
+        # Sort by play_id if available for chronological order
+        df = game_data.sort_values('play_id') if 'play_id' in game_data.columns else game_data.copy()
+        
+        prev_away, prev_home = 0, 0
+        away_team, home_team = None, None
+        
+        for _, row in df.iterrows():
+            curr_away = int(row.get('away_score', 0) or 0)
+            curr_home = int(row.get('home_score', 0) or 0)
+            team = str(row.get('team', '') or '').strip()
             
-            # Convert to sets once (faster lookups)
-            away_players_set = set(away_series.unique()[:10])  # Slightly more players for better accuracy
-            home_players_set = set(home_series.unique()[:10])
+            # First team to score away points = away team
+            if away_team is None and curr_away > prev_away and team:
+                away_team = team
+                
+            # First team to score home points = home team  
+            if home_team is None and curr_home > prev_home and team:
+                home_team = team
+                
+            prev_away, prev_home = curr_away, curr_home
             
-            team1, team2 = unique_teams[0], unique_teams[1]
-            
-            # Get player sets for each team in one operation
-            team1_mask = game_data['team'] == team1
-            team2_mask = game_data['team'] == team2
-            
-            team1_players = set(game_data.loc[team1_mask, 'player'].dropna().unique())
-            team2_players = set(game_data.loc[team2_mask, 'player'].dropna().unique())
-            
-            # Optimized set intersection operations
-            team1_away_matches = len(team1_players & away_players_set)
-            team1_home_matches = len(team1_players & home_players_set)
-            
-            if team1_away_matches > team1_home_matches:
-                # Team1 is away, Team2 is home
-                return team1, team2
-            else:
-                # Team1 is home, Team2 is away  
-                return team2, team1
-        else:
-            # Fallback if only one team found
-            away_team = unique_teams[0] if len(unique_teams) > 0 else "AWAY"
-            home_team = "HOME"
+            # Stop once we have both teams
+            if away_team and home_team:
+                break
+        
+        # Return results or fallback
+        if away_team and home_team:
             return away_team, home_team
+            
+        # Fallback: use unique teams from 'team' column
+        unique_teams = [str(t).strip() for t in game_data.get('team', pd.Series(dtype=str)).dropna().unique() if str(t).strip()]
+        if len(unique_teams) >= 2:
+            # Alphabetical ordering as best-effort fallback
+            teams_sorted = sorted(unique_teams)
+            return teams_sorted[0], teams_sorted[1]
+        elif len(unique_teams) == 1:
+            return unique_teams[0], "HOME"
+        else:
+            return "AWAY", "HOME"
     
     def _build_team_info(self, team_abbr: str, game_data: pd.DataFrame, is_home: bool) -> Dict[str, Any]:
         """Build team information with stats and player profiles."""
@@ -193,9 +196,21 @@ class GameContextBuilder:
             "REST_DAYS": random.randint(1, 4)            # Whole number
         }
         
-        # Optimized: single operation to get unique players for this team
-        team_mask = game_data['team'] == team_abbr
-        players = game_data.loc[team_mask, 'player'].dropna().unique()
+        # Use proper roster columns for reliable player-team assignment
+        if is_home:
+            # Home team: use h1, h2, h3, h4, h5 columns
+            roster_cols = ['h1', 'h2', 'h3', 'h4', 'h5']
+        else:
+            # Away team: use a1, a2, a3, a4, a5 columns
+            roster_cols = ['a1', 'a2', 'a3', 'a4', 'a5']
+        
+        # Collect all unique players from roster columns
+        players_set = set()
+        for col in roster_cols:
+            if col in game_data.columns:
+                col_players = game_data[col].dropna().unique()
+                players_set.update(col_players)
+        players = list(players_set)
         
         # Build player profiles
         player_profiles = []
