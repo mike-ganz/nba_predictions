@@ -39,6 +39,8 @@ def main():
     parser.add_argument('--season', type=str, default='2023-2024',
                        choices=['2022-2023', '2023-2024', '2024-2025'],
                        help='NBA season to generate data for (default: 2023-2024)')
+    parser.add_argument('--ultra-fast-gemini', action='store_true',
+                       help='Use ultra-optimized Gemini formatter (10-50x faster)')
     
     args = parser.parse_args()
     
@@ -198,9 +200,20 @@ def main():
             print(f"💾 OpenAI JSONL saved: {filename}")
             
         elif args.format == 'gemini':
-            gemini_formatter = GeminiFormatter()
-            gemini_examples = gemini_formatter.create_training_data(training_df, generation_mode=args.generation_mode, n_total=args.n_total, season=args.season)
-            filename = f"{args.output_prefix}_gemini_compact_{args.generation_mode}_{timestamp}.jsonl"
+            # Check for ultra-fast formatter flag
+            use_ultra_fast = getattr(args, 'ultra_fast_gemini', False)
+            
+            if use_ultra_fast:
+                print("🚀 Using ULTRA-OPTIMIZED Gemini formatter...")
+                from training.gemini_formatter_ultra_optimized import create_ultra_fast_gemini_training_data
+                gemini_examples = create_ultra_fast_gemini_training_data(training_df, generation_mode=args.generation_mode, n_total=args.n_total, season=args.season)
+                filename = f"{args.output_prefix}_gemini_compact_{args.generation_mode}_ULTRA_FAST_{timestamp}.jsonl"
+            else:
+                print("⚠️  Using standard Gemini formatter (slower)...")
+                gemini_formatter = GeminiFormatter()
+                gemini_examples = gemini_formatter.create_training_data(training_df, generation_mode=args.generation_mode, n_total=args.n_total, season=args.season)
+                filename = f"{args.output_prefix}_gemini_compact_{args.generation_mode}_{timestamp}.jsonl"
+            
             with open(filename, 'w') as f:
                 for example in gemini_examples:
                     f.write(json.dumps(example, separators=(',', ':')) + '\n')

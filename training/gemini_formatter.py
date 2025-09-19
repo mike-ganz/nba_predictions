@@ -31,7 +31,7 @@ class GeminiFormatter(BaseFormatter):
         if not isinstance(json_data, dict):
             return False
         # Quick check for compact vs verbose format
-        return ('a' in json_data and 'h' in json_data and 
+        return ('A' in json_data and 'H' in json_data and 
                 'away_team' not in json_data and 'home_team' not in json_data)
     
     def _convert_compact_to_verbose_for_gemini(self, compact_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -254,8 +254,8 @@ class GeminiFormatter(BaseFormatter):
             
             # Determine team names based on format
             if self._is_compact_format(context_json):
-                away_team_name = context_json['a']
-                home_team_name = context_json['h']
+                away_team_name = context_json['A']
+                home_team_name = context_json['H']
             else:
                 away_team_name = context_json['away_team']['name']
                 home_team_name = context_json['home_team']['name']
@@ -515,8 +515,8 @@ class GeminiFormatter(BaseFormatter):
         
         # Determine team names based on format (needed for score formatting)
         if self._is_compact_format(current_json):
-            away_team_name = current_json['a']
-            home_team_name = current_json['h']
+            away_team_name = current_json['A']
+            home_team_name = current_json['H']
         else:
             away_team_name = current_json['away_team']['name']
             home_team_name = current_json['home_team']['name']
@@ -607,8 +607,8 @@ class GeminiFormatter(BaseFormatter):
         
         # Determine team names based on format
         if self._is_compact_format(current_json):
-            away_team_name = current_json['a']
-            home_team_name = current_json['h']
+            away_team_name = current_json['A']
+            home_team_name = current_json['H']
         else:
             away_team_name = current_json['away_team']['name']
             home_team_name = current_json['home_team']['name']
