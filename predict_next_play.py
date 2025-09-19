@@ -47,11 +47,11 @@ try:
     import ujson
     json_dumps = ujson.dumps
     json_loads = ujson.loads
-    print("✅ Using ujson for faster JSON operations")
+    print("Using ujson for faster JSON operations")
 except ImportError:
     json_dumps = json.dumps
     json_loads = json.loads
-    print("ℹ️ Using standard json library (consider installing ujson for better performance)")
+    print("Using standard json library (consider installing ujson for better performance)")
 
 
 class OptimizedGameContext:
@@ -72,7 +72,7 @@ class OptimizedGameContext:
         self._current_full_json: Optional[str] = None
         self._current_plays_hash: Optional[str] = None
         
-        print(f"🚀 OptimizedGameContext initialized - base context cached ({len(self._base_json_cached)} chars)")
+        print(f"OptimizedGameContext initialized - base context cached ({len(self._base_json_cached)} chars)")
     
     def _hash_plays(self, plays: list) -> str:
         """Create a hash key for play sequence for caching (optimized)."""
@@ -182,7 +182,7 @@ class OptimizedGameContext:
         Args:
             restored_plays: List of plays to restore to
         """
-        print(f"🔄 Restoring recent_plays: {len(self.current_recent_plays)} → {len(restored_plays)} plays")
+        print(f"Restoring recent_plays: {len(self.current_recent_plays)} → {len(restored_plays)} plays")
         if restored_plays:
             last_play = restored_plays[-1]
             print(f"🕒 Rolling back to time: {last_play.get('time_remaining', 'N/A')}")
@@ -193,6 +193,46 @@ class OptimizedGameContext:
         # Clear the plays cache since we've changed state
         self._plays_cache.clear()
         print(f"🧹 Cleared plays cache due to rollback")
+        
+    def inject_quarter_start(self, quarter: int) -> None:
+        """
+        Inject a clean quarter start context by removing all 00:00 plays 
+        and adding a fresh quarter start play.
+        
+        Args:
+            quarter: The quarter to start (2, 3, or 4)
+        """
+        print(f"Injecting Q{quarter} start context")
+        
+        # Filter out any plays at 00:00 (end of previous quarter)
+        filtered_plays = [
+            play for play in self.current_recent_plays 
+            if play.get("time_remaining") != "00:00"
+        ]
+        
+        # Create a fresh quarter start play
+        quarter_start_play = {
+            "quarter": quarter,
+            "time_remaining": "12:00",
+            "score": self._extract_last_known_score(),
+            "description": f"Start of quarter {quarter}",
+            "player": None,
+            "shot_details": None
+        }
+        
+        # Set the new context with the quarter start play
+        new_context = filtered_plays + [quarter_start_play]
+        self.update_recent_plays(new_context)
+        
+        print(f"Q{quarter} context ready: {len(new_context)} plays (removed {len(self.current_recent_plays) - len(filtered_plays)} end-of-quarter plays)")
+        
+    def _extract_last_known_score(self) -> str:
+        """Extract the last known score from recent plays."""
+        for play in reversed(self.current_recent_plays):
+            score = play.get("score")
+            if score and score != "N/A":
+                return score
+        return "0-0"  # Default fallback
 
 
 class CompactGameContext:
@@ -320,6 +360,73 @@ class CompactGameContext:
             "base_json_length": len(self._base_json_cached),
             "current_plays_count": len(self.current_plays)
         }
+        
+    def inject_quarter_start(self, quarter: int) -> None:
+        """
+        Inject a clean quarter start context by removing all 00:00 plays 
+        and adding a fresh quarter start play (compact format).
+        
+        Args:
+            quarter: The quarter to start (2, 3, or 4)
+        """
+        print(f"Injecting Q{quarter} start context (compact format)")
+        
+        # DEBUG: Show current plays before filtering
+        print(f"DEBUG: Current plays count: {len(self.current_plays)}")
+        for i, play in enumerate(self.current_plays[-5:]):
+            if len(play) >= 2:
+                q, t_sec = play[0], play[1]
+                t_min = t_sec // 60 
+                t_s = t_sec % 60
+                print(f"   Play {i}: Q{q} [{t_min:02d}:{t_s:02d}] - time_seconds={t_sec}")
+        
+        # Filter out any plays at 00:00 (end of previous quarter)  
+        filtered_plays = [
+            play for play in self.current_plays
+            if len(play) > 1 and play[1] != 0  # play[1] is time_seconds, 0 = 00:00
+        ]
+        
+        print(f"DEBUG: After filtering: {len(filtered_plays)} plays (removed {len(self.current_plays) - len(filtered_plays)} plays at 00:00)")
+        
+        # Extract last known score from recent plays
+        last_score = self._extract_last_known_score_compact()
+        print(f"DEBUG: Last known score: {last_score}")
+        
+        # Create a fresh quarter start play in compact format
+        # Format: [quarter, time_seconds, score_array, actor, event_code, points, lineup_id]
+        quarter_start_play = [
+            quarter,           # Quarter number
+            720,               # 12:00 in seconds
+            last_score,        # [away_score, home_score]
+            ["A", -1],         # Generic actor (away team, no specific player)
+            "quarter_start",   # Event code
+            0,                 # No points
+            0                  # Default lineup
+        ]
+        
+        print(f"DEBUG: Created quarter start play: {quarter_start_play}")
+        
+        # Set the new context with the quarter start play
+        new_plays = filtered_plays + [quarter_start_play] 
+        self.update_plays(new_plays)
+        
+        # DEBUG: Show final plays after injection
+        print(f"DEBUG: Final plays count: {len(new_plays)}")
+        for i, play in enumerate(new_plays[-3:]):
+            if len(play) >= 2:
+                q, t_sec = play[0], play[1]
+                t_min = t_sec // 60
+                t_s = t_sec % 60
+                print(f"   Final Play {i}: Q{q} [{t_min:02d}:{t_s:02d}] - time_seconds={t_sec}")
+        
+        print(f"Q{quarter} context ready: {len(new_plays)} plays (removed {len(self.current_plays) - len(filtered_plays)} end-of-quarter plays)")
+        
+    def _extract_last_known_score_compact(self) -> list:
+        """Extract the last known score from compact plays."""
+        for play in reversed(self.current_plays):
+            if len(play) > 2 and isinstance(play[2], list) and len(play[2]) >= 2:
+                return play[2]  # Return score array [away, home]
+        return [0, 0]  # Default fallback
 
 
 class LoggingConfig:
@@ -338,9 +445,9 @@ class LoggingConfig:
         elif self.level == 1:
             print("📝 Normal logging mode")
         elif self.level == 2:
-            print("📋 Verbose logging mode - detailed iteration info")
+            print("Verbose logging mode - detailed iteration info")
         else:
-            print("🔍 Debug logging mode - full JSON dumps and validation details")
+            print("Debug logging mode - full JSON dumps and validation details")
     
     def log_minimal(self, message: str) -> None:
         """Always shown - essential messages only."""
@@ -497,22 +604,22 @@ def format_play_description(play_tuple: list, game_context: Dict[str, Any]) -> s
                 return "Free throw missed"
             return f"{display_name} missed free throw"
             
-        # Rebounds  
-        elif event_lower == 'd_reb':
+        # Rebounds (both full and short forms)
+        elif event_lower in ['d_reb', 'd']:
             if display_name is None:
                 return "Defensive rebound"
             return f"{display_name} defensive rebound"
-        elif event_lower == 'o_reb':
+        elif event_lower in ['o_reb', 'o']:
             if display_name is None:
                 return "Offensive rebound"
             return f"{display_name} offensive rebound"
             
-        # Turnovers and fouls
-        elif event_lower == 'tov':
+        # Turnovers and fouls (both full and short forms)
+        elif event_lower in ['tov', 't']:
             if display_name is None:
                 return "Turnover"
             return f"{display_name} turnover"
-        elif event_lower == 'p_foul':
+        elif event_lower in ['p_foul', 'p']:
             if display_name is None:
                 return "Personal foul"
             return f"{display_name} personal foul"
@@ -524,6 +631,24 @@ def format_play_description(play_tuple: list, game_context: Dict[str, Any]) -> s
             if display_name is None:
                 return "Technical foul"
             return f"{display_name} technical foul"
+        
+        # Steals and other short codes
+        elif event_lower in ['steal', 's']:
+            if display_name is None:
+                return "Steal"
+            return f"{display_name} steal"
+        elif event_lower in ['assist', 'a']:
+            if display_name is None:
+                return "Assist"
+            return f"{display_name} assist"
+        elif event_lower in ['block', 'b']:
+            if display_name is None:
+                return "Block"
+            return f"{display_name} block"
+        elif event_lower in ['flagrant', 'f']:
+            if display_name is None:
+                return "Flagrant foul"
+            return f"{display_name} flagrant foul"
             
         # Other events
         elif event_lower == 'sub':
@@ -551,7 +676,7 @@ def get_prediction_platform() -> str:
     # Validate platform
     if not PredictionClientFactory.is_platform_supported(platform):
         available = PredictionClientFactory.get_available_platforms()
-        print(f"⚠️  Warning: Unsupported platform '{platform}'. Using 'openai' instead.")
+        print(f"Warning: Unsupported platform '{platform}'. Using 'openai' instead.")
         print(f"   Available platforms: {available}")
         platform = "openai"
     
@@ -731,7 +856,7 @@ def init_prediction_client() -> tuple[BasePredictionClient, Dict[str, str]]:
         return client, model_config
         
     except Exception as e:
-        print(f"❌ Failed to initialize {platform.upper()} client: {e}")
+        print(f"Failed to initialize {platform.upper()} client: {e}")
         raise
 
 def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5, skip_stage1: bool = False) -> Dict[str, Any]:
@@ -785,7 +910,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                 return {"error": "skip_stage1=True but verbose game_context has no 'recent_plays'"}
             plays_count = len(optimized_context.current_recent_plays)
         
-        log_config.log_normal(f"✅ Using {plays_count} existing plays")
+        log_config.log_normal(f"Using {plays_count} existing plays")
         results["stage1_response"] = "SKIPPED - Stage 1 bypassed for testing"
         
     else:
@@ -835,12 +960,12 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
             
             # Store Stage 1 termination information if present (shouldn't normally happen)
             if stage1_termination_info:
-                log_config.log_normal(f"⚠️ Unexpected Stage 1 termination: {stage1_termination_info.get('validation_termination_type', 'unknown')}")
+                log_config.log_normal(f"Warning: Unexpected Stage 1 termination: {stage1_termination_info.get('validation_termination_type', 'unknown')}")
                 results["stage1_validation_termination"] = stage1_termination_info
             
             # Note: Rollback shouldn't happen in Stage 1 since there are no recent_plays
             if stage1_needs_rollback:
-                log_config.log_normal("⚠️ Unexpected rollback signal in Stage 1 - ignoring")
+                log_config.log_normal("Warning: Unexpected rollback signal in Stage 1 - ignoring")
             
             if stage1_game_ended:
                 log_config.log_minimal("Game ended during Stage 1 - terminating prediction sequence")
@@ -856,7 +981,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
             try:
                 stage1_json = json_loads(stage1_content)
             except (json.JSONDecodeError, ValueError) as e:
-                log_config.log_minimal(f"❌ Failed to parse Stage 1 response as JSON: {e}")
+                log_config.log_minimal(f"Failed to parse Stage 1 response as JSON: {e}")
                 return {"error": f"Stage 1 JSON parse error: {e}"}
             
             # Update context with initial plays (format-dependent)
@@ -885,21 +1010,21 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                         play_tuples.append(play_tuple)
                     
                     optimized_context.update_plays(play_tuples)
-                    log_config.log_normal(f"✅ Converted and added {len(play_tuples)} play tuples to context")
+                    log_config.log_normal(f"Converted and added {len(play_tuples)} play tuples to context")
                 else:
-                    log_config.log_normal("⚠️ Warning: No 'y' or 'next_plays' found in Stage 1 response")
+                    log_config.log_normal("Warning: No 'y' or 'next_plays' found in Stage 1 response")
                     optimized_context.update_plays([])
             else:
                 # Verbose format: expect next_plays array
                 if "next_plays" in stage1_json:
                     optimized_context.update_recent_plays(stage1_json["next_plays"])
-                    log_config.log_normal(f"✅ Added {len(stage1_json['next_plays'])} recent_plays to context")
+                    log_config.log_normal(f"Added {len(stage1_json['next_plays'])} recent_plays to context")
                 else:
-                    log_config.log_normal("⚠️ Warning: No 'next_plays' found in Stage 1 response")
+                    log_config.log_normal("Warning: No 'next_plays' found in Stage 1 response")
                     optimized_context.update_recent_plays([])
                 
         except Exception as e:
-            log_config.log_minimal(f"❌ Error in Stage 1: {e}")
+            log_config.log_minimal(f"Error in Stage 1: {e}")
             raise
     
     # === ROLLING ITERATIONS ===
@@ -917,11 +1042,11 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
             # Display plays count based on format
             if is_compact:
                 plays_count = len(optimized_context.current_plays)
-                log_config.log_verbose(f"📋 Current plays count: {plays_count}")
+                log_config.log_verbose(f"Current plays count: {plays_count}")
                 current_plays = optimized_context.current_plays
             else:
                 plays_count = len(optimized_context.current_recent_plays)
-                log_config.log_verbose(f"📋 Current recent_plays count: {plays_count}")
+                log_config.log_verbose(f"Current recent_plays count: {plays_count}")
                 current_plays = optimized_context.current_recent_plays
             
             # Show essential game state info (format-dependent)
@@ -929,6 +1054,9 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                 if is_compact:
                     # Compact format: play tuples [q, t, score, actor, event, (pts), lineup_id]
                     latest_play = current_plays[-1]
+                    
+                    # DEBUG: Show what play we're reading game state from
+                    
                     if len(latest_play) >= 3:
                         current_quarter = latest_play[0]
                         time_seconds = latest_play[1]
@@ -943,19 +1071,21 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                         home_team = game_context.get("H", "HOME") if isinstance(game_context, dict) else "HOME"
                         current_score = f"{away_team} {score_array[0]} - {home_team} {score_array[1]}"
                         
-                        log_config.log_normal(f"🏀 Game State: Q{current_quarter} {current_time} | {current_score}")
+                        log_config.log_normal(f"Game State: Q{current_quarter} {current_time} | {current_score}")
+                    else:
+                        log_config.log_normal(f"DEBUG: Latest play too short: {len(latest_play)} elements")
                         
-                        # Show last 5 play tuples for context
-                        log_config.log_normal("📋 Recent plays:")
-                        recent_to_show = current_plays[-5:]
-                        for i, play_tuple in enumerate(recent_to_show, 1):
-                            if len(play_tuple) >= 5:
-                                q = play_tuple[0]
-                                t_sec = play_tuple[1]
-                                t_min = t_sec // 60
-                                t_s = t_sec % 60
-                                play_description = format_play_description(play_tuple, game_context)
-                                log_config.log_normal(f"   {i}. Q{q} [{t_min:02d}:{t_s:02d}] {play_description}")
+                    # Show last 5 play tuples for context
+                    log_config.log_normal("Recent plays:")
+                    recent_to_show = current_plays[-5:]
+                    for i, play_tuple in enumerate(recent_to_show, 1):
+                        if len(play_tuple) >= 5:
+                            q = play_tuple[0]
+                            t_sec = play_tuple[1]
+                            t_min = t_sec // 60
+                            t_s = t_sec % 60
+                            play_description = format_play_description(play_tuple, game_context)
+                            log_config.log_normal(f"   {i}. Q{q} [{t_min:02d}:{t_s:02d}] {play_description}")
                 else:
                     # Verbose format: play objects
                     latest_play = current_plays[-1]
@@ -963,10 +1093,10 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                     current_quarter = latest_play.get('quarter', 'N/A')
                     current_time = latest_play.get('time_remaining', 'N/A')
                     
-                    log_config.log_normal(f"🏀 Game State: Q{current_quarter} {current_time} | {current_score}")
+                    log_config.log_normal(f"Game State: Q{current_quarter} {current_time} | {current_score}")
                     
                     # Show last 5 plays for context
-                    log_config.log_normal("📋 Recent plays context:")
+                    log_config.log_normal("Recent plays context:")
                     recent_to_show = current_plays[-5:]
                     for i, play in enumerate(recent_to_show, 1):
                         play_desc = play.get('description', 'No description')[:60]
@@ -976,16 +1106,16 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
             # Show caching stats in debug mode
             if log_config.should_show_context_details():
                 cache_stats = optimized_context.get_cache_stats()
-                log_config.log_debug(f"🚀 Cache stats: {cache_stats}")
+                log_config.log_debug(f"Cache stats: {cache_stats}")
             
-            # 🔍 LOG: Show the input context being sent to the model (debug mode only)
+            # LOG: Show the input context being sent to the model (debug mode only)
             if log_config.should_show_json():
                 log_config.log_debug("\n" + "="*60)
-                log_config.log_debug(f"📤 INPUT TO MODEL (Iteration {iteration + 1}):")
+                log_config.log_debug(f"INPUT TO MODEL (Iteration {iteration + 1}):")
                 log_config.log_debug("="*60)
                 
                 if is_compact:
-                    log_config.log_debug("📋 PLAY TUPLES being sent:")
+                    log_config.log_debug("PLAY TUPLES being sent:")
                     if current_plays:
                         for i, play_tuple in enumerate(current_plays):
                             if len(play_tuple) >= 5:
@@ -994,25 +1124,33 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                                 t_s = t_sec % 60
                                 log_config.log_debug(f"   {i+1:2d}. Q{q} [{t_min:02d}:{t_s:02d}] {event} by {actor}")
                     else:
-                        log_config.log_debug("   ❌ NO play tuples in context!")
+                        log_config.log_debug("   NO play tuples in context!")
                 else:
-                    log_config.log_debug("📋 RECENT_PLAYS being sent:")
+                    log_config.log_debug("RECENT_PLAYS being sent:")
                     if current_plays:
                         for i, play in enumerate(current_plays):
                             play_desc = play.get('description', 'No description')
                             play_time = play.get('time_remaining', 'No time')
                             log_config.log_debug(f"   {i+1:2d}. [{play_time}] {play_desc}")
                     else:
-                        log_config.log_debug("   ❌ NO recent_plays in context!")
+                        log_config.log_debug("   NO recent_plays in context!")
                         
                 log_config.log_debug("="*60)
-                log_config.log_debug("📤 FULL INPUT JSON:")
+                log_config.log_debug("FULL INPUT JSON:")
                 log_config.log_debug(iteration_json)
                 log_config.log_debug("="*60 + "\n")
             
+            # DEBUG: Show context being sent to API
+            context_to_send = optimized_context.get_context_dict()
+            if is_compact and context_to_send.get('p'):
+                latest_context_play = context_to_send['p'][-1] if context_to_send['p'] else None
+                if latest_context_play and len(latest_context_play) >= 2:
+                    ctx_q, ctx_t = latest_context_play[0], latest_context_play[1]
+                    ctx_min, ctx_sec = ctx_t // 60, ctx_t % 60
+            
             # Stage 2 API call with validation and rollback handling
             stage2_content, stage2_usage, stage2_game_ended, stage2_needs_rollback, termination_info = client.predict_with_validation(
-                context=optimized_context.get_context_dict(),
+                context=context_to_send,
                 model_id=model_config['model_2_id'],
                 max_tokens=5000,
                 temperature=1.01,
@@ -1021,25 +1159,87 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
             
             # Store termination information for later use
             if termination_info:
-                log_config.log_normal(f"🛑 Validation termination info captured: {termination_info.get('validation_termination_type', 'unknown')}")
+                log_config.log_normal(f"Validation termination info captured: {termination_info.get('validation_termination_type', 'unknown')}")
                 # Store in the results for the orchestrator to access
                 results["validation_termination"] = termination_info
             
-            # Handle timestamp rollback scenario
+            # Handle rollback scenarios (timestamp rollback or quarter transition)
             if stage2_needs_rollback:
-                log_config.log_normal(f"🔄 Timestamp rollback triggered during iteration {iteration + 1}")
-                
-                # Get the rollback snapshot from the validator
-                rollback_snapshot = client.validator.get_rollback_snapshot()
-                if rollback_snapshot is not None:
-                    # Restore the context to the rollback state
-                    optimized_context.restore_recent_plays(rollback_snapshot)
-                    log_config.log_normal(f"✅ Game state restored to {len(rollback_snapshot)} plays")
-                    
-                    # Skip to next iteration with restored state
-                    continue
+                # DEBUG: Log what termination_info contains
+                log_config.log_normal(f"DEBUG: stage2_needs_rollback=True, termination_info={termination_info}")
+                if termination_info:
+                    log_config.log_normal(f"DEBUG: validation_termination_type={termination_info.get('validation_termination_type', 'MISSING')}")
                 else:
-                    log_config.log_normal(f"⚠️ Rollback snapshot was None - continuing with current state")
+                    log_config.log_normal(f"DEBUG: termination_info is None - checking validator state")
+                    log_config.log_normal(f"DEBUG: validator.has_termination_record()={client.validator.has_termination_record()}")
+                    if hasattr(client.validator, 'quarter_transition_target'):
+                        log_config.log_normal(f"DEBUG: Found quarter_transition_target={client.validator.quarter_transition_target}")
+                    else:
+                        log_config.log_normal(f"DEBUG: No quarter_transition_target found in validator")
+                
+                # Check if this is a quarter transition or regular rollback
+                is_quarter_transition = (termination_info and 
+                                       termination_info.get('validation_termination_type') == 'quarter_transition')
+                
+                # FALLBACK: Check validator state directly if termination_info failed
+                if not is_quarter_transition and hasattr(client.validator, 'quarter_transition_target'):
+                    log_config.log_normal(f"DEBUG: Using fallback quarter transition detection")
+                    is_quarter_transition = True
+                
+                if is_quarter_transition:
+                    log_config.log_normal(f"Quarter transition triggered during iteration {iteration + 1}")
+                    
+                    # Extract target quarter from termination info
+                    target_quarter = client.validator.get_quarter_transition_target()
+                    log_config.log_normal(f"Transitioning to Q{target_quarter}")
+                    
+                    # DEBUG: Show context BEFORE injection
+                    if is_compact:
+                        before_plays = optimized_context.current_plays[-3:] if optimized_context.current_plays else []
+                        log_config.log_normal(f"DEBUG: Context BEFORE injection (last 3 plays):")
+                        for i, play in enumerate(before_plays):
+                            if len(play) >= 2:
+                                q, t_sec = play[0], play[1]
+                                t_min, t_s = t_sec // 60, t_sec % 60
+                                log_config.log_normal(f"   Before{i}: Q{q} [{t_min:02d}:{t_s:02d}]")
+                    
+                    # Inject quarter start context
+                    optimized_context.inject_quarter_start(target_quarter)
+                    log_config.log_normal(f"Context updated for Q{target_quarter} start")
+                    
+                    # DEBUG: Show context AFTER injection  
+                    if is_compact:
+                        after_plays = optimized_context.current_plays[-3:] if optimized_context.current_plays else []
+                        log_config.log_normal(f"DEBUG: Context AFTER injection (last 3 plays):")
+                        for i, play in enumerate(after_plays):
+                            if len(play) >= 2:
+                                q, t_sec = play[0], play[1]
+                                t_min, t_s = t_sec // 60, t_sec % 60
+                                log_config.log_normal(f"   After{i}: Q{q} [{t_min:02d}:{t_s:02d}]")
+                    
+                    # FORCE cache invalidation to ensure new context is used
+                    if hasattr(optimized_context, '_plays_cache'):
+                        optimized_context._plays_cache.clear()
+                        log_config.log_normal(f"🧹 Forced cache clear after Q{target_quarter} injection")
+                    
+                    # Skip to next iteration with new quarter context
+                    continue
+                    
+                else:
+                    # Regular timestamp rollback
+                    log_config.log_normal(f"Timestamp rollback triggered during iteration {iteration + 1}")
+                    
+                    # Get the rollback snapshot from the validator
+                    rollback_snapshot = client.validator.get_rollback_snapshot()
+                    if rollback_snapshot is not None:
+                        # Restore the context to the rollback state
+                        optimized_context.restore_recent_plays(rollback_snapshot)
+                        log_config.log_normal(f"Game state restored to {len(rollback_snapshot)} plays")
+                        
+                        # Skip to next iteration with restored state
+                        continue
+                    else:
+                        log_config.log_normal(f"Rollback snapshot was None - continuing with current state")
             
             if stage2_game_ended:
                 log_config.log_minimal(f"🏁 Game ended during iteration {iteration + 1} - terminating prediction sequence")
@@ -1055,7 +1255,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
             # 📝 LOG: Print full model response for debugging (debug mode only)
             if log_config.should_show_json():
                 log_config.log_debug("\n" + "="*60)
-                log_config.log_debug(f"🔍 FULL MODEL RESPONSE (Iteration {iteration + 1}):")
+                log_config.log_debug(f"FULL MODEL RESPONSE (Iteration {iteration + 1}):")
                 log_config.log_debug("="*60)
                 log_config.log_debug(stage2_content)
                 log_config.log_debug("="*60 + "\n")
@@ -1067,7 +1267,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
             try:
                 stage2_json = json_loads(stage2_content)
             except (json.JSONDecodeError, ValueError) as e:
-                log_config.log_minimal(f"❌ Failed to parse iteration {iteration + 1} response as JSON: {e}")
+                log_config.log_minimal(f"Failed to parse iteration {iteration + 1} response as JSON: {e}")
                 results["iterations"].append({
                     "iteration": iteration + 1,
                     "error": f"JSON parse error: {e}",
@@ -1130,14 +1330,14 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                         from config.settings import DEFAULT_N_TOTAL_PLAYS
                         optimized_context.add_play_tuple(play_tuple, DEFAULT_N_TOTAL_PLAYS)
                     else:
-                        log_config.log_normal(f"⚠️ Warning: Failed to parse compact response: {parsed_response.get('error', 'Unknown error')}")
+                        log_config.log_normal(f"Warning: Failed to parse compact response: {parsed_response.get('error', 'Unknown error')}")
                 else:
-                    log_config.log_normal(f"⚠️ Warning: Compact format response not recognized - expected raw tuple or {{\"y\": [...]}} format")
-                    log_config.log_debug(f"🔍 Raw response: {stage2_content}")
-                    log_config.log_debug(f"🔍 Parsed JSON: {stage2_json}")
-                    log_config.log_debug(f"🔍 JSON type: {type(stage2_json)}")
+                    log_config.log_normal(f"Warning: Compact format response not recognized - expected raw tuple or {{\"y\": [...]}} format")
+                    log_config.log_debug(f"Raw response: {stage2_content}")
+                    log_config.log_debug(f"Parsed JSON: {stage2_json}")
+                    log_config.log_debug(f"JSON type: {type(stage2_json)}")
                     if isinstance(stage2_json, list):
-                        log_config.log_debug(f"🔍 List length: {len(stage2_json)}")
+                        log_config.log_debug(f"List length: {len(stage2_json)}")
             else:
                 # Verbose format: expect "next_play" field
                 if "next_play" in stage2_json:
@@ -1157,13 +1357,13 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                         points = shot_details.get("points") if shot_details else None
                         # Scoring information processed
                     else:
-                        log_config.log_verbose("⚠️ WARNING: No 'shot_details' field found in next_play")
+                        log_config.log_verbose("WARNING: No 'shot_details' field found in next_play")
                     
                     # Update the sliding window using verbose context
                     from config.settings import DEFAULT_N_TOTAL_PLAYS
                     optimized_context.add_play_and_slide(next_play, DEFAULT_N_TOTAL_PLAYS)
                 else:
-                    log_config.log_normal(f"⚠️ Warning: No 'next_play' found in verbose format response")
+                    log_config.log_normal(f"Warning: No 'next_play' found in verbose format response")
             
             # Continue only if we successfully extracted a play
             if next_play is None:
@@ -1183,13 +1383,13 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                 if is_compact:
                     current_plays_count = len(optimized_context.current_plays)
                     if current_plays_count >= DEFAULT_N_TOTAL_PLAYS:
-                        log_config.log_verbose("🔄 Sliding window: Added new play tuple, removed oldest")
+                        log_config.log_verbose("Sliding window: Added new play tuple, removed oldest")
                     else:
                         log_config.log_verbose(f"📈 Window growing: Now {current_plays_count} play tuples")
                 else:
                     current_plays_count = len(optimized_context.current_recent_plays)
                     if current_plays_count >= DEFAULT_N_TOTAL_PLAYS:
-                        log_config.log_verbose("🔄 Sliding window: Added new play, removed oldest play")
+                        log_config.log_verbose("Sliding window: Added new play, removed oldest play")
                     else:
                         log_config.log_verbose(f"📈 Window growing: Now {current_plays_count} plays")
             
@@ -1212,7 +1412,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                     log_config.log_minimal("🏁 Breaking out of prediction loop - game ended")
                     break
         
-        # log_config.log_normal(f"\n✅ Rolling sequence completed! {n_iterations} iterations done.")
+        # log_config.log_normal(f"\nRolling sequence completed! {n_iterations} iterations done.")
         
         # 📊 SCORING ANALYSIS SUMMARY
         scoring_plays = 0
@@ -1231,16 +1431,16 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                     non_scoring_plays += 1
         
         # log_config.log_normal(f"\n📈 SCORING SUMMARY:")
-        # log_config.log_normal(f"   🏀 Scoring plays: {scoring_plays}/{scoring_plays + non_scoring_plays}")
-        # log_config.log_normal(f"   📋 Non-scoring plays: {non_scoring_plays}/{scoring_plays + non_scoring_plays}")
+        # log_config.log_normal(f"   Scoring plays: {scoring_plays}/{scoring_plays + non_scoring_plays}")
+        # log_config.log_normal(f"   Non-scoring plays: {non_scoring_plays}/{scoring_plays + non_scoring_plays}")
         # if scoring_plays + non_scoring_plays > 0:
         #     scoring_rate = (scoring_plays / (scoring_plays + non_scoring_plays)) * 100
         #     log_config.log_normal(f"   📊 Scoring rate: {scoring_rate:.1f}%")
         
-        # 🚀 PERFORMANCE SUMMARY (debug mode)
+        # PERFORMANCE SUMMARY (debug mode)
         if log_config.should_show_context_details():
             final_cache_stats = optimized_context.get_cache_stats()
-            # log_config.log_verbose(f"\n🚀 PERFORMANCE SUMMARY:")
+            # log_config.log_verbose(f"\nPERFORMANCE SUMMARY:")
             # log_config.log_verbose(f"   📊 Final cache stats: {final_cache_stats}")
             # cache_hit_ratio = (final_cache_stats['plays_cache_size'] / max(n_iterations, 1)) * 100
             # log_config.log_verbose(f"   ⚡ Estimated JSON cache efficiency: {cache_hit_ratio:.1f}%")
@@ -1248,13 +1448,13 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
         return results
         
     except Exception as e:
-        log_config.log_minimal(f"❌ Error in rolling iterations: {e}")
+        log_config.log_minimal(f"Error in rolling iterations: {e}")
         
         # Check if this was a validation failure and capture details
         if "Response validation failed" in str(e) and hasattr(client, 'get_last_validation_failure_info'):
             validation_failure_info = client.get_last_validation_failure_info()
             if validation_failure_info:
-                log_config.log_normal(f"🔍 Captured validation failure details:")
+                log_config.log_normal(f"Captured validation failure details:")
                 log_config.log_normal(f"   Most common reason: {validation_failure_info.get('validation_most_common_reason', 'unknown')}")
                 log_config.log_normal(f"   Most common error type: {validation_failure_info.get('validation_most_common_error_type', 'unknown')}")
                 log_config.log_normal(f"   Total failed attempts: {validation_failure_info.get('validation_total_failed_attempts', 0)}")
@@ -1269,7 +1469,7 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
 def main():
     """Main function to test the prediction system with performance optimizations."""
     
-    print("🏀 NBA Multi-Platform Play Prediction Test (OPTIMIZED)")
+    print("NBA Multi-Platform Play Prediction Test (OPTIMIZED)")
     print("=" * 60)
     
     # Display platform information
@@ -1280,19 +1480,19 @@ def main():
     
     # Display optimization information
     validation_mode = os.getenv("VALIDATION_MODE", "fast")
-    print(f"\n🚀 Performance Optimizations Active:")
-    print(f"   • JSON Caching: ✅ Enabled")
+    print(f"\nPerformance Optimizations Active:")
+    print(f"   • JSON Caching: Enabled")
     print(f"   • Logging Level: {log_config.level} (set PREDICTION_LOG_LEVEL=0-3)")
     print(f"   • Fast JSON Library: {'ujson' if 'ujson' in globals() else 'standard json'}")
-    print(f"   • Double Serialization: ❌ Eliminated")
+    print(f"   • Double Serialization: Eliminated")
     print(f"   • Validation Mode: {validation_mode.upper()} (set VALIDATION_MODE=fast/normal/strict)")
     
     if validation_mode == "fast":
         print(f"   • Response Validation: ⚡ Fast mode - 10-20% speed boost")
     elif validation_mode == "normal":
-        print(f"   • Response Validation: ⚖️ Normal mode - balanced performance")
+        print(f"   • Response Validation: Normal mode - balanced performance")
     else:
-        print(f"   • Response Validation: 🔍 Strict mode - comprehensive checks")
+        print(f"   • Response Validation: Strict mode - comprehensive checks")
     
     if platform == "gemini":
         print("\n💡 Gemini Configuration Notes:")
@@ -1305,7 +1505,7 @@ def main():
         print("   • Ensure OPENAI_API_KEY environment variable is set")
         print("   • Default model IDs are configured for the provided fine-tuned models")
     
-    print("\n🎛️ Logging Levels:")
+    print("\nLogging Levels:")
     print("   • 0: Minimal (essential messages only)")
     print("   • 1: Normal (default - standard progress)")
     print("   • 2: Verbose (detailed iteration info + cache stats)")
@@ -1315,18 +1515,18 @@ def main():
     print("\n" + "=" * 60)
     
     # ==================================================================================
-    # 🎯 TESTING MODE SELECTION - Change this to switch between modes
+    # TESTING MODE SELECTION - Change this to switch between modes
     # ==================================================================================
     TEST_MODE = "full_pipeline"  # Options: "full_pipeline" or "skip_stage1"
     # ==================================================================================
     
     if TEST_MODE == "full_pipeline":
-        print("🔄 Mode: FULL PIPELINE (Stage 1 + Rolling Iterations)")
+        print("Mode: FULL PIPELINE (Stage 1 + Rolling Iterations)")
         
         # Example team and player data (original context without recent_plays)
         game_context = {"away_team":{"name":"ORL","stats":{"OEFF":113.7,"DEFF":112.7,"PACE":96.5,"REST_DAYS":2},"players":[{"name":"Franz Wagner","profile":{"offense":2.34,"defense":1.42,"shot_selection":0.69,"efficiency":-0.67,"MPG":33,"usage":26}},{"name":"Paolo Banchero","profile":{"offense":4.14,"defense":1.02,"shot_selection":1.28,"efficiency":-1.04,"MPG":35,"usage":30}},{"name":"Jonathan Isaac","profile":{"offense":-0.71,"defense":1.02,"shot_selection":0.3,"efficiency":-0.5,"MPG":16,"usage":17}},{"name":"Gary Harris","profile":{"offense":-0.41,"defense":0.52,"shot_selection":-1.29,"efficiency":-0.33,"MPG":24,"usage":12}},{"name":"Jalen Suggs","profile":{"offense":1.44,"defense":2.5,"shot_selection":-0.34,"efficiency":-1.05,"MPG":27,"usage":20}},{"name":"Wendell Carter Jr.","profile":{"offense":0.42,"defense":0.76,"shot_selection":0.46,"efficiency":-0.96,"MPG":25,"usage":18}},{"name":"Joe Ingles","profile":{"offense":0.18,"defense":-0.52,"shot_selection":-1.26,"efficiency":-0.82,"MPG":17,"usage":11}},{"name":"Markelle Fultz","profile":{"offense":-0.09,"defense":0.42,"shot_selection":0.52,"efficiency":0.67,"MPG":21,"usage":19}},{"name":"Cole Anthony","profile":{"offense":1.16,"defense":0.87,"shot_selection":0.48,"efficiency":-0.2,"MPG":22,"usage":24}},{"name":"Moritz Wagner","profile":{"offense":0.68,"defense":0.16,"shot_selection":1.33,"efficiency":-1.71,"MPG":18,"usage":23}},{"name":"Caleb Houstan","profile":{"offense":-1.09,"defense":-1.29,"shot_selection":-2.17,"efficiency":-0.26,"MPG":14,"usage":12}}]},"home_team":{"name":"CLE","stats":{"OEFF":114.9,"DEFF":112.5,"PACE":97.2,"REST_DAYS":2},"players":[{"name":"Max Strus","profile":{"offense":1.48,"defense":1.24,"shot_selection":-1.23,"efficiency":-0.44,"MPG":32,"usage":17}},{"name":"Evan Mobley","profile":{"offense":1.49,"defense":2.77,"shot_selection":1.39,"efficiency":-1.13,"MPG":31,"usage":21}},{"name":"Jarrett Allen","profile":{"offense":1.82,"defense":1.41,"shot_selection":2.04,"efficiency":-1.77,"MPG":32,"usage":20}},{"name":"Donovan Mitchell","profile":{"offense":3.79,"defense":2.55,"shot_selection":0.2,"efficiency":-1.04,"MPG":35,"usage":31}},{"name":"Darius Garland","profile":{"offense":3.38,"defense":0.87,"shot_selection":-0.12,"efficiency":-0.88,"MPG":33,"usage":25}},{"name":"Caris LeVert","profile":{"offense":1.86,"defense":1.08,"shot_selection":0.15,"efficiency":-0.01,"MPG":29,"usage":23}},{"name":"Georges Niang","profile":{"offense":0.07,"defense":0.16,"shot_selection":-1.34,"efficiency":-0.52,"MPG":22,"usage":18}},{"name":"Isaac Okoro","profile":{"offense":0.17,"defense":0.95,"shot_selection":0.19,"efficiency":-0.68,"MPG":27,"usage":14}}]}}
         
-        print("📋 Game Context Summary:")
+        print("Game Context Summary:")
         print(f"   Away Team: {game_context['away_team']['name']} ({len(game_context['away_team']['players'])} players)")
         print(f"   Home Team: {game_context['home_team']['name']} ({len(game_context['home_team']['players'])} players)")
         print()
@@ -1340,7 +1540,7 @@ def main():
         json_data = """{"away_team":{"name":"ATL","stats":{"OEFF":115.6,"DEFF":117.8,"PACE":100.7,"REST_DAYS":3},"players":[{"name":"De'Andre Hunter","profile":{"offense":0.54,"defense":1.77,"shot_selection":0.21,"efficiency":-0.23,"MPG":31,"usage":18}},{"name":"Jalen Johnson","profile":{"offense":1.15,"defense":1.58,"shot_selection":0.4,"efficiency":-1.47,"MPG":30,"usage":18}},{"name":"Clint Capela","profile":{"offense":-0.17,"defense":2.14,"shot_selection":1.75,"efficiency":-0.7,"MPG":25,"usage":14}},{"name":"Bogdan Bogdanovic","profile":{"offense":0.79,"defense":1.11,"shot_selection":-1.72,"efficiency":-0.25,"MPG":26,"usage":21}},{"name":"Dejounte Murray","profile":{"offense":3.05,"defense":1.02,"shot_selection":0.28,"efficiency":-0.81,"MPG":35,"usage":25}},{"name":"Onyeka Okongwu","profile":{"offense":0.28,"defense":2.02,"shot_selection":1.71,"efficiency":-1.65,"MPG":22,"usage":13}},{"name":"AJ Griffin","profile":{"offense":-0.87,"defense":-1.7,"shot_selection":-1.74,"efficiency":-1.35,"MPG":9,"usage":14}},{"name":"Saddiq Bey","profile":{"offense":0.13,"defense":0.15,"shot_selection":-0.44,"efficiency":-0.45,"MPG":28,"usage":17}},{"name":"Trent Forrest","profile":{"offense":-0.51,"defense":-1.36,"shot_selection":0.79,"efficiency":1.22,"MPG":9,"usage":3}},{"name":"Garrison Mathews","profile":{"offense":-0.29,"defense":-0.51,"shot_selection":-1.47,"efficiency":-1.46,"MPG":3,"usage":15}}]},"home_team":{"name":"DET","stats":{"OEFF":109.0,"DEFF":115.9,"PACE":97.7,"REST_DAYS":2},"players":[{"name":"Ausar Thompson","profile":{"offense":1.04,"defense":3.99,"shot_selection":0.84,"efficiency":0.53,"MPG":32,"usage":19}},{"name":"Isaiah Stewart","profile":{"offense":0.62,"defense":0.79,"shot_selection":-0.12,"efficiency":-0.63,"MPG":33,"usage":16}},{"name":"Marvin Bagley III","profile":{"offense":0.45,"defense":-0.24,"shot_selection":1.74,"efficiency":-1.16,"MPG":20,"usage":22}},{"name":"Cade Cunningham","profile":{"offense":3.83,"defense":1.41,"shot_selection":0.23,"efficiency":0.2,"MPG":36,"usage":31}},{"name":"Killian Hayes","profile":{"offense":0.92,"defense":1.67,"shot_selection":0.08,"efficiency":0.58,"MPG":30,"usage":16}},{"name":"Alec Burks","profile":{"offense":0.94,"defense":0.05,"shot_selection":0.01,"efficiency":-0.91,"MPG":24,"usage":20}},{"name":"James Wiseman","profile":{"offense":-0.87,"defense":-0.11,"shot_selection":0.51,"efficiency":-0.6,"MPG":10,"usage":22}},{"name":"Kevin Knox II","profile":{"offense":-0.21,"defense":-0.34,"shot_selection":-0.75,"efficiency":-0.42,"MPG":26,"usage":14}},{"name":"Marcus Sasser","profile":{"offense":0.44,"defense":0.07,"shot_selection":-1.09,"efficiency":-0.7,"MPG":20,"usage":17}},{"name":"Jaden Ivey","profile":{"offense":0.68,"defense":0.96,"shot_selection":0.27,"efficiency":-0.75,"MPG":20,"usage":23}}]},"recent_plays":[{"quarter":1,"time_remaining":"06:15","score":"ATL 18 - DET 11","players_on_court":[{"team":"ATL","players":["Clint Capela","Bogdan Bogdanovic","Dejounte Murray","De'Andre Hunter","Jalen Johnson"]},{"team":"DET","players":["Marvin Bagley III","Ausar Thompson","Cade Cunningham","Alec Burks","Isaiah Stewart"]}],"player":"Dejounte Murray","description":"MURRAY DEF.REBOUND","shot_details":{"team":null,"points":null}},{"quarter":1,"time_remaining":"06:12","score":"ATL 21 - DET 11","players_on_court":[{"team":"ATL","players":["Clint Capela","Bogdan Bogdanovic","Dejounte Murray","De'Andre Hunter","Jalen Johnson"]},{"team":"DET","players":["Marvin Bagley III","Ausar Thompson","Cade Cunningham","Alec Burks","Isaiah Stewart"]}],"player":"Bogdan Bogdanovic","description":"Bogdanovic 26' 3PT Running Jump Shot","shot_details":{"team":"ATL","points":3}},{"quarter":1,"time_remaining":"05:57","score":"ATL 21 - DET 14","players_on_court":[{"team":"ATL","players":["Clint Capela","Bogdan Bogdanovic","Dejounte Murray","De'Andre Hunter","Jalen Johnson"]},{"team":"DET","players":["Marvin Bagley III","Ausar Thompson","Cade Cunningham","Alec Burks","Isaiah Stewart"]}],"player":"Isaiah Stewart","description":"Stewart 28' 3PT Jump Shot","shot_details":{"team":"DET","points":3}},{"quarter":1,"time_remaining":"05:41","score":"ATL 21 - DET 14","players_on_court":[{"team":"ATL","players":["Clint Capela","Bogdan Bogdanovic","Dejounte Murray","De'Andre Hunter","Jalen Johnson"]},{"team":"DET","players":["Marvin Bagley III","Ausar Thompson","Cade Cunningham","Alec Burks","Isaiah Stewart"]}],"player":"Bogdan Bogdanovic","description":"MISS Bogdanovic 26' 3PT Jump Shot","shot_details":{"team":"ATL","points":0}},{"quarter":1,"time_remaining":"05:39","score":"ATL 21 - DET 14","players_on_court":[{"team":"ATL","players":["Clint Capela","Bogdan Bogdanovic","Dejounte Murray","De'Andre Hunter","Jalen Johnson"]},{"team":"DET","players":["Marvin Bagley III","Ausar Thompson","Cade Cunningham","Alec Burks","Isaiah Stewart"]}],"player":"Marvin Bagley III","description":"BAGLEY III DEF.REBOUND","shot_details":{"team":null,"points":null}},{"quarter":1,"time_remaining":"05:26","score":"ATL 21 - DET 16","players_on_court":[{"team":"ATL","players":["Clint Capela","Bogdan Bogdanovic","Dejounte Murray","De'Andre Hunter","Jalen Johnson"]},{"team":"DET","players":["Marvin Bagley III","Ausar Thompson","Cade Cunningham","Alec Burks","Isaiah Stewart"]}],"player":"Ausar Thompson","description":"Thompson 6' Turnaround Jump Shot","shot_details":{"team":"DET","points":2}},{"quarter":1,"time_remaining":"05:06","score":"ATL 23 - DET 16","players_on_court":[{"team":"ATL","players":["Clint Capela","Bogdan Bogdanovic","Dejounte Murray","De'Andre Hunter","Jalen Johnson"]},{"team":"DET","players":["Marvin Bagley III","Ausar Thompson","Cade Cunningham","Alec Burks","Isaiah Stewart"]}],"player":"Dejounte Murray","description":"Murray 19' Pullup Jump Shot","shot_details":{"team":"ATL","points":2}},{"quarter":1,"time_remaining":"04:55","score":"ATL 23 - DET 16","players_on_court":[{"team":"ATL","players":["Clint Capela","Bogdan Bogdanovic","Dejounte Murray","De'Andre Hunter","Jalen Johnson"]},{"team":"DET","players":["Marvin Bagley III","Ausar Thompson","Cade Cunningham","Alec Burks","Isaiah Stewart"]}],"player":"Clint Capela","description":"Capela P.FOUL on Cade Cunningham","shot_details":{"team":null,"points":null}},{"quarter":1,"time_remaining":"04:55","score":"ATL 23 - DET 16","players_on_court":[{"team":"ATL","players":["Clint Capela","Bogdan Bogdanovic","Dejounte Murray","De'Andre Hunter","Jalen Johnson"]},{"team":"DET","players":["Marvin Bagley III","Ausar Thompson","Cade Cunningham","Alec Burks","James Wiseman"]}],"player":null,"description":"SUBS: Wiseman FOR Stewart, Knox II FOR Bagley III, Okongwu FOR Johnson, Griffin FOR Bogdanovic, Bey FOR Capela","shot_details":{"team":null,"points":null}},{"quarter":1,"time_remaining":"04:46","score":"ATL 23 - DET 16","players_on_court":[{"team":"ATL","players":["Saddiq Bey","AJ Griffin","Dejounte Murray","De'Andre Hunter","Onyeka Okongwu"]},{"team":"DET","players":["Kevin Knox II","Ausar Thompson","Cade Cunningham","Alec Burks","James Wiseman"]}],"player":"Alec Burks","description":"MISS Burks 26' 3PT Jump Shot","shot_details":{"team":"DET","points":0}},{"quarter":1,"time_remaining":"04:44","score":"ATL 23 - DET 16","players_on_court":[{"team":"ATL","players":["Saddiq Bey","AJ Griffin","Dejounte Murray","De'Andre Hunter","Onyeka Okongwu"]},{"team":"DET","players":["Kevin Knox II","Ausar Thompson","Cade Cunningham","Alec Burks","James Wiseman"]}],"player":"Onyeka Okongwu","description":"OKONGWU DEF.REBOUND","shot_details":{"team":null,"points":null}},{"quarter":1,"time_remaining":"04:36","score":"ATL 26 - DET 16","players_on_court":[{"team":"ATL","players":["Saddiq Bey","AJ Griffin","Dejounte Murray","De'Andre Hunter","Onyeka Okongwu"]},{"team":"DET","players":["Kevin Knox II","Ausar Thompson","Cade Cunningham","Alec Burks","James Wiseman"]}],"player":"AJ Griffin","description":"Griffin 26' 3PT Pullup Jump Shot","shot_details":{"team":"ATL","points":3}},{"quarter":1,"time_remaining":"04:24","score":"ATL 26 - DET 16","players_on_court":[{"team":"ATL","players":["Saddiq Bey","AJ Griffin","Dejounte Murray","De'Andre Hunter","Onyeka Okongwu"]},{"team":"DET","players":["Kevin Knox II","Ausar Thompson","Cade Cunningham","Alec Burks","James Wiseman"]}],"player":"Dejounte Murray","description":"Murray S.FOUL on James Wiseman","shot_details":{"team":null,"points":null}},{"quarter":1,"time_remaining":"04:24","score":"ATL 26 - DET 16","players_on_court":[{"team":"ATL","players":["Saddiq Bey","AJ Griffin","Dejounte Murray","De'Andre Hunter","Onyeka Okongwu"]},{"team":"DET","players":["Kevin Knox II","Ausar Thompson","Cade Cunningham","Alec Burks","James Wiseman"]}],"player":"James Wiseman","description":"MISS Wiseman Free Throw 1 of 2","shot_details":{"team":null,"points":null}},{"quarter":1,"time_remaining":"04:24","score":"ATL 26 - DET 16","players_on_court":[{"team":"ATL","players":["Saddiq Bey","AJ Griffin","Dejounte Murray","De'Andre Hunter","Onyeka Okongwu"]},{"team":"DET","players":["Kevin Knox II","Ausar Thompson","Cade Cunningham","Alec Burks","James Wiseman"]}],"player":null,"description":"PISTONS Rebound","shot_details":{"team":null,"points":null}},{"quarter":1,"time_remaining":"04:24","score":"ATL 26 - DET 16","players_on_court":[{"team":"ATL","players":["Saddiq Bey","AJ Griffin","Dejounte Murray","De'Andre Hunter","Onyeka Okongwu"]},{"team":"DET","players":["Kevin Knox II","Ausar Thompson","Marcus Sasser","Alec Burks","James Wiseman"]}],"player":null,"description":"SUBS: Sasser FOR Cunningham, Ivey FOR Thompson","shot_details":{"team":null,"points":null}},{"quarter":1,"time_remaining":"04:24","score":"ATL 26 - DET 17","players_on_court":[{"team":"ATL","players":["Saddiq Bey","AJ Griffin","Dejounte Murray","De'Andre Hunter","Onyeka Okongwu"]},{"team":"DET","players":["Kevin Knox II","Ausar Thompson","Cade Cunningham","Alec Burks","James Wiseman"]}],"player":"James Wiseman","description":"Wiseman Free Throw 2 of 2","shot_details":{"team":null,"points":null}},{"quarter":1,"time_remaining":"04:02","score":"ATL 29 - DET 17","players_on_court":[{"team":"ATL","players":["Saddiq Bey","AJ Griffin","Dejounte Murray","De'Andre Hunter","Onyeka Okongwu"]},{"team":"DET","players":["Kevin Knox II","Jaden Ivey","Marcus Sasser","Alec Burks","James Wiseman"]}],"player":"Dejounte Murray","description":"Murray 27' 3PT Pullup Jump Shot","shot_details":{"team":"ATL","points":3}},{"quarter":1,"time_remaining":"03:45","score":"ATL 29 - DET 19","players_on_court":[{"team":"ATL","players":["Saddiq Bey","AJ Griffin","Dejounte Murray","De'Andre Hunter","Onyeka Okongwu"]},{"team":"DET","players":["Kevin Knox II","Jaden Ivey","Marcus Sasser","Alec Burks","James Wiseman"]}],"player":"James Wiseman","description":"Wiseman 2' Layup","shot_details":{"team":"DET","points":2}},{"quarter":1,"time_remaining":"03:36","score":"ATL 29 - DET 19","players_on_court":[{"team":"ATL","players":["Saddiq Bey","AJ Griffin","Dejounte Murray","De'Andre Hunter","Onyeka Okongwu"]},{"team":"DET","players":["Kevin Knox II","Jaden Ivey","Marcus Sasser","Alec Burks","James Wiseman"]}],"player":"Alec Burks","description":"Burks P.FOUL on De'Andre Hunter","shot_details":{"team":null,"points":null}}]}"""
         game_context = json.loads(json_data)  # This properly converts null to None
         
-        print("📋 Pre-built Context Summary:")
+        print("Pre-built Context Summary:")
         print(f"   Away Team: {game_context['away_team']['name']} ({len(game_context['away_team']['players'])} players)")
         print(f"   Home Team: {game_context['home_team']['name']} ({len(game_context['home_team']['players'])} players)")
         print(f"   Recent Plays: {len(game_context['recent_plays'])} plays already loaded")
@@ -1349,7 +1549,7 @@ def main():
         print()
         
     else:
-        print(f"❌ Invalid TEST_MODE: {TEST_MODE}")
+        print(f"Invalid TEST_MODE: {TEST_MODE}")
         print("   Valid options: 'full_pipeline' or 'skip_stage1'")
         return
     
@@ -1357,19 +1557,19 @@ def main():
         # Configure rolling sequence parameters
         n_iterations = 750  # Change this to control how many rolling predictions
         
-        print(f"\n🚀 Starting rolling prediction sequence (N={n_iterations})")
+        print(f"\nStarting rolling prediction sequence (N={n_iterations})")
         
         # Run the rolling sequence based on the selected mode
         skip_stage1 = (TEST_MODE == "skip_stage1")
         results = predict_rolling_sequence(game_context, n_iterations=n_iterations, skip_stage1=skip_stage1)
         
         print("\n" + "=" * 80)
-        print("🎯 ROLLING SEQUENCE RESULTS")
+        print("ROLLING SEQUENCE RESULTS")
         print("=" * 80)
         
         # Show Stage 1 results
         if results.get("stage1_response"):
-            print("\n📋 STAGE 1 (Initial next_plays):")
+            print("\nSTAGE 1 (Initial next_plays):")
             try:
                 stage1_json = json.loads(results["stage1_response"])
                 print(f"Generated {len(stage1_json.get('next_plays', []))} initial plays")
@@ -1379,16 +1579,16 @@ def main():
                 if len(stage1_json.get('next_plays', [])) > 3:
                     print(f"  ... and {len(stage1_json.get('next_plays', [])) - 3} more plays")
             except json.JSONDecodeError:
-                print("❌ Could not parse Stage 1 response")
+                print("Could not parse Stage 1 response")
         
         # Show rolling iterations
-        # print(f"\n🔄 ROLLING ITERATIONS ({len(results.get('iterations', []))} completed):")
+        # print(f"\nROLLING ITERATIONS ({len(results.get('iterations', []))} completed):")
         for iteration_data in results.get("iterations", []):
             iteration_num = iteration_data.get("iteration", "?")
             print(f"\n--- Iteration {iteration_num} ---")
             
             if "error" in iteration_data:
-                print(f"❌ Error: {iteration_data['error']}")
+                print(f"Error: {iteration_data['error']}")
             elif "next_play" in iteration_data:
                 next_play = iteration_data["next_play"]
                 time_remaining = next_play.get("time_remaining", "N/A")
@@ -1397,12 +1597,12 @@ def main():
                 recent_plays_count = iteration_data.get("recent_plays_count", "?")
                 
                 print(f"⏰ Time: {time_remaining}")
-                print(f"🏀 Play: {description}")
+                print(f"Play: {description}")
                 print(f"📊 Score: {score}")
-                print(f"📋 Recent plays window: {recent_plays_count} plays")
+                print(f"Recent plays window: {recent_plays_count} plays")
         
         print("\n" + "=" * 80)
-        print("✅ ROLLING SEQUENCE COMPLETE!")
+        print("ROLLING SEQUENCE COMPLETE!")
         print("=" * 80)
         
         # Summary
@@ -1411,7 +1611,7 @@ def main():
         print(f"📊 Summary: {successful_predictions}/{total_predictions} successful predictions")
         
     except Exception as e:
-        print(f"\n❌ Prediction failed: {e}")
+        print(f"\nPrediction failed: {e}")
         platform = get_prediction_platform()
         print(f"\n💡 Troubleshooting tips for {platform.upper()}:")
         

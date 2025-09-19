@@ -54,6 +54,7 @@ class ValidationResult(Enum):
     RETRY = "retry"
     END_GAME = "end_game"
     ROLLBACK_TIME = "rollback_time"
+    QUARTER_TRANSITION = "quarter_transition"
 
 
 class NBAResponseValidator:
@@ -232,6 +233,9 @@ class NBAResponseValidator:
         self.errors = []
         self.total_validation_attempts += 1
         
+        # DEBUG: Log validation entry
+        current_time = context.get('recent_plays', [{}])[-1].get('time_remaining', 'N/A') if context.get('recent_plays') else 'N/A'
+        
         # Step 1: Optimized JSON parsing
         try:
             # Fast path: try ujson if available, fallback to standard json
@@ -319,7 +323,7 @@ class NBAResponseValidator:
             advanced_result, reason = self._validate_advanced_game_flow(response_text, next_play, context)
             if advanced_result != ValidationResult.VALID:
                 # Create termination record if this is a terminating result
-                if advanced_result in [ValidationResult.END_GAME, ValidationResult.ROLLBACK_TIME]:
+                if advanced_result in [ValidationResult.END_GAME, ValidationResult.ROLLBACK_TIME, ValidationResult.QUARTER_TRANSITION]:
                     self._create_termination_record(advanced_result, reason, next_play, context)
                 elif advanced_result == ValidationResult.RETRY:
                     self.retry_count += 1
@@ -331,9 +335,12 @@ class NBAResponseValidator:
     
     def _create_termination_record(self, result_type: ValidationResult, reason: str, next_play: Dict[str, Any], context: Dict[str, Any]) -> None:
         """Create a detailed termination record for logging and analysis."""
+        print(f"DEBUG: _create_termination_record called with result_type={result_type}")
+        
         termination_type_map = {
             ValidationResult.END_GAME: "game_ended",
-            ValidationResult.ROLLBACK_TIME: "rollback_time"
+            ValidationResult.ROLLBACK_TIME: "rollback_time",
+            ValidationResult.QUARTER_TRANSITION: "quarter_transition"
         }
         
         # Extract key game state information
@@ -372,11 +379,14 @@ class NBAResponseValidator:
             total_attempts=self.total_validation_attempts
         )
         
-        print(f"🛑 TERMINATION RECORD CREATED: {self.last_termination.termination_type}")
+        print(f"TERMINATION RECORD CREATED: {self.last_termination.termination_type}")
         print(f"   Reason: {reason}")
         print(f"   Trigger: {trigger_condition}")
         print(f"   Game State: Q{game_state.get('quarter')} {game_state.get('time_remaining')} - {game_state.get('score')}")
         print(f"   Validation Context: {self.consecutive_same_time} same_time, {self.consecutive_subs} subs, {self.total_validation_attempts} total attempts")
+        
+        print(f"DEBUG: Termination record stored, has_termination_record()={self.has_termination_record()}")
+        print(f"DEBUG: get_termination_for_database()={len(str(self.get_termination_for_database()))} chars")
     
     def _determine_trigger_condition(self, result_type: ValidationResult) -> str:
         """Determine the specific condition that triggered the termination."""
@@ -388,6 +398,10 @@ class NBAResponseValidator:
                 
         elif result_type == ValidationResult.ROLLBACK_TIME:
             return f"consecutive_same_timestamp_limit_reached ({self.consecutive_same_time} times at '{self.last_time_remaining}')"
+            
+        elif result_type == ValidationResult.QUARTER_TRANSITION:
+            quarter = getattr(self, 'quarter_transition_target', 'unknown')
+            return f"end_of_quarter_administrative_pattern_detected (transitioning to Q{quarter})"
             
         return "unknown_trigger"
     
@@ -661,8 +675,8 @@ class NBAResponseValidator:
         # Debug state information
         current_time = next_play.get("time_remaining", "N/A")
         description = next_play.get("description", "N/A")
-        print(f"🔍 Validator state: time_count={self.consecutive_same_time}, last_time='{self.last_time_remaining}', current_time='{current_time}', subs_count={self.consecutive_subs}")
-        print(f"🔍 Current play: {description[:60]}...")
+        print(f"Validator state: time_count={self.consecutive_same_time}, last_time='{self.last_time_remaining}', current_time='{current_time}', subs_count={self.consecutive_subs}")
+        print(f"Current play: {description[:60]}...")
         
         # Update response history
         self._update_response_history(response_text)
@@ -676,6 +690,8 @@ class NBAResponseValidator:
         rollback_result = self._check_consecutive_same_time(next_play, context.get('recent_plays', []))
         if rollback_result == ValidationResult.ROLLBACK_TIME:
             return ValidationResult.ROLLBACK_TIME, "Too many plays with same timestamp - rolling back to previous game state"
+        elif rollback_result == ValidationResult.QUARTER_TRANSITION:
+            return ValidationResult.QUARTER_TRANSITION, "Period detected - transitioning to next quarter"
         elif rollback_result == ValidationResult.RETRY:
             return ValidationResult.RETRY, "Same time_remaining for multiple consecutive responses - requesting time progression"
         
@@ -723,7 +739,7 @@ class NBAResponseValidator:
         if description_result != ValidationResult.VALID:
             return description_result, "Description inconsistent with play data"
         
-        print(f"✅ Advanced validations passed for: {description[:60]}...")
+        print(f"Advanced validations passed for: {description[:60]}...")
         return ValidationResult.VALID, "Advanced validations passed"
     
     def _update_response_history(self, response_text: str) -> None:
@@ -754,7 +770,7 @@ class NBAResponseValidator:
         
         if near_duplicate_count >= 3:  # Require more near-duplicates
             self.near_duplicate_count += 1
-            print(f"⚠️ Near-duplicate response #{self.near_duplicate_count}: {similarity:.1%} similar to recent responses")
+            print(f"Near-duplicate response #{self.near_duplicate_count}: {similarity:.1%} similar to recent responses")
             
             if self.near_duplicate_count >= 5:  # Be much more lenient
                 print(f"🚨 Near-duplicate validation triggered! {self.near_duplicate_count} near-duplicates")
@@ -770,7 +786,7 @@ class NBAResponseValidator:
             pattern_count = self.response_patterns[play_pattern]
             
             if pattern_count >= 8:  # Same pattern repeated 8+ times (more lenient)
-                print(f"⚠️ Pattern repetition: '{play_pattern}' seen {pattern_count} times")
+                print(f"Pattern repetition: '{play_pattern}' seen {pattern_count} times")
                 
                 if pattern_count >= 12:  # Much more lenient threshold
                     print(f"🚨 Pattern repetition validation triggered! Pattern '{play_pattern}' repeated {pattern_count} times")
@@ -848,7 +864,7 @@ class NBAResponseValidator:
     def _check_consecutive_same_time(self, next_play: Dict[str, Any], current_recent_plays: List[Dict[str, Any]]) -> ValidationResult:
         """
         Check for consecutive responses with the same time_remaining.
-        Returns ROLLBACK_TIME if too many consecutive same timestamps detected.
+        Smart detection for end-of-quarter scenarios with automatic quarter transition.
         """
         consecutive_responses_limit = 8
         current_time = next_play.get("time_remaining")
@@ -860,6 +876,88 @@ class NBAResponseValidator:
         if self.last_time_remaining == current_time:
             self.consecutive_same_time += 1
             print(f"🕒 Same time '{current_time}' count: {self.consecutive_same_time}/{consecutive_responses_limit}")
+            
+            # DIRECT PERIOD DETECTION - Much simpler and more reliable!
+            if current_time == "00:00":
+                # Check for "period" play in current play OR recent plays
+                current_play_desc = next_play.get("description", "").lower()
+                current_event_code = next_play.get("event_code", "")  # For compact format
+                
+                # Check current play first
+                period_detected = ("period" in current_play_desc or current_event_code == "period")
+                print(f"DEBUG: Period detection - current play: '{current_play_desc}', event_code: '{current_event_code}', detected: {period_detected}")
+                
+                # If not found in current play, check recent plays at 00:00
+                if not period_detected:
+                    print(f"DEBUG: Checking recent plays for period signal...")
+                    period_plays_found = []
+                    for i, play in enumerate(current_recent_plays):
+                        if play.get("time_remaining") == "00:00":
+                            play_desc = play.get("description", "").lower()
+                            play_event = play.get("event_code", "")
+                            period_in_desc = "period" in play_desc
+                            period_in_event = play_event == "period"
+                            period_plays_found.append(f"Play{i}: '{play_desc}' (event: '{play_event}') -> period_in_desc: {period_in_desc}, period_in_event: {period_in_event}")
+                            if period_in_desc or period_in_event:
+                                period_detected = True
+                                break
+                    print(f"DEBUG: Recent plays analysis: {period_plays_found}")
+                    print(f"DEBUG: Final period_detected: {period_detected}")
+                
+                if period_detected:
+                    current_quarter = next_play.get("quarter", 1)
+                    print(f"PERIOD DETECTED: End of Q{current_quarter} (period play found in context)")
+                    
+                    # For quarters 1-3, transition to next quarter. For Q4, let normal end-game logic handle it.
+                    if current_quarter < 4:
+                        print(f"QUARTER TRANSITION: Q{current_quarter} → Q{current_quarter + 1} (period signal)")
+                        self._prepare_quarter_transition(current_quarter + 1)
+                        return ValidationResult.QUARTER_TRANSITION
+                    else:
+                        print(f"🏁 Q4 period detected - allowing normal end-game processing")
+                
+                # Fallback: Multiple robust detection methods (if no direct period signal)
+                else:
+                    current_quarter = next_play.get("quarter", 1)
+                    
+                    # Try multiple fallback methods in order of preference
+                    
+                    # Method 1: Administrative pattern detection (original logic)
+                    if self.consecutive_same_time >= 4:
+                        administrative_pattern = self._detect_administrative_pattern(next_play, current_recent_plays)
+                        
+                        if administrative_pattern:
+                            print(f"FALLBACK 1: Administrative pattern detected at Q{current_quarter} 00:00")
+                            print(f"Pattern: {administrative_pattern}")
+                            
+                            if current_quarter < 4:
+                                print(f"QUARTER TRANSITION: Q{current_quarter} → Q{current_quarter + 1} (administrative pattern)")
+                                self._prepare_quarter_transition(current_quarter + 1)
+                                return ValidationResult.QUARTER_TRANSITION
+                            else:
+                                print(f"🏁 Q4 end detected - allowing normal end-game processing")
+                                return ValidationResult.VALID
+                    
+                    # Method 2: Aggressive substitution detection (new fallback)
+                    if self.consecutive_same_time >= 3:
+                        substitution_count = self._count_recent_substitutions(next_play, current_recent_plays)
+                        
+                        if substitution_count >= 3:  # 3+ substitutions at 00:00
+                            print(f"FALLBACK 2: Multiple substitutions at Q{current_quarter} 00:00 ({substitution_count} substitutions)")
+                            
+                            if current_quarter < 4:
+                                print(f"QUARTER TRANSITION: Q{current_quarter} → Q{current_quarter + 1} (substitution pattern)")
+                                self._prepare_quarter_transition(current_quarter + 1)
+                                return ValidationResult.QUARTER_TRANSITION
+                    
+                    # Method 3: Time-based aggressive fallback (last resort)
+                    if self.consecutive_same_time >= 6:  # Been stuck for a while
+                        print(f"FALLBACK 3: Extended 00:00 stall detected at Q{current_quarter} ({self.consecutive_same_time} consecutive)")
+                        
+                        if current_quarter < 4:
+                            print(f"QUARTER TRANSITION: Q{current_quarter} → Q{current_quarter + 1} (time-based fallback)")
+                            self._prepare_quarter_transition(current_quarter + 1)
+                            return ValidationResult.QUARTER_TRANSITION
             
             # If this is the first time we're seeing a repeat of this timestamp, save a snapshot
             if self.consecutive_same_time == 2 and self.rollback_recent_plays_snapshot is None:
@@ -878,11 +976,11 @@ class NBAResponseValidator:
                 print(f"📸 Snapshot saved: {len(self.rollback_recent_plays_snapshot)} plays before timestamp '{current_time}' sequence")
                 if rollback_plays:
                     last_good_time = rollback_plays[-1].get("time_remaining", "N/A")
-                    print(f"🔄 Rollback point: Most recent play at time '{last_good_time}'")
+                    print(f"Rollback point: Most recent play at time '{last_good_time}'")
             
             if self.consecutive_same_time >= consecutive_responses_limit:
                 print(f"🚨 Time rollback validation triggered! Same time '{current_time}' for {self.consecutive_same_time} consecutive responses")
-                print(f"🔄 Rolling back to snapshot with {len(self.rollback_recent_plays_snapshot or [])} plays")
+                print(f"Rolling back to snapshot with {len(self.rollback_recent_plays_snapshot or [])} plays")
                 # Don't reset state here - let the caller handle the rollback
                 return ValidationResult.ROLLBACK_TIME
                 
@@ -899,13 +997,105 @@ class NBAResponseValidator:
         
         return ValidationResult.VALID
     
+    def _detect_administrative_pattern(self, next_play: Dict[str, Any], current_recent_plays: List[Dict[str, Any]]) -> str:
+        """
+        Detect if we're stuck in an end-of-quarter administrative pattern.
+        
+        Returns:
+            str: Description of detected pattern, or empty string if no pattern
+        """
+        # Get the description of the current play
+        current_desc = next_play.get("description", "").lower().strip()
+        
+        # Administrative play keywords
+        admin_keywords = ["substitution", "timeout", "unknown", "period", "end of", "technical"]
+        
+        # Check if current play is administrative
+        current_is_admin = any(keyword in current_desc for keyword in admin_keywords)
+        
+        if not current_is_admin:
+            return ""  # Current play is not administrative
+        
+        # Count recent administrative plays at 00:00
+        admin_count = 0
+        admin_types = set()
+        
+        # Include current play
+        if current_is_admin:
+            admin_count += 1
+            admin_types.add(current_desc[:20])  # First 20 chars for type identification
+        
+        # Check recent plays
+        for play in reversed(current_recent_plays[-5:]):  # Check last 5 plays
+            play_time = play.get("time_remaining", "")
+            play_desc = play.get("description", "").lower().strip()
+            
+            if play_time == "00:00" and any(keyword in play_desc for keyword in admin_keywords):
+                admin_count += 1
+                admin_types.add(play_desc[:20])  # First 20 chars for type identification
+        
+        # Pattern detected if 3+ administrative plays at 00:00
+        if admin_count >= 3:
+            pattern_desc = f"{admin_count} administrative plays: {', '.join(list(admin_types)[:3])}"
+            return pattern_desc
+        
+        return ""
+    
+    def _count_recent_substitutions(self, next_play: Dict[str, Any], current_recent_plays: List[Dict[str, Any]]) -> int:
+        """
+        Count substitutions in recent plays at 00:00.
+        
+        Returns:
+            int: Number of substitution plays found
+        """
+        substitution_count = 0
+        
+        # Check current play
+        current_desc = next_play.get("description", "").lower()
+        if "substitution" in current_desc or "sub" in current_desc:
+            substitution_count += 1
+        
+        # Check recent plays at 00:00
+        for play in reversed(current_recent_plays[-6:]):  # Check last 6 plays
+            play_time = play.get("time_remaining", "")
+            play_desc = play.get("description", "").lower()
+            
+            if play_time == "00:00" and ("substitution" in play_desc or "sub" in play_desc):
+                substitution_count += 1
+        
+        return substitution_count
+    
+    def _prepare_quarter_transition(self, next_quarter: int) -> None:
+        """
+        Prepare validator state for quarter transition.
+        
+        Args:
+            next_quarter: The quarter we're transitioning to (2, 3, or 4)
+        """
+        # Store quarter transition information for the prediction pipeline to use
+        self.quarter_transition_target = next_quarter
+        
+        # Clear end-of-quarter tracking since we're moving to next quarter
+        self.consecutive_same_time = 0
+        self.last_time_remaining = None
+        self._clear_rollback_state()
+        
+        print(f"Validator prepared for transition to Q{next_quarter}")
+    
+    def get_quarter_transition_target(self) -> int:
+        """Get the target quarter for transition and clear it."""
+        target = getattr(self, 'quarter_transition_target', None)
+        if hasattr(self, 'quarter_transition_target'):
+            delattr(self, 'quarter_transition_target')
+        return target or 2  # Default to Q2 if somehow missing
+    
     def _check_excessive_substitutions(self, next_play: Dict[str, Any]) -> bool:
         """Check for 6 consecutive substitution plays (allowing for strategic substitution sequences)."""
         description = next_play.get("description", "").upper()
         
         if "SUB" in description:
             self.consecutive_subs += 1
-            print(f"🔄 Substitution detected: '{description[:50]}...' count: {self.consecutive_subs}/10")
+            print(f"Substitution detected: '{description[:50]}...' count: {self.consecutive_subs}/10")
             if self.consecutive_subs >= 10:  # Much more lenient - timeouts can have many subs
                 print(f"🚨 Substitution validation triggered! {self.consecutive_subs} consecutive substitutions")
                 # Reset counter and return retry
@@ -914,7 +1104,7 @@ class NBAResponseValidator:
         else:
             # Reset counter if not a substitution
             if self.consecutive_subs > 0:
-                print(f"🔄 Non-substitution play: '{description[:50]}...' (resetting sub counter from {self.consecutive_subs} to 0)")
+                print(f"Non-substitution play: '{description[:50]}...' (resetting sub counter from {self.consecutive_subs} to 0)")
             self.consecutive_subs = 0
         
         return False
@@ -964,7 +1154,7 @@ class NBAResponseValidator:
             # Only flag significant time increases (more than 10 seconds forward in same quarter)
             if time_diff > 10:  # Time jumped forward by more than 10 seconds
                 self.time_progression_violations += 1
-                print(f"⚠️ Time progression violation: {self.last_time_remaining} → {current_time} (+{time_diff}s) in Q{current_quarter}")
+                print(f"Time progression violation: {self.last_time_remaining} → {current_time} (+{time_diff}s) in Q{current_quarter}")
                 
                 if self.time_progression_violations >= 5:  # More lenient - allow more violations
                     print(f"🚨 Time progression validation triggered! {self.time_progression_violations} violations")
@@ -974,7 +1164,7 @@ class NBAResponseValidator:
         elif self.last_quarter != current_quarter:
             # Quarter changed - reset violation counter
             self.time_progression_violations = 0
-            print(f"🔄 Quarter changed: Q{self.last_quarter} → Q{current_quarter} (resetting time progression tracking)")
+            print(f"Quarter changed: Q{self.last_quarter} → Q{current_quarter} (resetting time progression tracking)")
         
         # Update tracking state
         self.last_quarter = current_quarter
@@ -1018,7 +1208,7 @@ class NBAResponseValidator:
                     if current_score_val < last_score:  # Score decreased
                         decrease = last_score - current_score_val
                         self.score_progression_violations += 1
-                        print(f"⚠️ Score progression violation: {team} {last_score} → {current_score_val} (decreased by {decrease})")
+                        print(f"Score progression violation: {team} {last_score} → {current_score_val} (decreased by {decrease})")
                         
                         # Only trigger on significant decreases or repeated violations
                         # Allow minor decreases (1-2 points) which might be score corrections
@@ -1095,7 +1285,7 @@ class NBAResponseValidator:
             score_diff = actual_score - expected_score
             
             if score_diff != 0:
-                print(f"🔍 Score-shot tracking: {shot_team} scored {shot_points} points")
+                print(f"Score-shot tracking: {shot_team} scored {shot_points} points")
                 print(f"   Expected: {self.last_team_scores[shot_team]} + {shot_points} = {expected_score}")
                 print(f"   Actual: {actual_score}")
                 print(f"   Difference: {score_diff}")
@@ -1103,10 +1293,10 @@ class NBAResponseValidator:
                 # Only flag major inconsistencies (more than 5 points off)
                 # This might indicate free throws, technical fouls, or other scoring
                 if abs(score_diff) > 5:
-                    print(f"⚠️ Major score inconsistency detected")
+                    print(f"Major score inconsistency detected")
                     return ValidationResult.RETRY
                 elif abs(score_diff) > 2:
-                    print(f"ℹ️ Minor score discrepancy - possibly additional free throws or scoring")
+                    print(f"Minor score discrepancy - possibly additional free throws or scoring")
         
         return ValidationResult.VALID
     
@@ -1212,7 +1402,7 @@ class NBAResponseValidator:
                     time_diff = abs(current_seconds - expected_start_time)
                     if time_diff > tolerance:
                         self.quarter_transition_violations += 1
-                        print(f"⚠️ Quarter transition issue: Q{self.last_quarter}→Q{current_quarter} but time is {current_time}")
+                        print(f"Quarter transition issue: Q{self.last_quarter}→Q{current_quarter} but time is {current_time}")
                         print(f"   Expected ~{expected_start_time//60}:{expected_start_time%60:02d}, got {current_time} (diff: {time_diff}s)")
                         
                         if self.quarter_transition_violations >= 5:  # More violations allowed
@@ -1226,7 +1416,7 @@ class NBAResponseValidator:
                     print(f"🚨 Major quarter skip: Q{self.last_quarter} → Q{current_quarter} (skipped {quarter_change-1} quarters)")
                     return ValidationResult.RETRY
                 elif quarter_change < 0:
-                    print(f"ℹ️ Quarter regression: Q{self.last_quarter} → Q{current_quarter} (allowing to continue)")
+                    print(f"Quarter regression: Q{self.last_quarter} → Q{current_quarter} (allowing to continue)")
                     # Allow backwards progression - might be model correction
         
         return ValidationResult.VALID
@@ -1317,7 +1507,7 @@ class NBAResponseValidator:
         # Only trigger if we have clear violations and they're repeated
         if violations:
             self.situation_violations += 1
-            print(f"⚠️ Game situation violation #{self.situation_violations}: {violations[0]}")
+            print(f"Game situation violation #{self.situation_violations}: {violations[0]}")
             print(f"   Context: Q{quarter} {time_remaining}, Score diff: {score_diff}, Description: {description[:50]}...")
             
             # Be much more lenient - only trigger after many clear violations
@@ -1415,7 +1605,7 @@ class NBAResponseValidator:
         # Only trigger on significant inconsistencies
         if inconsistencies:
             self.description_consistency_violations += 1
-            print(f"⚠️ Description consistency violation #{self.description_consistency_violations}:")
+            print(f"Description consistency violation #{self.description_consistency_violations}:")
             for inconsistency in inconsistencies[:2]:  # Show first 2
                 print(f"   {inconsistency}")
             print(f"   Description: {description[:60]}...")
@@ -1619,7 +1809,7 @@ class NBAResponseValidator:
         
         term = self.last_termination
         
-        summary = f"🛑 VALIDATION TERMINATION SUMMARY\n"
+        summary = f"VALIDATION TERMINATION SUMMARY\n"
         summary += f"{'='*50}\n"
         summary += f"Termination Type: {term.termination_type}\n"
         summary += f"Reason: {term.reason}\n"
@@ -1726,14 +1916,67 @@ class NBAResponseValidator:
         else:
             self.consecutive_endgame = 0
         
-        # 2. Optimized stuck time progression check 
-        # Use identity comparison first (faster than equality for same strings)
+        # 2. FAST PERIOD/ADMIN DETECTION - Check immediately for period at 00:00 (don't wait for consecutive times)
+        if time_remaining == "00:00":
+            # Check current play for period
+            current_desc = next_play.get("description", "").lower()
+            current_event = next_play.get("event_code", "")
+            
+            period_detected = ("period" in current_desc or current_event == "period")
+            
+            # Check recent plays for period if not found in current
+            if not period_detected and context and "recent_plays" in context:
+                for play in context["recent_plays"]:
+                    if play.get("time_remaining") == "00:00":
+                        play_desc = play.get("description", "").lower()
+                        play_event = play.get("event_code", "")
+                        if "period" in play_desc or play_event == "period":
+                            period_detected = True
+                            break
+            
+            # Trigger quarter transition if period detected
+            if period_detected and quarter and quarter < 4:
+                self._prepare_quarter_transition(quarter + 1)
+                return ValidationResult.QUARTER_TRANSITION, self.errors, f"Period detected - transitioning Q{quarter} → Q{quarter + 1}"
+            
+            # NEW: Administrative/stall fallback at 00:00 without explicit 'period'
+            # Works for both verbose (recent_plays) and compact (p) contexts.
+            if quarter and quarter < 4 and context:
+                admin_count = 0
+                zero_time_count = 0
+                # Verbose context
+                if "recent_plays" in context and isinstance(context["recent_plays"], list):
+                    admin_keywords = ("sub", "substitution", "timeout", "jump", "technical", "unknown")
+                    zero_time_recent = [p for p in context["recent_plays"] if p.get("time_remaining") == "00:00"]
+                    zero_time_count += len(zero_time_recent)
+                    for p in zero_time_recent[-8:]:  # last few plays at 00:00
+                        desc = str(p.get("description", "")).lower()
+                        if any(k in desc for k in admin_keywords):
+                            admin_count += 1
+                # Compact context
+                if "p" in context and isinstance(context["p"], list):
+                    zero_time_compact = [pl for pl in context["p"][-12:] if isinstance(pl, list) and len(pl) >= 5 and pl[1] == 0]
+                    zero_time_count += len(zero_time_compact)
+                    for pl in zero_time_compact[-8:]:
+                        ev = str(pl[4]).lower()
+                        if ev in ("sub", "jumpball", "timeout", "unknown") or ev.startswith("sub") or ev.startswith("jump"):
+                            admin_count += 1
+                # Consider our own consecutive_same_time counter as well
+                too_many_zero_time = (self.consecutive_same_time >= 4) or (zero_time_count >= 4)
+                if admin_count >= 2 and too_many_zero_time:
+                    print(f"FAST FALLBACK: {admin_count} admin plays at 00:00, zero_time_count={zero_time_count}, consecutive_same_time={self.consecutive_same_time}")
+                    self._prepare_quarter_transition(quarter + 1)
+                    return ValidationResult.QUARTER_TRANSITION, self.errors, f"Administrative pattern at 00:00 - transitioning Q{quarter} → Q{quarter + 1}"
+        
+        # 3. Time progression check for stuck scenarios
         if time_remaining and (
             self.last_time_remaining is time_remaining or 
             self.last_time_remaining == time_remaining
         ):
             self.consecutive_same_time += 1
-            if self.consecutive_same_time >= 8:  # Much more lenient
+            
+            # Fallback: Basic rollback after more attempts
+            if self.consecutive_same_time >= 8:
                 return ValidationResult.ROLLBACK_TIME, self.errors, "Time progression stuck"
         else:
             self.consecutive_same_time = 0

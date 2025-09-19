@@ -124,12 +124,12 @@ class BasePredictionClient(ABC):
                 
                 if validation_result == ValidationResult.VALID:
                     if attempt > 0:
-                        print(f"✅ Validation successful on attempt {attempt + 1}")
+                        print(f"Validation successful on attempt {attempt + 1}")
                     return response_content, usage_stats, False, False, None
                 
                 elif validation_result == ValidationResult.END_GAME:
                     print(f"🏁 Game ending condition detected: {reason}")
-                    print(f"🎮 Returning final play and ending game loop")
+                    print(f"Returning final play and ending game loop")
                     
                     # Capture detailed termination information
                     termination_info = None
@@ -139,7 +139,7 @@ class BasePredictionClient(ABC):
                         
                         # Also print summary to console
                         if self.validator.get_termination_info():
-                            print(f"🛑 TERMINATION SUMMARY:")
+                            print(f"TERMINATION SUMMARY:")
                             print(f"   Type: {termination_info.get('validation_termination_type', 'N/A')}")
                             print(f"   Trigger: {termination_info.get('validation_trigger_condition', 'N/A')}")
                             print(f"   Game State: Q{termination_info.get('validation_game_state_quarter', '?')} {termination_info.get('validation_game_state_time', 'N/A')}")
@@ -147,8 +147,8 @@ class BasePredictionClient(ABC):
                     return response_content, usage_stats, True, False, termination_info
                 
                 elif validation_result == ValidationResult.ROLLBACK_TIME:
-                    print(f"🔄 Timestamp rollback required: {reason}")
-                    print(f"🎮 Returning rollback signal to main loop")
+                    print(f"Timestamp rollback required: {reason}")
+                    print(f"Returning rollback signal to main loop")
                     
                     # Capture detailed rollback termination information
                     termination_info = None
@@ -158,12 +158,45 @@ class BasePredictionClient(ABC):
                         
                         # Also print summary to console
                         if self.validator.get_termination_info():
-                            print(f"🔄 ROLLBACK SUMMARY:")
+                            print(f"ROLLBACK SUMMARY:")
                             print(f"   Trigger: {termination_info.get('validation_trigger_condition', 'N/A')}")
                             print(f"   Consecutive Count: {termination_info.get('validation_consecutive_count', 0)}")
                             print(f"   Total Attempts: {termination_info.get('validation_total_attempts', 0)}")
                     
                     # Note: response_content may be invalid, but needs_rollback=True signals the main loop to handle this
+                    return response_content, usage_stats, False, True, termination_info
+                
+                elif validation_result == ValidationResult.QUARTER_TRANSITION:
+                    print(f"Quarter transition required: {reason}")
+                    print(f"Returning quarter transition signal to main loop")
+                    
+                    # DEBUG: Check validator state
+                    print(f"DEBUG: stage1_mode={stage1_mode}")
+                    print(f"DEBUG: validator.has_termination_record()={self.validator.has_termination_record()}")
+                    if hasattr(self.validator, 'quarter_transition_target'):
+                        print(f"DEBUG: quarter_transition_target={self.validator.quarter_transition_target}")
+                    else:
+                        print(f"DEBUG: No quarter_transition_target in validator")
+                    
+                    # Capture quarter transition termination information
+                    termination_info = None
+                    if not stage1_mode and self.validator.has_termination_record():
+                        termination_info = self.validator.get_termination_for_database()
+                        print(f"📊 Captured quarter transition details: {termination_info.get('validation_termination_type', 'unknown')}")
+                        
+                        # Also print summary to console
+                        if self.validator.get_termination_info():
+                            print(f"QUARTER TRANSITION SUMMARY:")
+                            print(f"   Trigger: {termination_info.get('validation_trigger_condition', 'N/A')}")
+                            # Don't consume the target quarter here - let the main loop get it
+                            target_for_display = getattr(self.validator, 'quarter_transition_target', 'Unknown')
+                            print(f"   Target Quarter: Q{target_for_display}")
+                    else:
+                        print(f"DEBUG: Not capturing termination info - stage1_mode={stage1_mode}, has_termination_record={self.validator.has_termination_record()}")
+                    
+                    print(f"DEBUG: Final termination_info={termination_info}")
+                    
+                    # Return with quarter_transition flag (we'll use needs_rollback=True but with different termination info)
                     return response_content, usage_stats, False, True, termination_info
                 
                 elif validation_result == ValidationResult.RETRY:
@@ -175,18 +208,18 @@ class BasePredictionClient(ABC):
                         'response_preview': response_content[:200] + "..." if len(response_content) > 200 else response_content
                     })
                     
-                    print(f"🔄 Validation requires retry on attempt {attempt + 1}/{max_retries + 1}")
+                    print(f"Validation requires retry on attempt {attempt + 1}/{max_retries + 1}")
                     print(f"   Reason: {reason}")
                     if validation_errors:
                         print(f"   Additional errors: {len(validation_errors)} validation issues")
                     
                     if attempt < max_retries:
-                        print(f"🔄 Retrying prediction...")
+                        print(f"Retrying prediction...")
                     else:
                         print(f"💥 Max retries ({max_retries}) exceeded")
                 
             except Exception as e:
-                print(f"❌ Prediction attempt {attempt + 1} failed with error: {str(e)}")
+                print(f"Prediction attempt {attempt + 1} failed with error: {str(e)}")
                 if attempt == max_retries:
                     raise e
         
@@ -488,8 +521,8 @@ class GeminiPredictionClient(BasePredictionClient):
         try:
             return self._predict_with_genai_sdk_json(context_json, model_id, max_tokens, temperature)
         except Exception as genai_error:
-            print(f"⚠️ Google GenAI SDK failed: {genai_error}")
-            print("🔄 Falling back to Vertex AI approach...")
+            print(f"Google GenAI SDK failed: {genai_error}")
+            print("Falling back to Vertex AI approach...")
             return self._predict_with_vertexai_json(context_json, model_id, max_tokens, temperature)
     
     def _predict_with_genai_sdk(self, context: Dict[str, Any], model_id: str, 
@@ -597,14 +630,14 @@ class GeminiPredictionClient(BasePredictionClient):
                 )
                 print("🔧 Thinking budget disabled (set to 0) for faster, direct responses")
             except Exception as e:
-                print(f"⚠️ Could not disable thinking budget: {e}. Using expanded token config.")
+                print(f"Could not disable thinking budget: {e}. Using expanded token config.")
                 # Increase tokens to accommodate thinking overhead
                 generation_config = GenerationConfig(
                     temperature=temperature,
                     max_output_tokens=max_tokens + 2000  # Extra tokens for thinking
                 )
         else:
-            print("ℹ️ ThinkingConfig not available - increasing token limit to accommodate thinking overhead")
+            print("ThinkingConfig not available - increasing token limit to accommodate thinking overhead")
             # Since we can't disable thinking, give the model more tokens
             # The model used 1499 thinking tokens, so we need buffer space
             generation_config = GenerationConfig(
@@ -682,7 +715,7 @@ class PredictionClientFactory:
             validation_mode = os.getenv("VALIDATION_MODE", "fast")
         
         if validation_mode not in ["fast", "normal", "strict"]:
-            print(f"⚠️ Invalid validation mode '{validation_mode}', defaulting to 'fast'")
+            print(f"Invalid validation mode '{validation_mode}', defaulting to 'fast'")
             validation_mode = "fast"
         
         return cls._clients[platform_key](validation_mode=validation_mode)
