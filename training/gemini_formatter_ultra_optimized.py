@@ -421,6 +421,7 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
             # Create compact play tuple
             play_tuple = [quarter, time_seconds, current_score, actor, event_code, points, 0]
             
+            # Return raw tuple for maximum efficiency
             return json.dumps(play_tuple, separators=(',', ':'))
             
         except Exception as e:
@@ -573,8 +574,8 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
             if len(first_plays) == 0:
                 return None
             
-            # Create assistant response in compact format
-            assistant_response = {"y": first_plays}
+            # Return raw array for maximum efficiency
+            assistant_response = first_plays
             
             # Create Gemini training example
             return {
@@ -611,7 +612,9 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
             if ':' in remaining_time:
                 time_parts = remaining_time.split(':')
                 if len(time_parts) >= 2:
-                    time_seconds = int(time_parts[0]) * 60 + int(time_parts[1])
+                    minutes = int(time_parts[-2])  # Second to last part (minutes)
+                    seconds = int(time_parts[-1])  # Last part (seconds) 
+                    time_seconds = 60 * minutes + seconds
                 else:
                     time_seconds = 720  # Default 12:00
             else:

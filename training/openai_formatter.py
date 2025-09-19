@@ -487,7 +487,9 @@ class OpenAIFormatter(BaseFormatter):
         # Convert time to seconds (next_time is already in MM:SS format)
         time_parts = str(next_time).split(':')
         if len(time_parts) >= 2:
-            time_seconds = int(time_parts[0]) * 60 + int(time_parts[1])
+            minutes = int(time_parts[-2])  # Second to last part (minutes)
+            seconds = int(time_parts[-1])  # Last part (seconds) 
+            time_seconds = 60 * minutes + seconds
         else:
             time_seconds = 720  # Default 12:00
         

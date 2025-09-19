@@ -405,17 +405,11 @@ def format_play_description(play_tuple: list, game_context: Dict[str, Any]) -> s
                     players = game_context["ap"]
                     if player_index < len(players) and isinstance(players[player_index], list) and len(players[player_index]) > 0:
                         player_name = players[player_index][0]  # First element is name
-                        # Debug: Show team assignment
-                        away_team = game_context.get("A", "AWAY")
-                        print(f"DEBUG SCORING: {player_name} is on AWAY team ({away_team})")
                         
                 elif team_code == "H" and isinstance(game_context.get("hp"), list):
                     players = game_context["hp"]  
                     if player_index < len(players) and isinstance(players[player_index], list) and len(players[player_index]) > 0:
                         player_name = players[player_index][0]  # First element is name
-                        # Debug: Show team assignment  
-                        home_team = game_context.get("H", "HOME")
-                        print(f"DEBUG SCORING: {player_name} is on HOME team ({home_team})")
                         
             elif "away_team" in game_context and "home_team" in game_context:
                 # Verbose format: nested structure
@@ -566,7 +560,8 @@ def get_prediction_platform() -> str:
 def is_compact_format(context: Dict[str, Any]) -> bool:
     """
     Detect if the context is in compact format.
-    Compact format has 'a', 'h' keys instead of 'away_team', 'home_team'.
+    Compact format has 'A', 'H' keys instead of 'away_team', 'home_team'.
+    Updated to support new format with uppercase keys.
     """
     if isinstance(context, str):
         try:
@@ -574,8 +569,8 @@ def is_compact_format(context: Dict[str, Any]) -> bool:
         except:
             return False
     
-    # Check for compact format indicators
-    compact_keys = {'a', 'h', 'as', 'hs', 'ap', 'hp', 'L'}
+    # Check for compact format indicators - UPDATED for new format
+    compact_keys = {'A', 'H', 'as', 'hs', 'ap', 'hp', 'L'}  # Use uppercase A/H keys
     verbose_keys = {'away_team', 'home_team', 'recent_plays'}
     
     has_compact = any(key in context for key in compact_keys)
@@ -634,12 +629,7 @@ def parse_compact_response(response_content: str, game_context: Dict[str, Any] =
                     away_team = game_context.get("A", "AWAY") if isinstance(game_context, dict) else "AWAY"
                     home_team = game_context.get("H", "HOME") if isinstance(game_context, dict) else "HOME"
                     
-                    # Debug: Show raw model response details
-                    print(f"DEBUG MODEL RESPONSE: Raw play tuple = {primary_play}")
-                    print(f"DEBUG MODEL RESPONSE: actor={actor}, event={event_code}, points={points}")
-                    if points is not None and points > 0:
-                        print(f"DEBUG SCORING: Model generated score_array={score_array}, actor={actor}, event={event_code}, points={points}")
-                        print(f"DEBUG SCORING: This means {away_team} {score_array[0]} - {home_team} {score_array[1]}")
+                    # Debug info available in debug logging mode if needed
                     
                     # Create verbose-compatible response
                     next_play = {
@@ -682,7 +672,9 @@ def convert_compact_play_to_tuple(next_play: Dict[str, Any], context: Dict[str, 
         time_str = next_play.get('time_remaining', '12:00')
         time_parts = time_str.split(':')
         if len(time_parts) >= 2:
-            time_seconds = int(time_parts[0]) * 60 + int(time_parts[1])
+            minutes = int(time_parts[-2])  # Second to last part (minutes)
+            seconds = int(time_parts[-1])  # Last part (seconds) 
+            time_seconds = 60 * minutes + seconds
         else:
             time_seconds = 720  # Default 12:00
         
@@ -1087,10 +1079,17 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
             next_play = None
             
             if is_compact:
-                # Compact format: expect "y" field with play tuple(s)
+                # Compact format: handle both raw tuples and wrapped format
                 if "y" in stage2_json:
-                    # Parse compact response
+                    # Wrapped format: {"y": [tuple]}
                     parsed_response = parse_compact_response(stage2_content, game_context)
+                    if "next_play" in parsed_response:
+                        next_play = parsed_response["next_play"]
+                elif isinstance(stage2_json, list) and len(stage2_json) >= 6:
+                    # Raw tuple format: [q, t, score, actor, event, ...]
+                    # Wrap it and parse
+                    wrapped_content = json_dumps({"y": stage2_json})
+                    parsed_response = parse_compact_response(wrapped_content, game_context)
                     if "next_play" in parsed_response:
                         next_play = parsed_response["next_play"]
                         
@@ -1102,16 +1101,11 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                         event_code = next_play.get('_compact_event_code', 'unknown')
                         
                         # Enhanced play description will be shown after tuple conversion
-                        log_config.log_normal(f"🏀 Updated State: Q{new_quarter} {new_time} | {new_score}")
                         
                         # Check for scoring information
                         shot_details = next_play.get('shot_details', {})
                         points = shot_details.get('points')
-                        if points is not None and points > 0:
-                            team = shot_details.get('team', 'Unknown')
-                            log_config.log_normal(f"🎯 SCORING PLAY: {team} +{points} points!")
-                        else:
-                            log_config.log_verbose(f"📋 Non-scoring play ({event_code})")
+                        # Scoring information processed
                         
                         # Convert to compact tuple and update context
                         play_tuple = convert_compact_play_to_tuple(next_play, optimized_context.get_context_dict())
@@ -1119,7 +1113,6 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                         # Show enhanced play description with player names
                         if play_tuple:
                             enhanced_desc = format_play_description(play_tuple, game_context)
-                            log_config.log_normal(f"✅ NEW PLAY: {enhanced_desc}")
                             
                             # Debug: Check for scoring inconsistencies
                             if len(play_tuple) >= 6:
@@ -1132,16 +1125,19 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                                     event = play_tuple[4]
                                     away_team = game_context.get("A", "AWAY")
                                     home_team = game_context.get("H", "HOME") 
-                                    print(f"DEBUG SCORE CHANGE: {old_score} → {new_score}")
-                                    print(f"DEBUG SCORE CHANGE: Away ({away_team}) +{away_diff}, Home ({home_team}) +{home_diff}")
-                                    print(f"DEBUG SCORE CHANGE: Actor={actor}, Event={event}")
+                                    # Score change processed
                         
                         from config.settings import DEFAULT_N_TOTAL_PLAYS
                         optimized_context.add_play_tuple(play_tuple, DEFAULT_N_TOTAL_PLAYS)
                     else:
                         log_config.log_normal(f"⚠️ Warning: Failed to parse compact response: {parsed_response.get('error', 'Unknown error')}")
                 else:
-                    log_config.log_normal(f"⚠️ Warning: No 'y' field found in compact format response")
+                    log_config.log_normal(f"⚠️ Warning: Compact format response not recognized - expected raw tuple or {{\"y\": [...]}} format")
+                    log_config.log_debug(f"🔍 Raw response: {stage2_content}")
+                    log_config.log_debug(f"🔍 Parsed JSON: {stage2_json}")
+                    log_config.log_debug(f"🔍 JSON type: {type(stage2_json)}")
+                    if isinstance(stage2_json, list):
+                        log_config.log_debug(f"🔍 List length: {len(stage2_json)}")
             else:
                 # Verbose format: expect "next_play" field
                 if "next_play" in stage2_json:
@@ -1153,18 +1149,13 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                     new_quarter = next_play.get('quarter', 'N/A')
                     new_time = next_play.get('time_remaining', 'N/A')
                     
-                    log_config.log_normal(f"✅ NEW PLAY: {play_desc}")
-                    log_config.log_normal(f"🏀 Updated State: Q{new_quarter} {new_time} | {new_score}")
+                    # Play processed successfully
                     
                     # Check for scoring information
                     if "shot_details" in next_play:
                         shot_details = next_play["shot_details"]
                         points = shot_details.get("points") if shot_details else None
-                        if shot_details and points is not None and points > 0:
-                            log_config.log_normal(f"🎯 SCORING PLAY: {shot_details.get('team', 'Unknown')} +{points} points!")
-                        else:
-                            points_display = points if points is not None else 'N/A'
-                            log_config.log_verbose(f"📋 Non-scoring play (points: {points_display})")
+                        # Scoring information processed
                     else:
                         log_config.log_verbose("⚠️ WARNING: No 'shot_details' field found in next_play")
                     

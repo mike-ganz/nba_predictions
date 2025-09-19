@@ -161,6 +161,10 @@ class NBAResponseValidator:
         self.last_time_remaining: Optional[str] = None
         self.consecutive_endgame: int = 0
         
+        # Essential rollback functionality (required even in fast mode)
+        self.rollback_recent_plays_snapshot: Optional[List[Dict[str, Any]]] = None  # Snapshot of recent_plays before problematic timestamp
+        self.problematic_timestamp: Optional[str] = None  # The timestamp that's causing issues
+        
     def _init_advanced_tracking(self):
         """Initialize full state tracking for normal/strict modes."""
         # State tracking for advanced validations
@@ -249,7 +253,21 @@ class NBAResponseValidator:
             ))
             return ValidationResult.RETRY, self.errors, "JSON parse error"
         
-        # Step 1.5: Check if this is compact format and convert if needed
+        # Step 1.5: Check if this is raw compact tuple or compact format and convert if needed
+        if isinstance(response_data, list) and len(response_data) >= 6:
+            # This looks like a raw compact tuple [q, t, score, actor, event, ...], wrap it
+            try:
+                response_data = {"y": response_data}
+            except Exception as e:
+                self.errors.append(ValidationError(
+                    field_path="root",
+                    error_type="compact_format_error", 
+                    expected="valid compact play tuple",
+                    actual="raw_tuple_wrap_failed",
+                    message=f"Failed to wrap raw compact tuple: {e}"
+                ))
+                return ValidationResult.RETRY, self.errors, "Raw compact tuple wrap error"
+        
         if "y" in response_data and "next_play" not in response_data:
             # This looks like compact format, convert to verbose for validation
             try:

@@ -240,10 +240,12 @@ class GeminiFormatter(BaseFormatter):
                 row['period'], row['remaining_time']
             )
             
-            # Convert time to seconds
+            # Convert time to seconds using same logic as parse_time_to_seconds
             time_parts = str(time_in_quarter).split(':')
             if len(time_parts) >= 2:
-                time_seconds = int(time_parts[0]) * 60 + int(time_parts[1])
+                minutes = int(time_parts[-2])  # Second to last part (minutes)
+                seconds = int(time_parts[-1])  # Last part (seconds) 
+                time_seconds = 60 * minutes + seconds
             else:
                 time_seconds = 720  # Default 12:00
             
@@ -452,10 +454,8 @@ class GeminiFormatter(BaseFormatter):
                     if play_tuple:
                         first_plays.append(play_tuple)
             
-            # Create the response with first N plays in compact format
-            assistant_response = {
-                "y": first_plays  # Array of compact play tuples
-            }
+            # Return raw array for maximum efficiency  
+            assistant_response = first_plays
             
             # Create Gemini training example using GenerateContent format
             # OLD (messages format - commented out for easy revert):
@@ -587,7 +587,7 @@ class GeminiFormatter(BaseFormatter):
         }
     
     def _create_next_play_response(self, game_df: pd.DataFrame, current_index: int, 
-                                 next_row: pd.Series, current_json: Dict[str, Any]) -> Dict[str, Any]:
+                                 next_row: pd.Series, current_json: Dict[str, Any]) -> List[Any]:
         """
         Create the assistant response (next play prediction) for Gemini training.
         
@@ -598,7 +598,7 @@ class GeminiFormatter(BaseFormatter):
             current_json: Parsed JSON context from current play
             
         Returns:
-            dict: Assistant response with next play information
+            list: Raw compact play tuple for maximum efficiency
         """
         # Get quarter and time for next play
         next_quarter, next_time = convert_to_quarter_time(
@@ -668,7 +668,9 @@ class GeminiFormatter(BaseFormatter):
         # Convert time to seconds (next_time is already in MM:SS format)
         time_parts = str(next_time).split(':')
         if len(time_parts) >= 2:
-            time_seconds = int(time_parts[0]) * 60 + int(time_parts[1])
+            minutes = int(time_parts[-2])  # Second to last part (minutes)
+            seconds = int(time_parts[-1])  # Last part (seconds) 
+            time_seconds = 60 * minutes + seconds
         else:
             time_seconds = 720  # Default 12:00
         
@@ -752,10 +754,8 @@ class GeminiFormatter(BaseFormatter):
                 int(lineup_id)
             ]
         
-        # Return compact format response
-        return {
-            "y": play_tuple
-        }
+        # Return raw tuple for maximum efficiency
+        return play_tuple
     
     def _get_previous_scores(self, game_df: pd.DataFrame, current_index: int) -> tuple[int, int]:
         """

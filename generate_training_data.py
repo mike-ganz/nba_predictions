@@ -838,8 +838,8 @@ def convert_compact_to_verbose(compact_json):
     if isinstance(compact_json, str):
         compact_json = json.loads(compact_json)
     
-    away_abbrev = compact_json.get('a', 'AWAY')
-    home_abbrev = compact_json.get('h', 'HOME')
+    away_abbrev = compact_json.get('A', 'AWAY')  # Use uppercase key
+    home_abbrev = compact_json.get('H', 'HOME')  # Use uppercase key
     
     # Convert team stats back
     away_stats_array = compact_json.get('as', [110.0, 110.0, 100.0, 2])

@@ -70,7 +70,7 @@ class GameContextBuilder:
             for_first_n_plays: If True, excludes plays array (for Stage 1 / first_N_plays mode)
             
         Returns:
-            Dict in compact format with 'a', 'h', 'as', 'hs', 'ap', 'hp', 'L', 'p' fields
+            Dict in compact format with 'A', 'H', 'as', 'hs', 'ap', 'hp', 'L', 'p' fields
         """
         # First build verbose format using existing logic
         if self.play_by_play_data is not None:
