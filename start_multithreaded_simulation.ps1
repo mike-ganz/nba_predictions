@@ -80,7 +80,7 @@ $config = @{
     max_threads = [int]$threads
     skip_stage1 = $true
     platform = "gemini"
-    output_db = "simulation_results_multithreaded_$timestamp.db"
+    output_db = "enhanced_simulation_results_multithreaded.db"
     log_level = "INFO"
     resume_on_error = $true
     timeout_minutes = 60
@@ -97,13 +97,13 @@ Write-Host "`n🚀 Starting multithreaded simulation on GCP..."
 Write-Host "This will run in the background. Use Ctrl+C to disconnect (simulation continues)."
 Write-Host "Use ./monitor.ps1 to check progress."
 
-# Start the simulation
-gcloud compute ssh nba-orchestrator --zone=us-central1-a --project=utopian-outlook-470922-q2 --ssh-flag="-batch" --command="source ~/.bashrc && source ~/venv/bin/activate && cd ~ && nohup python3 orchestrator.py --config orchestrator_config_current.json > simulation_multithreaded_$timestamp.log 2>&1 &"
+# Start the simulation (enhanced multithreaded orchestrator)
+gcloud compute ssh nba-orchestrator --zone=us-central1-a --project=utopian-outlook-470922-q2 --ssh-flag="-batch" --command="source ~/.bashrc && source ~/venv/bin/activate && cd ~ && nohup python3 enhanced_orchestrator.py --config orchestrator_config_current.json --threads $threads > big_run_multithreaded.log 2>&1 &"
 
 Write-Host "`n✅ Multithreaded simulation started!"
-Write-Host "📁 Output database: simulation_results_multithreaded_$timestamp.db"
-Write-Host "📋 Log file: simulation_multithreaded_$timestamp.log"
+Write-Host "📁 Output database: enhanced_simulation_results_multithreaded.db"
+Write-Host "📋 Log file: big_run_multithreaded.log"
 Write-Host "`n📊 To monitor progress:"
 Write-Host "   ./monitor.ps1"
 Write-Host "`n📥 To download results when complete:"
-Write-Host "   gcloud compute scp nba-orchestrator:~/simulation_results_multithreaded_$timestamp.db ./ --zone=us-central1-a --scp-flag='-batch'"
+Write-Host "   gcloud compute scp nba-orchestrator:~/enhanced_simulation_results_multithreaded.db ./ --zone=us-central1-a --scp-flag='-batch'"
