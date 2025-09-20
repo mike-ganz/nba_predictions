@@ -155,10 +155,20 @@ do {
         }
         "d" {
             Write-Host "`nDownloading latest database..." -ForegroundColor Yellow
-            # $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+            
+            # Flush WAL -> main DB via Python (sqlite3 CLI might not be installed on VM)
+            $checkpointCmd = @"
+source ~/.bashrc && source ~/venv/bin/activate && python3 -c "import sqlite3; p='/home/micha/enhanced_simulation_results_multithreaded.db'; con=sqlite3.connect(p, check_same_thread=False); con.execute('PRAGMA wal_checkpoint(FULL);'); con.commit(); con.close(); print('CHECKPOINT_DONE')"
+"@
+            try {
+                gcloud compute ssh nba-orchestrator --zone=us-central1-a --project=utopian-outlook-470922-q2 --ssh-flag="-batch" --command=$checkpointCmd 2>$null | Out-Null
+            } catch {
+                Write-Host "   Warning: Could not run WAL checkpoint (will download anyway)" -ForegroundColor Yellow
+            }
+
+            # Download the main DB after checkpoint
             gcloud compute scp "nba-orchestrator:enhanced_simulation_results_multithreaded.db" "./enhanced_simulation_results_current.db" --zone=us-central1-a --project=utopian-outlook-470922-q2 --scp-flag="-batch"
             Write-Host "Download completed as enhanced_simulation_results_current.db!" -ForegroundColor Green
-            # Write-Host "Download completed as enhanced_simulation_results_$timestamp.db!" -ForegroundColor Green
             Read-Host "Press Enter to continue"
         }
         "q" {

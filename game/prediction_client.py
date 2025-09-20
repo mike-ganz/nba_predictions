@@ -10,9 +10,104 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, Tuple, List
 import json
 import os
+import time
+import threading
+import random
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from dotenv import load_dotenv
 from .response_validator import NBAResponseValidator, ValidationResult
 
+
+# =====================
+# Global rate limiter
+# =====================
+
+_GLOBAL_LIMITER = None
+_GLOBAL_LIMITER_LOCK = threading.Lock()
+
+
+class _RequestLimiter:
+    """Process-wide limiter for concurrent calls and pacing.
+
+    - Limits max in-flight requests (semaphore)
+    - Enforces a minimum interval between request starts (global pacing)
+    """
+
+    def __init__(self, max_concurrent: int, min_interval_seconds: float, jitter: float = 0.0):
+        self._semaphore = threading.Semaphore(max(1, int(max_concurrent)))
+        self._min_interval = max(0.0, float(min_interval_seconds))
+        self._jitter = max(0.0, float(jitter))
+        self._lock = threading.Lock()
+        self._last_start_ts = 0.0
+
+    def acquire(self):
+        # Limit concurrent in-flight requests
+        self._semaphore.acquire()
+
+        # Pacing: ensure at least min_interval between request starts
+        if self._min_interval > 0.0:
+            with self._lock:
+                now = time.time()
+                earliest = self._last_start_ts + self._min_interval
+                if now < earliest:
+                    delay = earliest - now
+                    # Add small jitter to avoid sync thundering herd
+                    delay += random.random() * self._jitter
+                    time.sleep(delay)
+                    now = time.time()
+                # Mark start
+                self._last_start_ts = now
+
+    def release(self):
+        try:
+            self._semaphore.release()
+        except Exception:
+            pass
+
+
+def _get_global_request_limiter() -> Optional[_RequestLimiter]:
+    """Create or return a singleton limiter if enabled via env vars.
+
+    Enable with GENAI_ENABLE_LIMITER=1
+    Controls:
+      - GENAI_MAX_CONCURRENT (default 2)
+      - GENAI_TARGET_RPS (default 2.0) → min interval = 1/RPS
+      - GENAI_MIN_DELAY_BETWEEN_CALLS (overrides RPS if set)
+      - GENAI_LIMITER_JITTER (default 0.1s)
+    """
+    enabled = os.getenv("GENAI_ENABLE_LIMITER", "0").lower() in ("1", "true", "yes", "on")
+    if not enabled:
+        return None
+
+    global _GLOBAL_LIMITER
+    with _GLOBAL_LIMITER_LOCK:
+        if _GLOBAL_LIMITER is None:
+            try:
+                max_concurrent = int(os.getenv("GENAI_MAX_CONCURRENT", "2"))
+            except Exception:
+                max_concurrent = 2
+            # Determine pacing interval
+            min_delay_env = os.getenv("GENAI_MIN_DELAY_BETWEEN_CALLS")
+            if min_delay_env is not None:
+                try:
+                    min_interval = float(min_delay_env)
+                except Exception:
+                    min_interval = 0.0
+            else:
+                try:
+                    target_rps = float(os.getenv("GENAI_TARGET_RPS", "2.0"))
+                    min_interval = 1.0 / target_rps if target_rps > 0 else 0.0
+                except Exception:
+                    min_interval = 0.0
+            try:
+                jitter = float(os.getenv("GENAI_LIMITER_JITTER", "0.1"))
+            except Exception:
+                jitter = 0.1
+
+            _GLOBAL_LIMITER = _RequestLimiter(max_concurrent=max_concurrent,
+                                              min_interval_seconds=min_interval,
+                                              jitter=jitter)
+        return _GLOBAL_LIMITER
 
 class BasePredictionClient(ABC):
     """Abstract base class for prediction clients."""
@@ -29,6 +124,8 @@ class BasePredictionClient(ABC):
             _lvl = 1
         self._debug_log = _lvl >= 3
         self._log_stage_responses = os.getenv("VALIDATION_DEBUG", "0").lower() in ("1", "true", "yes", "on")
+        # Initialize global rate limiter (no-op if not configured)
+        self._rate_limiter = _get_global_request_limiter()
     
     @property
     @abstractmethod
@@ -119,7 +216,14 @@ class BasePredictionClient(ABC):
         for attempt in range(max_retries + 1):
             try:
                 # Make prediction
-                response_content, usage_stats = self.predict(context, model_id, max_tokens, temperature)
+                limiter = getattr(self, "_rate_limiter", None)
+                if limiter is not None:
+                    limiter.acquire()
+                try:
+                    response_content, usage_stats = self.predict(context, model_id, max_tokens, temperature)
+                finally:
+                    if limiter is not None:
+                        limiter.release()
                 
                 # Stage 1 response logging disabled for cleaner output
                 # Optional full raw response logging for debugging
@@ -245,6 +349,12 @@ class BasePredictionClient(ABC):
                         print(f"💥 Max retries ({max_retries}) exceeded")
                 
             except Exception as e:
+                # Handle rate limiting / quota errors with exponential backoff + jitter
+                if self._is_rate_limit_error(e):
+                    delay = self._compute_backoff_seconds(attempt)
+                    print(f"Rate limited or quota exhausted (attempt {attempt + 1}). Backing off {delay:.2f}s...")
+                    time.sleep(delay)
+                    continue
                 print(f"Prediction attempt {attempt + 1} failed with error: {str(e)}")
                 if attempt == max_retries:
                     raise e
@@ -331,6 +441,42 @@ class BasePredictionClient(ABC):
     def get_last_validation_failure_info(self) -> Optional[Dict[str, Any]]:
         """Get the most recent validation failure information."""
         return self.last_validation_failure
+    
+    # ==== Rate limit detection and backoff helpers ====
+    def _is_rate_limit_error(self, err: Exception) -> bool:
+        """Heuristically detect 429/RESOURCE_EXHAUSTED/rate limit style errors."""
+        try:
+            msg = str(err).lower()
+        except Exception:
+            return False
+        indicators = [
+            "429",
+            "resource exhausted",
+            "quota",
+            "rate limit",
+            "retry after",
+            "too many requests",
+        ]
+        return any(tok in msg for tok in indicators)
+    
+    def _compute_backoff_seconds(self, attempt_index: int) -> float:
+        """Exponential backoff with jitter, configurable via env vars.
+        GENAI_BACKOFF_BASE (default 0.5), GENAI_BACKOFF_CAP (default 10), GENAI_BACKOFF_JITTER (default 0.25)
+        """
+        try:
+            base = float(os.getenv("GENAI_BACKOFF_BASE", "0.5"))
+        except Exception:
+            base = 0.5
+        try:
+            cap = float(os.getenv("GENAI_BACKOFF_CAP", "10"))
+        except Exception:
+            cap = 10.0
+        try:
+            jitter = float(os.getenv("GENAI_BACKOFF_JITTER", "0.25"))
+        except Exception:
+            jitter = 0.25
+        delay = min(cap, base * (2 ** attempt_index))
+        return delay + random.random() * jitter
     
     def _validate_stage1_response(self, response_text: str, context: Dict[str, Any]) -> Tuple[ValidationResult, list, str]:
         """
@@ -547,6 +693,9 @@ class GeminiPredictionClient(BasePredictionClient):
         try:
             return self._predict_with_genai_sdk_json(context_json, model_id, max_tokens, temperature)
         except Exception as genai_error:
+            # If it's a rate limit / quota error, propagate to outer retry loop for backoff
+            if self._is_rate_limit_error(genai_error):
+                raise
             print(f"Google GenAI SDK failed: {genai_error}")
             print("Falling back to Vertex AI approach...")
             return self._predict_with_vertexai_json(context_json, model_id, max_tokens, temperature)
@@ -563,59 +712,60 @@ class GeminiPredictionClient(BasePredictionClient):
     def _predict_with_genai_sdk_json(self, context_json: str, model_id: str, 
                                     max_tokens: int = 1500, temperature: float = 0.1) -> Tuple[str, Dict[str, Any]]:
         """Make prediction using the new Google GenAI SDK with pre-serialized JSON (optimized)."""
-        try:
-            from google import genai
-            from google.genai import types
-        except ImportError:
-            raise ImportError("Google GenAI library not found. Install with: pip install google-generativeai")
-        
-        # Initialize the client with Vertex AI backend
-        client = genai.Client(
-            vertexai=True,
-            project=self.project_id,
-            location=self.location,
-        )
-        
-        # Prepare contents for the model
-        contents = [
-            types.Content(
-                role="user",
-                parts=[types.Part(text=context_json)]
+        def _run_call():
+            try:
+                from google import genai
+                from google.genai import types
+            except ImportError:
+                raise ImportError("Google GenAI library not found. Install with: pip install google-generativeai")
+            
+            # Initialize the client with Vertex AI backend
+            client = genai.Client(
+                vertexai=True,
+                project=self.project_id,
+                location=self.location,
             )
-        ]
-        
-        # Configure generation with thinking disabled
-        generate_content_config = types.GenerateContentConfig(
-            temperature=temperature,
-            max_output_tokens=max_tokens,
-            thinking_config=types.ThinkingConfig(
-                thinking_budget=0,  # This is the key - disables thinking!
-            ),
-        )
-        
-        # Using Google GenAI SDK with thinking disabled
-        
-        # Generate content using streaming (but collect all chunks)
-        response_text = ""
-        token_count = 0
-        
-        for chunk in client.models.generate_content_stream(
-            model=model_id,
-            contents=contents,
-            config=generate_content_config,
-        ):
-            if chunk.text:
-                response_text += chunk.text
-                token_count += len(chunk.text.split()) * 1.3  # Rough estimate
-        
-        # Prepare usage stats
-        usage_stats = {
-            "completion_tokens": token_count,
-            "prompt_tokens": len(context_json.split()) * 1.3,  # Rough estimate
-            "total_tokens": len(context_json.split()) * 1.3 + token_count
-        }
-        
-        return response_text, usage_stats
+            
+            # Prepare contents for the model
+            contents = [
+                types.Content(
+                    role="user",
+                    parts=[types.Part(text=context_json)]
+                )
+            ]
+            
+            # Configure generation with thinking disabled
+            generate_content_config = types.GenerateContentConfig(
+                temperature=temperature,
+                max_output_tokens=max_tokens,
+                thinking_config=types.ThinkingConfig(
+                    thinking_budget=0,  # This is the key - disables thinking!
+                ),
+            )
+            
+            # Generate content using streaming (but collect all chunks)
+            response_text = ""
+            token_count = 0
+            
+            for chunk in client.models.generate_content_stream(
+                model=model_id,
+                contents=contents,
+                config=generate_content_config,
+            ):
+                if chunk.text:
+                    response_text += chunk.text
+                    token_count += len(chunk.text.split()) * 1.3  # Rough estimate
+            
+            # Prepare usage stats
+            usage_stats = {
+                "completion_tokens": token_count,
+                "prompt_tokens": len(context_json.split()) * 1.3,  # Rough estimate
+                "total_tokens": len(context_json.split()) * 1.3 + token_count
+            }
+            
+            return response_text, usage_stats
+
+        return self._call_with_timeout(_run_call)
     
     def _predict_with_vertexai(self, context: Dict[str, Any], model_id: str, 
                               max_tokens: int = 1500, temperature: float = 0.1) -> Tuple[str, Dict[str, Any]]:
@@ -629,65 +779,68 @@ class GeminiPredictionClient(BasePredictionClient):
     def _predict_with_vertexai_json(self, context_json: str, model_id: str, 
                                    max_tokens: int = 1500, temperature: float = 0.1) -> Tuple[str, Dict[str, Any]]:
         """Fallback prediction using Vertex AI SDK with pre-serialized JSON (optimized)."""
-        try:
-            from vertexai.generative_models import GenerativeModel, GenerationConfig
-            # Try to import ThinkingConfig if available in newer versions
+        def _run_call():
             try:
-                from vertexai.generative_models._generative_models import ThinkingConfig
-                thinking_config_available = True
+                from vertexai.generative_models import GenerativeModel, GenerationConfig
+                # Try to import ThinkingConfig if available in newer versions
+                try:
+                    from vertexai.generative_models._generative_models import ThinkingConfig
+                    thinking_config_available = True
+                except ImportError:
+                    thinking_config_available = False
             except ImportError:
-                thinking_config_available = False
-        except ImportError:
-            raise ImportError("Vertex AI library not found. Install with: pip install google-cloud-aiplatform")
-        
-        # Create model instance - model_id should be the full endpoint path
-        # e.g., "projects/PROJECT_ID/locations/us-central1/endpoints/ENDPOINT_ID"
-        model = GenerativeModel(model_id)
-        
-        # Create generation config - accommodate thinking tokens until we can disable them
-        if thinking_config_available:
-            try:
-                # Create ThinkingConfig to disable reasoning (Gemini 2.5+ models)
-                thinking_config = ThinkingConfig(thinking_budget=0)
+                raise ImportError("Vertex AI library not found. Install with: pip install google-cloud-aiplatform")
+            
+            # Create model instance - model_id should be the full endpoint path
+            # e.g., "projects/PROJECT_ID/locations/us-central1/endpoints/ENDPOINT_ID"
+            model = GenerativeModel(model_id)
+            
+            # Create generation config - accommodate thinking tokens until we can disable them
+            if thinking_config_available:
+                try:
+                    # Create ThinkingConfig to disable reasoning (Gemini 2.5+ models)
+                    thinking_config = ThinkingConfig(thinking_budget=0)
+                    generation_config = GenerationConfig(
+                        temperature=temperature,
+                        max_output_tokens=max_tokens,
+                        thinking_config=thinking_config
+                    )
+                    print("🔧 Thinking budget disabled (set to 0) for faster, direct responses")
+                except Exception as e:
+                    print(f"Could not disable thinking budget: {e}. Using expanded token config.")
+                    # Increase tokens to accommodate thinking overhead
+                    generation_config = GenerationConfig(
+                        temperature=temperature,
+                        max_output_tokens=max_tokens + 2000  # Extra tokens for thinking
+                    )
+            else:
+                print("ThinkingConfig not available - increasing token limit to accommodate thinking overhead")
+                # Since we can't disable thinking, give the model more tokens
+                # The model used 1499 thinking tokens, so we need buffer space
                 generation_config = GenerationConfig(
                     temperature=temperature,
-                    max_output_tokens=max_tokens,
-                    thinking_config=thinking_config
+                    max_output_tokens=max_tokens + 2000  # 3500 total: ~1500 thinking + 1500+ response
                 )
-                print("🔧 Thinking budget disabled (set to 0) for faster, direct responses")
-            except Exception as e:
-                print(f"Could not disable thinking budget: {e}. Using expanded token config.")
-                # Increase tokens to accommodate thinking overhead
-                generation_config = GenerationConfig(
-                    temperature=temperature,
-                    max_output_tokens=max_tokens + 2000  # Extra tokens for thinking
-                )
-        else:
-            print("ThinkingConfig not available - increasing token limit to accommodate thinking overhead")
-            # Since we can't disable thinking, give the model more tokens
-            # The model used 1499 thinking tokens, so we need buffer space
-            generation_config = GenerationConfig(
-                temperature=temperature,
-                max_output_tokens=max_tokens + 2000  # 3500 total: ~1500 thinking + 1500+ response
+            
+            # Generate content
+            response = model.generate_content(
+                context_json,
+                generation_config=generation_config
             )
-        
-        # Generate content
-        response = model.generate_content(
-            context_json,
-            generation_config=generation_config
-        )
-        
-        content = response.text
-        
-        # Gemini doesn't provide detailed token usage in the same way
-        # We'll estimate based on content length
-        usage_stats = {
-            "completion_tokens": len(content.split()) * 1.3,  # Rough estimate
-            "prompt_tokens": len(context_json.split()) * 1.3,  # Rough estimate
-            "total_tokens": len(context_json.split()) * 1.3 + len(content.split()) * 1.3
-        }
-        
-        return content, usage_stats
+            
+            content = response.text
+            
+            # Gemini doesn't provide detailed token usage in the same way
+            # We'll estimate based on content length
+            usage_stats = {
+                "completion_tokens": len(content.split()) * 1.3,  # Rough estimate
+                "prompt_tokens": len(context_json.split()) * 1.3,  # Rough estimate
+                "total_tokens": len(context_json.split()) * 1.3 + len(content.split()) * 1.3
+            }
+            
+            return content, usage_stats
+
+        return self._call_with_timeout(_run_call)
     
     def _get_default_models(self) -> Dict[str, str]:
         """Get default Gemini model endpoint IDs."""
@@ -705,6 +858,30 @@ class GeminiPredictionClient(BasePredictionClient):
             "model_1_id": f"projects/{self.project_id}/locations/{self.location}/endpoints/{model_1_endpoint}",
             "model_2_id": f"projects/{self.project_id}/locations/{self.location}/endpoints/{model_2_endpoint}"
         }
+
+    # ==== Timeout utility ====
+    def _get_request_timeout_seconds(self) -> float:
+        try:
+            return float(os.getenv("GENAI_REQUEST_TIMEOUT_SECONDS", "90"))
+        except Exception:
+            return 90.0
+
+    def _call_with_timeout(self, func):
+        """Run func() with a timeout; raise TimeoutError to trigger outer backoff."""
+        timeout_s = self._get_request_timeout_seconds()
+        if getattr(self, "_debug_log", False):
+            print(f"⏱️  GENAI call start (timeout={timeout_s:.0f}s)")
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(func)
+            try:
+                result = fut.result(timeout=timeout_s)
+                if getattr(self, "_debug_log", False):
+                    print("✅ GENAI call finished")
+                return result
+            except FuturesTimeout:
+                if getattr(self, "_debug_log", False):
+                    print(f"⏰ GENAI request timed out after {timeout_s:.0f}s")
+                raise TimeoutError(f"GENAI request timed out after {timeout_s:.0f}s")
 
 
 class PredictionClientFactory:

@@ -32,7 +32,7 @@ sns.set_palette("husl")
 DATABASE_PATH = "enhanced_simulation_results_current.db"
 
 # Historical database path (contains previous runs to include in analysis)
-HISTORICAL_DATABASE_PATH = r"C:\Users\micha\nba_predictions\enhanced_simulation_results.db"
+HISTORICAL_DATABASE_PATH = ""
 
 # Define helper functions needed for combining databases
 def get_combined_raw_simulation_data(db_paths=[DATABASE_PATH, HISTORICAL_DATABASE_PATH]):
