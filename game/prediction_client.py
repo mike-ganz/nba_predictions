@@ -22,6 +22,13 @@ class BasePredictionClient(ABC):
         self._initialize_client()
         self.validator = NBAResponseValidator(validation_mode=validation_mode)
         self.last_validation_failure = None  # Store detailed validation failure info
+        # Debug/verbose response logging toggle (enabled when PREDICTION_LOG_LEVEL >= 3 or VALIDATION_DEBUG=1)
+        try:
+            _lvl = int(os.getenv("PREDICTION_LOG_LEVEL", "1"))
+        except Exception:
+            _lvl = 1
+        self._debug_log = _lvl >= 3
+        self._log_stage_responses = os.getenv("VALIDATION_DEBUG", "0").lower() in ("1", "true", "yes", "on")
     
     @property
     @abstractmethod
@@ -115,6 +122,16 @@ class BasePredictionClient(ABC):
                 response_content, usage_stats = self.predict(context, model_id, max_tokens, temperature)
                 
                 # Stage 1 response logging disabled for cleaner output
+                # Optional full raw response logging for debugging
+                if self._debug_log or self._log_stage_responses:
+                    stage_label = "Stage 1" if stage1_mode else "Stage 2"
+                    print(f"\n=== DEBUG {stage_label} RAW RESPONSE (attempt {attempt + 1}) ===")
+                    try:
+                        print(response_content)
+                    except Exception:
+                        # Ensure logging never breaks the run
+                        print("<non-printable response content>")
+                    print("=== END RAW RESPONSE ===\n")
                 
                 # Validate response (different logic for Stage 1 vs Stage 2)
                 if stage1_mode:
@@ -212,6 +229,15 @@ class BasePredictionClient(ABC):
                     print(f"   Reason: {reason}")
                     if validation_errors:
                         print(f"   Additional errors: {len(validation_errors)} validation issues")
+                        # Detailed error dump in debug mode
+                        if self._debug_log or self._log_stage_responses:
+                            for err in validation_errors[:10]:
+                                try:
+                                    print(f"     - [{getattr(err, 'field_path', '?')}] {getattr(err, 'error_type', '?')}: {getattr(err, 'message', '')}")
+                                except Exception:
+                                    pass
+                            if len(validation_errors) > 10:
+                                print(f"     ... and {len(validation_errors) - 10} more")
                     
                     if attempt < max_retries:
                         print(f"Retrying prediction...")

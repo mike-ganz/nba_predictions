@@ -255,6 +255,19 @@ class NBAResponseValidator:
                 actual="parse_error",  # Avoid expensive string formatting
                 message=error_msg
             ))
+            # Debug: print raw response when in debug mode
+            try:
+                import os
+                dbg = int(os.getenv("PREDICTION_LOG_LEVEL", "1")) >= 3 or os.getenv("VALIDATION_DEBUG", "0").lower() in ("1","true","yes","on")
+                if dbg:
+                    print("=== DEBUG RAW (JSON parse error) ===")
+                    try:
+                        print(stripped_text)
+                    except Exception:
+                        print("<non-printable response content>")
+                    print("=== END DEBUG RAW ===")
+            except Exception:
+                pass
             return ValidationResult.RETRY, self.errors, "JSON parse error"
         
         # Step 1.5: Check if this is raw compact tuple or compact format and convert if needed
@@ -284,6 +297,16 @@ class NBAResponseValidator:
                         actual="conversion_failed",
                         message=response_data["error"]
                     ))
+                    # Debug: show offending compact payload
+                    try:
+                        import os
+                        dbg = int(os.getenv("PREDICTION_LOG_LEVEL", "1")) >= 3 or os.getenv("VALIDATION_DEBUG", "0").lower() in ("1","true","yes","on")
+                        if dbg:
+                            print("=== DEBUG COMPACT PAYLOAD (conversion_failed) ===")
+                            print(response_text)
+                            print("=== END COMPACT PAYLOAD ===")
+                    except Exception:
+                        pass
                     return ValidationResult.RETRY, self.errors, "Compact format conversion error"
             except Exception as e:
                 self.errors.append(ValidationError(
@@ -293,6 +316,15 @@ class NBAResponseValidator:
                     actual="conversion_exception",
                     message=f"Failed to convert compact format: {e}"
                 ))
+                try:
+                    import os
+                    dbg = int(os.getenv("PREDICTION_LOG_LEVEL", "1")) >= 3 or os.getenv("VALIDATION_DEBUG", "0").lower() in ("1","true","yes","on")
+                    if dbg:
+                        print("=== DEBUG COMPACT PAYLOAD (conversion_exception) ===")
+                        print(response_text)
+                        print("=== END COMPACT PAYLOAD ===")
+                except Exception:
+                    pass
                 return ValidationResult.RETRY, self.errors, "Compact format exception"
         
         # Step 2: Validate top-level structure (always required)
