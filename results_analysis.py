@@ -213,7 +213,8 @@ if not combined_summary.empty:
     
     # Parse scores and calculate statistics (similar to original show_game_summary function)
     def parse_scores_for_stats(all_scores_str):
-        """Parse scores from the all_scores string and calculate median statistics."""
+        """Parse scores from the all_scores string and calculate median statistics.
+        Filters out simulations where either team scored more than 150 points."""
         if pd.isna(all_scores_str) or not all_scores_str:
             return None, None, None
             
@@ -227,7 +228,10 @@ if not combined_summary.empty:
                     away_part, home_part = score_str.split(' - ')
                     away_score = int(away_part.split()[-1])
                     home_score = int(home_part.split()[-1])
-                    scores.append((away_score, home_score))
+                    
+                    # Filter out simulations where either team scored more than 150 points
+                    if away_score <= 150 and home_score <= 150:
+                        scores.append((away_score, home_score))
             except (ValueError, IndexError):
                 continue
         
@@ -293,7 +297,7 @@ ML_EDGE_THRESHOLD = 0.20            # 20% minimum edge over implied odds for ML 
 SPREAD_EDGE_THRESHOLD = 0.0         # Buffer on actual spread (e.g., 3 = need 3 extra points of coverage)
 
 # BETTING LIMITS (Additional filters on top of existing logic)
-MAX_SPREAD_LIMIT = 8.0             # Don't bet spreads > 15 points (0 = no limit)
+MAX_SPREAD_LIMIT = 8.0             # Don't bet spreads > N points (0 = no limit)
 MAX_FAVORITE_ML_ODDS = 300          # Don't bet favorites with odds worse than -300 (0 = no limit)
 MAX_UNDERDOG_ML_ODDS = 300          # Don't bet underdogs with odds worse than +400 (0 = no limit)
 
@@ -453,6 +457,7 @@ def parse_simulation_scores(all_scores_str):
     Parse individual simulation scores from the 'all_scores' string.
     
     Returns list of (away_score, home_score) tuples.
+    Filters out simulations where either team scored more than 150 points.
     """
     if pd.isna(all_scores_str) or not all_scores_str:
         return []
@@ -467,7 +472,10 @@ def parse_simulation_scores(all_scores_str):
                 away_part, home_part = score_str.split(' - ')
                 away_score = int(away_part.split()[-1])  # Get last part (score)
                 home_score = int(home_part.split()[-1])  # Get last part (score)
-                scores.append((away_score, home_score))
+                
+                # Filter out simulations where either team scored more than 150 points
+                if away_score <= 150 and home_score <= 150:
+                    scores.append((away_score, home_score))
         except (ValueError, IndexError):
             continue  # Skip malformed scores
     

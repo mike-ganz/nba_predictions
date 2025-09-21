@@ -179,3 +179,4 @@ Desktop.ini
 # NBA predictions specific
 *.xlsx.tmp
 *.csv.tmp
+enhanced_simulation_results_current.db
