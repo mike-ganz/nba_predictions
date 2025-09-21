@@ -1,6 +1,7 @@
 {
   "season_year": "2024-2025",
   "games": [
+    "22400530",
     "22400531",
     "22400532",
     "22400533",
@@ -39,7 +40,7 @@
     "22400568"
   ],
   "runs_per_game": 25,
-  "max_iterations_per_run": 800,
+  "max_iterations_per_run": 550,
   "max_threads": 8,
   "skip_stage1": false,
   "platform": "gemini",

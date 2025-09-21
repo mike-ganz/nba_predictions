@@ -1031,8 +1031,34 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
     # Starting rolling iterations
     
     try:
+        # Safety mechanism: Track consecutive stuck iterations
+        consecutive_stuck_iterations = 0
+        last_game_state = None
+        
         for iteration in range(n_iterations):
             log_config.log_normal(f"\n--- ITERATION {iteration + 1}/{n_iterations} ---")
+            
+            # SAFETY CHECK: If we've been stuck in the same game state for too long, force end
+            if iteration > 50:  # Only after reasonable number of iterations
+                current_game_state = None
+                if is_compact and optimized_context.current_plays:
+                    latest_play = optimized_context.current_plays[-1]
+                    if len(latest_play) >= 3:
+                        current_game_state = (latest_play[0], latest_play[1], tuple(latest_play[2]))  # (quarter, time, score)
+                elif not is_compact and optimized_context.current_recent_plays:
+                    latest_play = optimized_context.current_recent_plays[-1]
+                    current_game_state = (latest_play.get('quarter'), latest_play.get('time_remaining'), latest_play.get('score'))
+                
+                if current_game_state == last_game_state:
+                    consecutive_stuck_iterations += 1
+                    if consecutive_stuck_iterations >= 10:  # 10 iterations with identical game state
+                        log_config.log_minimal(f"🚨 SAFETY BREAK: Game stuck in identical state for {consecutive_stuck_iterations} iterations")
+                        log_config.log_minimal(f"   State: {current_game_state}")
+                        results["termination_reason"] = f"Safety termination - stuck at iteration {iteration + 1}"
+                        break
+                else:
+                    consecutive_stuck_iterations = 0
+                    last_game_state = current_game_state
             
             # Get optimized JSON (cached where possible)
             iteration_json = optimized_context.get_json()

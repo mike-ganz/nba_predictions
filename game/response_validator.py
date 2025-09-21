@@ -971,7 +971,7 @@ class NBAResponseValidator:
                                 return ValidationResult.VALID
                     
                     # Method 2: Aggressive substitution detection (new fallback)
-                    if self.consecutive_same_time >= 3:
+                    if self.consecutive_same_time >= 5:
                         substitution_count = self._count_recent_substitutions(next_play, current_recent_plays)
                         
                         if substitution_count >= 3:  # 3+ substitutions at 00:00
@@ -1943,7 +1943,7 @@ class NBAResponseValidator:
         # 1. Optimized game ending check using pre-compiled sets
         if quarter == QUARTER_4 and time_remaining in GAME_END_TIMES:
             self.consecutive_endgame += 1
-            if self.consecutive_endgame >= 3:  # More lenient threshold
+            if self.consecutive_endgame >= 1:  # FIXED: End immediately on Q4 00:00
                 return ValidationResult.END_GAME, self.errors, "Game ended - quarter 4, time expired"
         else:
             self.consecutive_endgame = 0
@@ -2007,8 +2007,8 @@ class NBAResponseValidator:
         ):
             self.consecutive_same_time += 1
             
-            # Fallback: Basic rollback after more attempts
-            if self.consecutive_same_time >= 8:
+            # FIXED: More aggressive rollback for stuck time
+            if self.consecutive_same_time >= 5:  # Trigger rollback after 5 same-time plays
                 return ValidationResult.ROLLBACK_TIME, self.errors, "Time progression stuck"
         else:
             self.consecutive_same_time = 0

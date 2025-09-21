@@ -43,7 +43,7 @@ function Get-ProcessStatus {
 function Get-RecentLogs {
     Write-Host "`nRecent Log Entries:" -ForegroundColor Cyan
     try {
-        $logFiles = @("big_run_fixed.log", "big_run_multithreaded.log", "big_run_simulation.log")
+        $logFiles = @("orchestrator.log", "enhanced_orchestrator.log", "big_run_multithreaded.log")
         $foundLog = $false
         
         foreach ($logFile in $logFiles) {
@@ -51,7 +51,7 @@ function Get-RecentLogs {
             gcloud compute ssh nba-orchestrator --zone=us-central1-a --project=utopian-outlook-470922-q2 --ssh-flag="-batch" --command=$testCmd 2>$null
             
             if ($LASTEXITCODE -eq 0) {
-                $logCmd = "tail -10 $logFile | strings | grep -E 'ITERATION|NEW PLAY|Game State|ERROR|threads' | tail -5"
+                $logCmd = "tail -10 $logFile"
                 $logs = gcloud compute ssh nba-orchestrator --zone=us-central1-a --project=utopian-outlook-470922-q2 --ssh-flag="-batch" --command=$logCmd 2>$null
                 
                 if ($logs -and $logs.Trim()) {
@@ -115,7 +115,7 @@ function Start-LiveLogs {
     Write-Host "`nStarting live log view (Ctrl+C to return)..." -ForegroundColor Yellow
     Start-Sleep -Seconds 1
     
-    $logFiles = @("big_run_fixed.log", "big_run_multithreaded.log", "big_run_simulation.log")
+    $logFiles = @("orchestrator.log", "enhanced_orchestrator.log", "big_run_multithreaded.log")
     
     foreach ($logFile in $logFiles) {
         $testCmd = "test -f $logFile"

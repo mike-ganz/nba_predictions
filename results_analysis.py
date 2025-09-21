@@ -22,6 +22,25 @@ plt.style.use('default')
 sns.set_palette("husl")
 
 # ================================================================================
+# CONFIGURATION - Change these values to adjust filtering and analysis
+# ================================================================================
+
+# ITERATION FILTERING CONFIGURATION
+MAX_ITERATIONS_THRESHOLD = 500      # Maximum iterations to consider realistic (filters out runaway simulations)
+MIN_ITERATIONS_THRESHOLD = 50       # Minimum iterations to consider complete (filters out very short games)
+
+# BETTING ANALYSIS CONFIGURATION
+SPREAD_CONFIDENCE_THRESHOLD = 0.60  # 60% of simulations must support the bet
+MIN_SIMULATIONS_REQUIRED = 5       # Minimum simulations needed for analysis
+ML_EDGE_THRESHOLD = 0.10            # 10% minimum edge over implied odds for ML bets
+SPREAD_EDGE_THRESHOLD = 0.0         # Buffer on actual spread (e.g., 3 = need 3 extra points of coverage)
+
+# BETTING LIMITS (Additional filters on top of existing logic)
+MAX_SPREAD_LIMIT = 0.0             # Don't bet spreads > N points (0 = no limit)
+MAX_FAVORITE_ML_ODDS = 600          # Don't bet favorites with odds worse than -300 (0 = no limit)
+MAX_UNDERDOG_ML_ODDS = 600          # Don't bet underdogs with odds worse than +400 (0 = no limit)
+
+# ================================================================================
 # DATABASE CONFIGURATION - Change database path here only
 # ================================================================================
 # To use a different database file, simply change the path below:
@@ -102,7 +121,12 @@ def get_combined_simulation_data(query_type="summary", db_paths=[DATABASE_PATH, 
     
     if query_type == "summary":
         # Group the combined raw data for summary display
-        completed_games = raw_data[raw_data['status'] == 'game_ended']
+        # Filter by iteration count AND natural termination status for realistic results
+        completed_games = raw_data[
+            (raw_data['status'].isin(['game_ended', 'completed'])) & 
+            (raw_data['successful_predictions'] <= MAX_ITERATIONS_THRESHOLD) &
+            (raw_data['successful_predictions'] >= MIN_ITERATIONS_THRESHOLD)
+        ]
         
         if completed_games.empty:
             return pd.DataFrame()
@@ -168,7 +192,12 @@ def get_combined_simulation_data(query_type="summary", db_paths=[DATABASE_PATH, 
         
     elif query_type == "betting":
         # Group for betting analysis
-        completed_games = raw_data[raw_data['status'] == 'game_ended']
+        # Filter by iteration count AND natural termination status for realistic results
+        completed_games = raw_data[
+            (raw_data['status'].isin(['game_ended', 'completed'])) & 
+            (raw_data['successful_predictions'] <= MAX_ITERATIONS_THRESHOLD) &
+            (raw_data['successful_predictions'] >= MIN_ITERATIONS_THRESHOLD)
+        ]
         
         if completed_games.empty:
             return pd.DataFrame()
@@ -214,7 +243,7 @@ if not combined_summary.empty:
     # Parse scores and calculate statistics (similar to original show_game_summary function)
     def parse_scores_for_stats(all_scores_str):
         """Parse scores from the all_scores string and calculate median statistics.
-        Filters out simulations where either team scored more than 150 points."""
+        Filters out simulations with unrealistic iteration counts (>500 predictions)."""
         if pd.isna(all_scores_str) or not all_scores_str:
             return None, None, None
             
@@ -229,9 +258,8 @@ if not combined_summary.empty:
                     away_score = int(away_part.split()[-1])
                     home_score = int(home_part.split()[-1])
                     
-                    # Filter out simulations where either team scored more than 150 points
-                    if away_score <= 150 and home_score <= 150:
-                        scores.append((away_score, home_score))
+                    # Accept all scores - filtering will be done by iteration count in the query
+                    scores.append((away_score, home_score))
             except (ValueError, IndexError):
                 continue
         
@@ -281,7 +309,15 @@ else:
     summary_df = pd.DataFrame()
 
 # ================================================================================
-# BETTING ANALYSIS INTEGRATION
+# DATA FILTERING AND BETTING ANALYSIS INTEGRATION
+# 
+# FILTERING LOGIC:
+# - Only includes simulations with realistic iteration counts (50-500 predictions)
+# - Filters out runaway simulations (>500) that didn't terminate properly
+# - Filters out very short simulations (<50) that may have terminated prematurely
+# - Only includes simulations with 'game_ended' status (natural termination)
+#
+# BETTING ANALYSIS:
 # Compares simulation predictions with actual game outcomes to evaluate betting performance.
 # Answers: "Which spread/ML would our simulations have suggested betting?" and "Would that bet have been right?"
 #
@@ -290,16 +326,6 @@ else:
 # - ML: Bet if simulation win% > (implied odds probability + edge threshold)
 # ================================================================================
 
-# CONFIGURATION
-SPREAD_CONFIDENCE_THRESHOLD = 0.80  # 80% of simulations must support the bet
-MIN_SIMULATIONS_REQUIRED = 5       # Minimum simulations needed for analysis
-ML_EDGE_THRESHOLD = 0.20            # 20% minimum edge over implied odds for ML bets
-SPREAD_EDGE_THRESHOLD = 0.0         # Buffer on actual spread (e.g., 3 = need 3 extra points of coverage)
-
-# BETTING LIMITS (Additional filters on top of existing logic)
-MAX_SPREAD_LIMIT = 8.0             # Don't bet spreads > N points (0 = no limit)
-MAX_FAVORITE_ML_ODDS = 300          # Don't bet favorites with odds worse than -300 (0 = no limit)
-MAX_UNDERDOG_ML_ODDS = 300          # Don't bet underdogs with odds worse than +400 (0 = no limit)
 
 def calculate_implied_probability(moneyline_str):
     """
@@ -457,7 +483,7 @@ def parse_simulation_scores(all_scores_str):
     Parse individual simulation scores from the 'all_scores' string.
     
     Returns list of (away_score, home_score) tuples.
-    Filters out simulations where either team scored more than 150 points.
+    Note: Filtering by iteration count is now done in the query, so we accept all valid scores.
     """
     if pd.isna(all_scores_str) or not all_scores_str:
         return []
@@ -473,9 +499,8 @@ def parse_simulation_scores(all_scores_str):
                 away_score = int(away_part.split()[-1])  # Get last part (score)
                 home_score = int(home_part.split()[-1])  # Get last part (score)
                 
-                # Filter out simulations where either team scored more than 150 points
-                if away_score <= 150 and home_score <= 150:
-                    scores.append((away_score, home_score))
+                # Accept all valid scores - filtering is done by iteration count in the query
+                scores.append((away_score, home_score))
         except (ValueError, IndexError):
             continue  # Skip malformed scores
     
@@ -562,7 +587,9 @@ def get_simulation_betting_recommendations(actual_results_df, use_combined_data=
             SUM(CASE WHEN status = 'game_ended' THEN 1 ELSE 0 END) as completed_sims,
             GROUP_CONCAT(final_score) as all_scores
         FROM simulation_runs 
-        WHERE status = 'game_ended'  -- Only include completed games
+        WHERE status IN ('game_ended', 'completed') 
+            AND successful_predictions <= """ + str(MAX_ITERATIONS_THRESHOLD) + """
+            AND successful_predictions >= """ + str(MIN_ITERATIONS_THRESHOLD) + """  -- Only include realistic simulation lengths
         GROUP BY game_id, season_year
         ORDER BY game_id, season_year
         """
