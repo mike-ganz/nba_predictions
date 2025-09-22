@@ -1,5 +1,32 @@
 # NBA Predictions GCP Monitoring Script - Simple PowerShell
 
+param(
+    [string]$LogFile = "",
+    [string]$DatabaseFile = "enhanced_simulation_results_multithreaded.db",
+    [switch]$Help
+)
+
+# Show help if requested
+if ($Help) {
+    Write-Host "NBA Predictions GCP Monitoring Script" -ForegroundColor Green
+    Write-Host "Usage: .\monitor.ps1 [-LogFile <filename>] [-DatabaseFile <filename>] [-Help]" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Parameters:" -ForegroundColor Cyan
+    Write-Host "  -LogFile <filename>     : Specific log file to monitor (optional)" -ForegroundColor White
+    Write-Host "  -DatabaseFile <filename>: Database file to download (default: enhanced_simulation_results_multithreaded.db)" -ForegroundColor White
+    Write-Host "  -Help                   : Show this help message" -ForegroundColor White
+    Write-Host ""
+    Write-Host "Examples:" -ForegroundColor Cyan
+    Write-Host "  .\monitor.ps1" -ForegroundColor White
+    Write-Host "  .\monitor.ps1 -LogFile test_2threads_orchestrator.log" -ForegroundColor White
+    Write-Host "  .\monitor.ps1 -LogFile my_test.log -DatabaseFile test_results.db" -ForegroundColor White
+    exit 0
+}
+
+# Global variables for script parameters
+$global:TargetLogFile = $LogFile
+$global:TargetDatabaseFile = $DatabaseFile
+
 function Get-VMStatus {
     Write-Host "`nVM Status:" -ForegroundColor Cyan
     try {
@@ -43,7 +70,15 @@ function Get-ProcessStatus {
 function Get-RecentLogs {
     Write-Host "`nRecent Log Entries:" -ForegroundColor Cyan
     try {
-        $logFiles = @("orchestrator.log", "enhanced_orchestrator.log", "big_run_multithreaded.log")
+        # Build log files array with priority to specified log file
+        $logFiles = @()
+        if ($global:TargetLogFile -ne "") {
+            $logFiles += $global:TargetLogFile
+        }
+        $logFiles += @("orchestrator.log", "enhanced_orchestrator.log", "big_run_multithreaded.log")
+        
+        # Remove duplicates while preserving order
+        $logFiles = $logFiles | Select-Object -Unique
         $foundLog = $false
         
         foreach ($logFile in $logFiles) {
@@ -115,7 +150,15 @@ function Start-LiveLogs {
     Write-Host "`nStarting live log view (Ctrl+C to return)..." -ForegroundColor Yellow
     Start-Sleep -Seconds 1
     
-    $logFiles = @("orchestrator.log", "enhanced_orchestrator.log", "big_run_multithreaded.log")
+    # Build log files array with priority to specified log file
+    $logFiles = @()
+    if ($global:TargetLogFile -ne "") {
+        $logFiles += $global:TargetLogFile
+    }
+    $logFiles += @("orchestrator.log", "enhanced_orchestrator.log", "big_run_multithreaded.log")
+    
+    # Remove duplicates while preserving order
+    $logFiles = $logFiles | Select-Object -Unique
     
     foreach ($logFile in $logFiles) {
         $testCmd = "test -f $logFile"
@@ -138,6 +181,14 @@ do {
     Write-Host "=" * 60
     Write-Host "Last updated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Gray
     
+    # Show current configuration
+    if ($global:TargetLogFile -ne "") {
+        Write-Host "Target Log: $($global:TargetLogFile)" -ForegroundColor Cyan
+    } else {
+        Write-Host "Target Log: Auto-detect" -ForegroundColor Cyan
+    }
+    Write-Host "Target DB: $($global:TargetDatabaseFile)" -ForegroundColor Cyan
+    
     Get-VMStatus
     Get-ProcessStatus  
     Get-RecentLogs
@@ -158,7 +209,7 @@ do {
             
             # Flush WAL -> main DB via Python (sqlite3 CLI might not be installed on VM)
             $checkpointCmd = @"
-source ~/.bashrc && source ~/venv/bin/activate && python3 -c "import sqlite3; p='/home/micha/enhanced_simulation_results_multithreaded.db'; con=sqlite3.connect(p, check_same_thread=False); con.execute('PRAGMA wal_checkpoint(FULL);'); con.commit(); con.close(); print('CHECKPOINT_DONE')"
+source ~/.bashrc && source ~/venv/bin/activate && python3 -c "import sqlite3; p='/home/micha/$($global:TargetDatabaseFile)'; con=sqlite3.connect(p, check_same_thread=False); con.execute('PRAGMA wal_checkpoint(FULL);'); con.commit(); con.close(); print('CHECKPOINT_DONE')"
 "@
             try {
                 gcloud compute ssh nba-orchestrator --zone=us-central1-a --project=utopian-outlook-470922-q2 --ssh-flag="-batch" --command=$checkpointCmd 2>$null | Out-Null
@@ -167,8 +218,9 @@ source ~/.bashrc && source ~/venv/bin/activate && python3 -c "import sqlite3; p=
             }
 
             # Download the main DB after checkpoint
-            gcloud compute scp "nba-orchestrator:enhanced_simulation_results_multithreaded.db" "./enhanced_simulation_results_current.db" --zone=us-central1-a --project=utopian-outlook-470922-q2 --scp-flag="-batch"
-            Write-Host "Download completed as enhanced_simulation_results_current.db!" -ForegroundColor Green
+            $localDbName = $global:TargetDatabaseFile -replace '\.db$', '_current.db'
+            gcloud compute scp "nba-orchestrator:$($global:TargetDatabaseFile)" "./$localDbName" --zone=us-central1-a --project=utopian-outlook-470922-q2 --scp-flag="-batch"
+            Write-Host "Download completed as $localDbName!" -ForegroundColor Green
             Read-Host "Press Enter to continue"
         }
         "q" {

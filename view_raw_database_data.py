@@ -11,7 +11,7 @@ import sqlite3
 from pathlib import Path
 
 # Database configuration - change this path if needed
-DATABASE_PATH = "enhanced_simulation_results_current.db"
+DATABASE_PATH = "enhanced_simulation_results_multithreaded_current.db"
 
 def view_raw_data(db_path=DATABASE_PATH):
     """

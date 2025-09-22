@@ -27,16 +27,17 @@ sns.set_palette("husl")
 
 # ITERATION FILTERING CONFIGURATION
 MAX_ITERATIONS_THRESHOLD = 550      # Maximum iterations to consider realistic (filters out runaway simulations)
-MIN_ITERATIONS_THRESHOLD = 350      # Minimum iterations to consider complete (filters out stuck/incomplete games)
+MIN_ITERATIONS_THRESHOLD = 325      # Minimum iterations to consider complete (filters out stuck/incomplete games)
 
 # SCORE FILTERING CONFIGURATION
-MAX_TEAM_SCORE_THRESHOLD = 150      # Maximum team score to consider realistic (filters out unrealistic high-scoring games)
+MAX_TEAM_SCORE_THRESHOLD = 175      # Maximum team score to consider realistic (filters out unrealistic high-scoring games)
 
 # BETTING ANALYSIS CONFIGURATION
 SPREAD_CONFIDENCE_THRESHOLD = 0.60  # 60% of simulations must support the bet
 MIN_SIMULATIONS_REQUIRED = 5       # Minimum simulations needed for analysis
 ML_EDGE_THRESHOLD = 0.10            # 10% minimum edge over implied odds for ML bets
 SPREAD_EDGE_THRESHOLD = 0.0         # Buffer on actual spread (e.g., 3 = need 3 extra points of coverage)
+
 
 # BETTING LIMITS (Additional filters on top of existing logic)
 MAX_SPREAD_LIMIT = 0.0             # Don't bet spreads > N points (0 = no limit)
@@ -51,7 +52,7 @@ MAX_UNDERDOG_ML_ODDS = 600          # Don't bet underdogs with odds worse than +
 #   DATABASE_PATH = "enhanced_simulation_results_20250915_113427.db"  # Specific timestamp
 #   DATABASE_PATH = "enhanced_simulation_results_latest.db"           # Latest results
 #   DATABASE_PATH = "enhanced_simulation_results_current.db"          # Current results
-DATABASE_PATH = "enhanced_simulation_results_current.db"
+DATABASE_PATH = "enhanced_simulation_results_multithreaded_current.db"
 
 # Historical database path (contains previous runs to include in analysis)
 HISTORICAL_DATABASE_PATH = ""
