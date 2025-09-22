@@ -26,8 +26,11 @@ sns.set_palette("husl")
 # ================================================================================
 
 # ITERATION FILTERING CONFIGURATION
-MAX_ITERATIONS_THRESHOLD = 500      # Maximum iterations to consider realistic (filters out runaway simulations)
-MIN_ITERATIONS_THRESHOLD = 50       # Minimum iterations to consider complete (filters out very short games)
+MAX_ITERATIONS_THRESHOLD = 550      # Maximum iterations to consider realistic (filters out runaway simulations)
+MIN_ITERATIONS_THRESHOLD = 350      # Minimum iterations to consider complete (filters out stuck/incomplete games)
+
+# SCORE FILTERING CONFIGURATION
+MAX_TEAM_SCORE_THRESHOLD = 150      # Maximum team score to consider realistic (filters out unrealistic high-scoring games)
 
 # BETTING ANALYSIS CONFIGURATION
 SPREAD_CONFIDENCE_THRESHOLD = 0.60  # 60% of simulations must support the bet
@@ -53,7 +56,34 @@ DATABASE_PATH = "enhanced_simulation_results_current.db"
 # Historical database path (contains previous runs to include in analysis)
 HISTORICAL_DATABASE_PATH = ""
 
-# Define helper functions needed for combining databases
+# Define helper functions needed for filtering and combining databases
+def has_realistic_scores(final_score_str):
+    """
+    Check if a simulation has realistic team scores (both teams < MAX_TEAM_SCORE_THRESHOLD).
+    
+    Args:
+        final_score_str: Single final score string (e.g., "AWAY_TEAM 110 - HOME_TEAM 105")
+        
+    Returns:
+        bool: True if both scores are realistic, False if either team scored >= MAX_TEAM_SCORE_THRESHOLD
+    """
+    if pd.isna(final_score_str) or not final_score_str.strip():
+        return False
+    
+    try:
+        # Parse format: "AWAY_TEAM SCORE - HOME_TEAM SCORE"
+        if ' - ' in final_score_str:
+            away_part, home_part = final_score_str.split(' - ')
+            away_score = int(away_part.split()[-1])  # Get last part (score)
+            home_score = int(home_part.split()[-1])  # Get last part (score)
+            
+            # Both scores must be below threshold
+            return away_score < MAX_TEAM_SCORE_THRESHOLD and home_score < MAX_TEAM_SCORE_THRESHOLD
+    except (ValueError, IndexError):
+        return False  # Skip malformed scores
+    
+    return False
+
 def get_combined_raw_simulation_data(db_paths=[DATABASE_PATH, HISTORICAL_DATABASE_PATH]):
     """
     Get raw simulation data from multiple databases and combine before grouping.
@@ -121,11 +151,12 @@ def get_combined_simulation_data(query_type="summary", db_paths=[DATABASE_PATH, 
     
     if query_type == "summary":
         # Group the combined raw data for summary display
-        # Filter by iteration count AND natural termination status for realistic results
+        # Filter by iteration count, natural termination status, AND realistic scores
         completed_games = raw_data[
             (raw_data['status'].isin(['game_ended', 'completed'])) & 
             (raw_data['successful_predictions'] <= MAX_ITERATIONS_THRESHOLD) &
-            (raw_data['successful_predictions'] >= MIN_ITERATIONS_THRESHOLD)
+            (raw_data['successful_predictions'] >= MIN_ITERATIONS_THRESHOLD) &
+            (raw_data['final_score'].apply(has_realistic_scores))  # Filter out unrealistic high scores
         ]
         
         if completed_games.empty:
@@ -192,11 +223,12 @@ def get_combined_simulation_data(query_type="summary", db_paths=[DATABASE_PATH, 
         
     elif query_type == "betting":
         # Group for betting analysis
-        # Filter by iteration count AND natural termination status for realistic results
+        # Filter by iteration count, natural termination status, AND realistic scores
         completed_games = raw_data[
             (raw_data['status'].isin(['game_ended', 'completed'])) & 
             (raw_data['successful_predictions'] <= MAX_ITERATIONS_THRESHOLD) &
-            (raw_data['successful_predictions'] >= MIN_ITERATIONS_THRESHOLD)
+            (raw_data['successful_predictions'] >= MIN_ITERATIONS_THRESHOLD) &
+            (raw_data['final_score'].apply(has_realistic_scores))  # Filter out unrealistic high scores
         ]
         
         if completed_games.empty:
@@ -243,7 +275,7 @@ if not combined_summary.empty:
     # Parse scores and calculate statistics (similar to original show_game_summary function)
     def parse_scores_for_stats(all_scores_str):
         """Parse scores from the all_scores string and calculate median statistics.
-        Filters out simulations with unrealistic iteration counts (>500 predictions)."""
+        Only includes simulations with complete iteration counts (350-550 predictions)."""
         if pd.isna(all_scores_str) or not all_scores_str:
             return None, None, None
             
@@ -312,10 +344,12 @@ else:
 # DATA FILTERING AND BETTING ANALYSIS INTEGRATION
 # 
 # FILTERING LOGIC:
-# - Only includes simulations with realistic iteration counts (50-500 predictions)
-# - Filters out runaway simulations (>500) that didn't terminate properly
-# - Filters out very short simulations (<50) that may have terminated prematurely
-# - Only includes simulations with 'game_ended' status (natural termination)
+# - Only includes simulations with complete iteration counts (350-550 predictions)
+# - Filters out runaway simulations (>550) that didn't terminate properly
+# - Filters out stuck/incomplete simulations (<350) that terminated prematurely
+# - Filters out unrealistic high-scoring games (any team scoring >= 150 points)
+# - Only includes simulations with 'game_ended' or 'completed' status (natural termination)
+# - This combination captures realistic NBA games that completed naturally without getting stuck or producing unrealistic scores
 #
 # BETTING ANALYSIS:
 # Compares simulation predictions with actual game outcomes to evaluate betting performance.
@@ -483,7 +517,7 @@ def parse_simulation_scores(all_scores_str):
     Parse individual simulation scores from the 'all_scores' string.
     
     Returns list of (away_score, home_score) tuples.
-    Note: Filtering by iteration count is now done in the query, so we accept all valid scores.
+    Note: Filtering by iteration count and score thresholds is now done in the query, so we accept all valid scores.
     """
     if pd.isna(all_scores_str) or not all_scores_str:
         return []
@@ -499,7 +533,7 @@ def parse_simulation_scores(all_scores_str):
                 away_score = int(away_part.split()[-1])  # Get last part (score)
                 home_score = int(home_part.split()[-1])  # Get last part (score)
                 
-                # Accept all valid scores - filtering is done by iteration count in the query
+                # Accept all valid scores - filtering is done by iteration count and score thresholds in the query
                 scores.append((away_score, home_score))
         except (ValueError, IndexError):
             continue  # Skip malformed scores
@@ -578,24 +612,34 @@ def get_simulation_betting_recommendations(actual_results_df, use_combined_data=
         
         conn = sqlite3.connect(DATABASE_PATH)
         
-        # Get raw simulation data with individual scores
+        # Get raw simulation data with individual scores - filter by iteration count and realistic scores
         query = """
         SELECT 
             game_id,
             season_year,
-            COUNT(*) as total_sims,
-            SUM(CASE WHEN status = 'game_ended' THEN 1 ELSE 0 END) as completed_sims,
-            GROUP_CONCAT(final_score) as all_scores
+            final_score,
+            status
         FROM simulation_runs 
         WHERE status IN ('game_ended', 'completed') 
             AND successful_predictions <= """ + str(MAX_ITERATIONS_THRESHOLD) + """
             AND successful_predictions >= """ + str(MIN_ITERATIONS_THRESHOLD) + """  -- Only include realistic simulation lengths
-        GROUP BY game_id, season_year
         ORDER BY game_id, season_year
         """
         
-        sim_df = pd.read_sql_query(query, conn)
+        raw_sim_df = pd.read_sql_query(query, conn)
         conn.close()
+        
+        # Apply score filtering and then group
+        filtered_sim_df = raw_sim_df[raw_sim_df['final_score'].apply(has_realistic_scores)]
+        
+        if filtered_sim_df.empty:
+            sim_df = pd.DataFrame()
+        else:
+            sim_df = filtered_sim_df.groupby(['game_id', 'season_year']).agg({
+                'status': 'count',  # total_sims
+                'final_score': lambda x: ','.join(x)  # all_scores
+            }).reset_index()
+            sim_df.columns = ['game_id', 'season_year', 'completed_sims', 'all_scores']
     
     if sim_df.empty:
         print("⚠️ No simulation data found!")
@@ -1052,11 +1096,19 @@ def display_betting_table(summary_df):
                 else:
                     best_bet_cover = f"HOME +{abs(actual_spread)} ({home_cover_pct:.0%})"  # Home gets points
             
-            # BEST BET ML (always show higher win percentage, regardless of thresholds)
-            if away_win_pct > home_win_pct:
-                best_bet_ml = f"AWAY {away_ml} ({away_win_pct:.0%})"
+            # BEST BET ML (show actual ML recommendation if any, otherwise show higher win percentage)
+            ml_rec = bet_row.get('ml_recommendation', 'pass')
+            if ml_rec != 'pass':
+                if ml_rec == 'away':
+                    best_bet_ml = f"AWAY {away_ml} ({away_win_pct:.0%})"
+                else:  # home
+                    best_bet_ml = f"HOME {home_ml} ({home_win_pct:.0%})"
             else:
-                best_bet_ml = f"HOME {home_ml} ({home_win_pct:.0%})"
+                # No ML recommendation, show higher win percentage for reference
+                if away_win_pct > home_win_pct:
+                    best_bet_ml = f"AWAY {away_ml} ({away_win_pct:.0%}) - No Bet"
+                else:
+                    best_bet_ml = f"HOME {home_ml} ({home_win_pct:.0%}) - No Bet"
             
             # RECOMMENDED COVER (based on actual recommendation + outcome)
             spread_rec = bet_row.get('spread_recommendation', 'pass')
