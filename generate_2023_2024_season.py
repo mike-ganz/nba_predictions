@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Generate complete 2023-2024 NBA season training data in compact format.
+Generate complete 2023-2024 NBA season training data in compact or verbose format.
 
 Usage:
-    python generate_2023_2024_season.py                             # Full season (Gemini format)
-    python generate_2023_2024_season.py --format openai             # Full season (OpenAI format)
-    python generate_2023_2024_season.py --format csv                # Full season (CSV format)
+    python generate_2023_2024_season.py                             # Full season (Gemini format, compact)
+    python generate_2023_2024_season.py --format openai             # Full season (OpenAI format, compact)
+    python generate_2023_2024_season.py --format csv                # Full season (CSV format, compact)
+    python generate_2023_2024_season.py --data-format verbose       # Full season (verbose format)
     python generate_2023_2024_season.py --sample 1000 --format gemini  # Sample + Gemini format
     python generate_2023_2024_season.py --games 50                  # First 50 games only
     python generate_2023_2024_season.py --n-total 7                 # 7 plays per sequence
@@ -41,6 +42,9 @@ def main():
                        help='NBA season to generate data for (default: 2023-2024)')
     parser.add_argument('--ultra-fast-gemini', action='store_true',
                        help='Use ultra-optimized Gemini formatter (10-50x faster)')
+    parser.add_argument('--data-format', type=str, default='compact',
+                       choices=['compact', 'verbose'],
+                       help='Training data schema format (default: compact)')
     
     args = parser.parse_args()
     
@@ -56,6 +60,7 @@ def main():
     print(f"   • Sample limit: {args.sample or 'None (full dataset)'}")
     print(f"   • Games limit: {args.games or 'None (all games)'}")
     print(f"   • Output format: {args.format}")
+    print(f"   • Data format: {args.data_format}")
     print(f"   • Generation mode: {args.generation_mode}")
     if args.generation_mode == "remaining_plays":
         print(f"     → Standard next-play prediction (~high volume)")
@@ -84,8 +89,8 @@ def main():
     print(f"✅ Filtered to {len(filtered_df):,} plays from {len(valid_games):,} games")
     print(f"📈 Average plays per game: {len(filtered_df) / len(valid_games):.1f}")
     
-    # Generate compact training data
-    print(f"\n🚀 Generating compact training data with ULTRA-OPTIMIZED pipeline...")
+    # Generate training data in selected format
+    print(f"\n🚀 Generating {args.data_format} training data with ULTRA-OPTIMIZED pipeline...")
     print("   ⚡ Performance improvements:")
     print("      • Comprehensive PCA cache (99%+ hit rate vs 70% before)")
     print("      • Smart season fallback handling (batch processing)")
@@ -94,13 +99,16 @@ def main():
     print("   🎯 Expected speedup: 5-20x faster than original")
     
     try:
+        # Determine format choice
+        use_compact = (args.data_format == 'compact')
+        
         training_df = create_llm_training_data(
             filtered_df, 
             n_total=args.n_total,
             filter_nan=True,
             generation_mode=args.generation_mode,
-            use_direct_compact=True,  # 🚀 OPTIMIZATION #1: Direct compact builder (30-50% faster, validated)
-            use_batch_pca=True        # 🚀 OPTIMIZATION #2: Batch PCA calculations (4x faster, validated identical results)
+            use_direct_compact=use_compact,  # 🔧 FIXED: Now actually generates chosen format (was always compact before)
+            use_batch_pca=True               # 🚀 OPTIMIZATION #2: Batch PCA calculations (4x faster, validated identical results)
         )
         print(f"✅ Generated {len(training_df):,} training examples")
         
@@ -124,8 +132,8 @@ def main():
             
             print(f"✅ Sampled to {len(training_df):,} examples")
         
-        # Verify compact format
-        print(f"\n🔍 Verifying compact format...")
+        # Verify data format
+        print(f"\n🔍 Verifying {args.data_format} format...")
         
         # Check if json_training_data column exists and has valid data
         if 'json_training_data' not in training_df.columns:
@@ -161,18 +169,47 @@ def main():
         else:
             try:
                 sample_json = json.loads(sample_json_str)
-                format_type = "✅ COMPACT" if 'a' in sample_json else "❌ VERBOSE"
-                print(f"   Format: {format_type}")
-                print(f"   Keys: {list(sample_json.keys())}")
-                print(f"   Teams: {sample_json.get('a', 'N/A')} vs {sample_json.get('h', 'N/A')}")
                 
-                # For first_N_plays mode, 'p' field should be missing (clean context)
+                # Detect actual format
+                is_compact = 'a' in sample_json or 'A' in sample_json  # Support both lowercase and uppercase
+                is_verbose = 'away_team' in sample_json
+                
+                if is_compact:
+                    actual_format = "COMPACT"
+                    team_keys = ('a', 'h') if 'a' in sample_json else ('A', 'H')
+                    plays_key = 'p'
+                elif is_verbose:
+                    actual_format = "VERBOSE"
+                    team_keys = ('away_team', 'home_team')
+                    plays_key = 'recent_plays'
+                else:
+                    actual_format = "UNKNOWN"
+                    team_keys = ('N/A', 'N/A')
+                    plays_key = None
+                
+                expected_format = args.data_format.upper()
+                format_match = actual_format == expected_format
+                
+                print(f"   Expected: {expected_format}, Actual: {actual_format}")
+                print(f"   Format match: {'✅ CORRECT' if format_match else '❌ MISMATCH'}")
+                print(f"   Keys: {list(sample_json.keys())}")
+                
+                if is_compact:
+                    print(f"   Teams: {sample_json.get(team_keys[0], 'N/A')} vs {sample_json.get(team_keys[1], 'N/A')}")
+                elif is_verbose:
+                    away_name = sample_json.get('away_team', {}).get('name', 'N/A')
+                    home_name = sample_json.get('home_team', {}).get('name', 'N/A')
+                    print(f"   Teams: {away_name} vs {home_name}")
+                
+                # Check plays field based on generation mode and format
                 if args.generation_mode == "first_N_plays":
-                    has_plays = 'p' in sample_json
+                    has_plays = plays_key in sample_json if plays_key else False
                     print(f"   Has plays field: {'❌ UNEXPECTED' if has_plays else '✅ CORRECT (clean context)'}")
                     print(f"   Clean context verified for first_N_plays mode")
                 else:
-                    print(f"   Plays: {len(sample_json.get('p', []))}")
+                    if plays_key:
+                        plays_count = len(sample_json.get(plays_key, []))
+                        print(f"   Plays: {plays_count}")
                     
             except json.JSONDecodeError as e:
                 print(f"❌ ERROR: Invalid JSON in json_training_data: {e}")
@@ -185,7 +222,7 @@ def main():
         print(f"\n📤 Generating {args.format.upper()} format...")
         
         if args.format == 'csv':
-            filename = f"{args.output_prefix}_compact_{timestamp}.csv"
+            filename = f"{args.output_prefix}_{args.data_format}_{timestamp}.csv"
             training_df.to_csv(filename, index=False)
             print(f"💾 CSV saved: {filename}")
             
@@ -193,7 +230,7 @@ def main():
             from training.openai_formatter import OpenAIFormatter
             openai_formatter = OpenAIFormatter()
             openai_examples = openai_formatter.create_training_data(training_df, generation_mode=args.generation_mode, n_total=args.n_total)
-            filename = f"{args.output_prefix}_openai_compact_{args.generation_mode}_{timestamp}.jsonl"
+            filename = f"{args.output_prefix}_openai_{args.data_format}_{args.generation_mode}_{timestamp}.jsonl"
             with open(filename, 'w') as f:
                 for example in openai_examples:
                     f.write(json.dumps(example, separators=(',', ':')) + '\n')
@@ -207,12 +244,12 @@ def main():
                 print("🚀 Using ULTRA-OPTIMIZED Gemini formatter...")
                 from training.gemini_formatter_ultra_optimized import create_ultra_fast_gemini_training_data
                 gemini_examples = create_ultra_fast_gemini_training_data(training_df, generation_mode=args.generation_mode, n_total=args.n_total, season=args.season)
-                filename = f"{args.output_prefix}_gemini_compact_{args.generation_mode}_ULTRA_FAST_{timestamp}.jsonl"
+                filename = f"{args.output_prefix}_gemini_{args.data_format}_{args.generation_mode}_ULTRA_FAST_{timestamp}.jsonl"
             else:
                 print("⚠️  Using standard Gemini formatter (slower)...")
                 gemini_formatter = GeminiFormatter()
                 gemini_examples = gemini_formatter.create_training_data(training_df, generation_mode=args.generation_mode, n_total=args.n_total, season=args.season)
-                filename = f"{args.output_prefix}_gemini_compact_{args.generation_mode}_{timestamp}.jsonl"
+                filename = f"{args.output_prefix}_gemini_{args.data_format}_{args.generation_mode}_{timestamp}.jsonl"
             
             with open(filename, 'w') as f:
                 for example in gemini_examples:
@@ -221,9 +258,9 @@ def main():
         
         # Final summary
         print(f"\n🎉 COMPLETE!")
-        print(f"📊 Generated {len(training_df):,} compact training examples")
+        print(f"📊 Generated {len(training_df):,} {args.data_format} training examples")
         print(f"📁 Output file: {filename}")
-        print(f"✨ Ready for {args.format.upper()} fine-tuning using the compact schema!")
+        print(f"✨ Ready for {args.format.upper()} fine-tuning using the {args.data_format} schema!")
         
     except Exception as e:
         print(f"❌ ERROR: {e}")

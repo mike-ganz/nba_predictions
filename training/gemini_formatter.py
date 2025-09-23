@@ -222,6 +222,102 @@ class GeminiFormatter(BaseFormatter):
         
         return training_examples
     
+    def _create_verbose_play_object(self, row: pd.Series, context_json: Dict[str, Any], game_df: pd.DataFrame) -> Optional[Dict[str, Any]]:
+        """
+        Create a verbose play object from a DataFrame row.
+        
+        Args:
+            row: DataFrame row containing play data
+            context_json: Game context in verbose format
+            game_df: Full game DataFrame
+            
+        Returns:
+            dict: Verbose play object or None if creation failed
+        """
+        try:
+            import pandas as pd
+            
+            # Get basic play info
+            description = row.get('description', '')
+            if pd.isna(description):
+                return None
+            
+            # Extract score
+            away_score = row.get('away_score', 0) or 0
+            home_score = row.get('home_score', 0) or 0
+            away_name = context_json.get('away_team', {}).get('name', 'AWAY')
+            home_name = context_json.get('home_team', {}).get('name', 'HOME')
+            
+            # Extract lineup information
+            away_lineup = []
+            home_lineup = []
+            for i in range(1, 6):
+                away_player = row.get(f'a{i}')
+                if pd.notna(away_player):
+                    away_lineup.append(str(away_player))
+                home_player = row.get(f'h{i}')
+                if pd.notna(home_player):
+                    home_lineup.append(str(home_player))
+                    
+            players_on_court = [
+                {'team': away_name, 'players': away_lineup},
+                {'team': home_name, 'players': home_lineup}
+            ]
+            
+            # Extract other fields with proper null handling
+            quarter = int(row.get('quarter', 1))
+            time_remaining = str(row.get('time_remaining', '12:00'))
+            player = str(row.get('player', '')) if pd.notna(row.get('player')) else None
+            event_type = str(row.get('event_type', '')) if pd.notna(row.get('event_type')) else None
+            play_type = str(row.get('type', '')) if pd.notna(row.get('type')) else None
+            
+            # Handle result and points with proper null handling
+            result = row.get('result')
+            if pd.isna(result):
+                result = None
+            else:
+                result = str(result)
+                
+            points = row.get('points')
+            if pd.isna(points):
+                points = None
+            else:
+                points = float(points)
+                
+            shot_distance = row.get('shot_distance')
+            if pd.isna(shot_distance):
+                shot_distance = None
+            else:
+                shot_distance = float(shot_distance)
+            
+            # Build shot_details
+            shot_details = {
+                'team': None,
+                'points': points
+            }
+            
+            # Create verbose play object
+            play_obj = {
+                "quarter": quarter,
+                "time_remaining": time_remaining,
+                "description": description,
+                "score": f"{int(away_score)} - {int(home_score)}",
+                "player": player,
+                "players_on_court": players_on_court,
+                "type": play_type,
+                "event_type": event_type,
+                "result": result,
+                "points": points,
+                "shot_distance": shot_distance,
+                "shot_details": shot_details
+            }
+            
+            return play_obj
+            
+        except Exception as e:
+            print(f"⚠️ Warning: Failed to create verbose play object: {e}")
+            return None
+    
     def _create_compact_play_tuple(self, row: pd.Series, context_json: Dict[str, Any], game_df: pd.DataFrame) -> Optional[List]:
         """
         Create a compact play tuple from a DataFrame row for first_N_plays mode.
@@ -449,10 +545,17 @@ class GeminiFormatter(BaseFormatter):
                     
                 row = game_df.iloc[i]
                 if pd.notna(row.get('description')):
-                    # Create compact play tuple instead of verbose play object
-                    play_tuple = self._create_compact_play_tuple(row, context_json, game_df)
-                    if play_tuple:
-                        first_plays.append(play_tuple)
+                    # Check if input is verbose format - if so, create verbose response
+                    if self._is_compact_format(context_json):
+                        # Create compact play tuple for compact input
+                        play_tuple = self._create_compact_play_tuple(row, context_json, game_df)
+                        if play_tuple:
+                            first_plays.append(play_tuple)
+                    else:
+                        # Create verbose play object for verbose input
+                        play_obj = self._create_verbose_play_object(row, context_json, game_df)
+                        if play_obj:
+                            first_plays.append(play_obj)
             
             # Return raw array for maximum efficiency  
             assistant_response = first_plays
@@ -731,31 +834,68 @@ class GeminiFormatter(BaseFormatter):
         # Default lineup ID
         lineup_id = 0
         
-        # Create compact play tuple - ensure all numbers are regular Python ints for JSON serialization
-        if points_scored and points_scored > 0:
-            # Scoring play: [q, t, score, actor, event, pts, lineup_id]
-            play_tuple = [
-                int(next_quarter), 
-                int(time_seconds), 
-                [int(score_array[0]), int(score_array[1])], 
-                actor, 
-                event_code, 
-                int(points_scored), 
-                int(lineup_id)
-            ]
+        # Check if input context is in verbose format and respond accordingly
+        if self._is_compact_format(current_json):
+            # Create compact play tuple for compact input
+            if points_scored and points_scored > 0:
+                # Scoring play: [q, t, score, actor, event, pts, lineup_id]
+                play_tuple = [
+                    int(next_quarter), 
+                    int(time_seconds), 
+                    [int(score_array[0]), int(score_array[1])], 
+                    actor, 
+                    event_code, 
+                    int(points_scored), 
+                    int(lineup_id)
+                ]
+            else:
+                # Non-scoring play: [q, t, score, actor, event, lineup_id]
+                play_tuple = [
+                    int(next_quarter), 
+                    int(time_seconds), 
+                    [int(score_array[0]), int(score_array[1])], 
+                    actor, 
+                    event_code, 
+                    int(lineup_id)
+                ]
+            return play_tuple
         else:
-            # Non-scoring play: [q, t, score, actor, event, lineup_id]
-            play_tuple = [
-                int(next_quarter), 
-                int(time_seconds), 
-                [int(score_array[0]), int(score_array[1])], 
-                actor, 
-                event_code, 
-                int(lineup_id)
+            # Create verbose play object for verbose input
+            import pandas as pd
+            
+            # Extract lineup information from next_row
+            away_lineup = []
+            home_lineup = []
+            for i in range(1, 6):
+                away_player = next_row.get(f'a{i}')
+                if pd.notna(away_player):
+                    away_lineup.append(str(away_player))
+                home_player = next_row.get(f'h{i}')
+                if pd.notna(home_player):
+                    home_lineup.append(str(home_player))
+                    
+            players_on_court = [
+                {'team': away_team_name, 'players': away_lineup},
+                {'team': home_team_name, 'players': home_lineup}
             ]
-        
-        # Return raw tuple for maximum efficiency
-        return play_tuple
+            
+            # Create verbose play object
+            verbose_response = {
+                "quarter": int(next_quarter),
+                "time_remaining": str(next_time),
+                "description": str(next_row.get('description', '')),
+                "score": f"{int(score_array[0])} - {int(score_array[1])}",
+                "player": str(next_player) if pd.notna(next_player) else None,
+                "players_on_court": players_on_court,
+                "type": str(next_row.get('type')) if pd.notna(next_row.get('type')) else None,
+                "event_type": str(next_row.get('event_type')) if pd.notna(next_row.get('event_type')) else None,
+                "result": str(next_row.get('result')) if pd.notna(next_row.get('result')) else None,
+                "points": float(points_scored) if points_scored and points_scored > 0 else None,
+                "shot_distance": float(next_row.get('shot_distance')) if pd.notna(next_row.get('shot_distance')) else None,
+                "shot_details": shot_details
+            }
+            
+            return verbose_response
     
     def _get_previous_scores(self, game_df: pd.DataFrame, current_index: int) -> tuple[int, int]:
         """

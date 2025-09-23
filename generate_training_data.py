@@ -1391,7 +1391,8 @@ def create_llm_training_data(df, n_total=5, filter_nan=True, generation_mode="re
             unique dates instead of individual calls (10-50x faster)
     
     Returns:
-        pd.DataFrame: DataFrame with new 'json_training_data' column containing JSON strings in compact format
+        pd.DataFrame: DataFrame with new 'json_training_data' column containing JSON strings in chosen format
+            (compact if use_direct_compact=True, verbose if use_direct_compact=False)
     """
     # Work with a copy to avoid modifying original DataFrame
     result_df = df.copy()
@@ -1631,10 +1632,26 @@ def create_llm_training_data(df, n_total=5, filter_nan=True, generation_mode="re
                 row_remaining_time = result_df.iloc[j].get('remaining_time', '0:00:00')
                 quarter, time_in_quarter = convert_to_quarter_time(row_period, row_remaining_time)
                 
-                # Create minimal players_on_court data for lineup creation
+                # Extract actual players_on_court from lineup data (a1-a5, h1-h5)
+                current_row = result_df.iloc[j]
+                away_lineup = []
+                home_lineup = []
+                
+                # Extract away team players (a1-a5)
+                for k in range(1, 6):
+                    player = current_row.get(f'a{k}')
+                    if pd.notna(player):
+                        away_lineup.append(str(player))
+                
+                # Extract home team players (h1-h5)
+                for k in range(1, 6):
+                    player = current_row.get(f'h{k}')
+                    if pd.notna(player):
+                        home_lineup.append(str(player))
+                
                 players_on_court = [
-                    {'team': away_abbrev, 'players': list(away_name_to_idx.keys())[:5]},
-                    {'team': home_abbrev, 'players': list(home_name_to_idx.keys())[:5]}
+                    {'team': away_abbrev, 'players': away_lineup},
+                    {'team': home_abbrev, 'players': home_lineup}
                 ]
                 
                 # Build shot_details for compatibility with conversion
@@ -1647,14 +1664,14 @@ def create_llm_training_data(df, n_total=5, filter_nan=True, generation_mode="re
                     "description": remove_parentheses_content(row_desc),
                     "score": f"{away_abbrev} {int(row_away_score)} - {home_abbrev} {int(row_home_score)}",
                     "players_on_court": players_on_court,
-                    "player": None,  # Will be resolved during conversion
+                    "player": str(result_df.iloc[j].get('player')) if pd.notna(result_df.iloc[j].get('player')) else None,
                     "shot_details": shot_details,
-                    # Include structured fields from original DataFrame for better event mapping
-                    "type": result_df.iloc[j].get('type'),
-                    "event_type": result_df.iloc[j].get('event_type'),
-                    "result": result_df.iloc[j].get('result'),
-                    "points": result_df.iloc[j].get('points'),
-                    "shot_distance": result_df.iloc[j].get('shot_distance')
+                    # Include structured fields from original DataFrame with proper null handling
+                    "type": str(result_df.iloc[j].get('type')) if pd.notna(result_df.iloc[j].get('type')) else None,
+                    "event_type": str(result_df.iloc[j].get('event_type')) if pd.notna(result_df.iloc[j].get('event_type')) else None,
+                    "result": str(result_df.iloc[j].get('result')) if pd.notna(result_df.iloc[j].get('result')) else None,
+                    "points": float(result_df.iloc[j].get('points')) if pd.notna(result_df.iloc[j].get('points')) else None,
+                    "shot_distance": float(result_df.iloc[j].get('shot_distance')) if pd.notna(result_df.iloc[j].get('shot_distance')) else None
                 }
                 
                 recent_plays_verbose.insert(0, play_obj)  # Insert at beginning to maintain chronological order
@@ -1668,8 +1685,7 @@ def create_llm_training_data(df, n_total=5, filter_nan=True, generation_mode="re
         away_rest_days = away_stats.get('REST_DAYS') if away_stats.get('REST_DAYS') is not None else 0
         home_rest_days = home_stats.get('REST_DAYS') if home_stats.get('REST_DAYS') is not None else 0
         
-        # Create verbose format first, then convert to compact
-        # 🚀 OPTIMIZATION: Choose between direct compact builder or verbose → convert
+        # 🚀 OPTIMIZATION: Choose format based on use_direct_compact parameter
         if use_direct_compact:
             # Direct compact generation (30-50% faster)
             away_stats_dict = {
@@ -1686,7 +1702,7 @@ def create_llm_training_data(df, n_total=5, filter_nan=True, generation_mode="re
                 "REST_DAYS": int(home_rest_days) if home_rest_days is not None else 2
             }
             
-            compact_json_obj = build_compact_training_data_direct(
+            final_json_obj = build_compact_training_data_direct(
                 current_game_id, away_abbrev, home_abbrev,
                 away_stats_dict, home_stats_dict,
                 away_players, home_players,
@@ -1694,8 +1710,8 @@ def create_llm_training_data(df, n_total=5, filter_nan=True, generation_mode="re
                 for_first_n_plays=(generation_mode == "first_N_plays")
             )
         else:
-            # Original method: verbose → convert (for compatibility/testing)
-            verbose_json_obj = {
+            # Verbose format generation - keep in verbose format!
+            final_json_obj = {
                 "away_team": {
                     "name": str(away_abbrev) if away_abbrev else "Unknown",
                     "stats": {
@@ -1715,15 +1731,15 @@ def create_llm_training_data(df, n_total=5, filter_nan=True, generation_mode="re
                         "REST_DAYS": int(home_rest_days) if home_rest_days is not None else 2
                     },
                     "players": [{"name": p[0], "profile": {"offense": p[1], "defense": p[2], "shot_selection": p[3], "efficiency": p[4], "MPG": p[5], "usage": p[6]}} for p in home_players]
-                },
-                "recent_plays": recent_plays_verbose
+                }
             }
             
-            # Convert verbose format to compact format
-            compact_json_obj = convert_verbose_to_compact(verbose_json_obj, for_first_n_plays=(generation_mode == "first_N_plays"))
+            # For verbose format, include recent_plays only if not first_N_plays mode
+            if generation_mode != "first_N_plays":
+                final_json_obj["recent_plays"] = recent_plays_verbose
         
         # Convert to JSON string
-        json_string = json.dumps(compact_json_obj, separators=(',', ':'))
+        json_string = json.dumps(final_json_obj, separators=(',', ':'))
         json_training_data.append(json_string)
     
     # Add the JSON training data as a new column

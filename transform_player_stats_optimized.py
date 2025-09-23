@@ -193,6 +193,44 @@ def calculate_player_stats(player_name, max_date=None, current_season=None):
     # Try cache first
     cached_data = load_from_cache(player_name, max_date, season_to_use)
     if cached_data:
+        # Check if cached data has sufficient games, if not, trigger fallback
+        min_games_threshold = 5
+        cached_games = cached_data.get('GP', 0)
+        
+        # If cached data has sufficient games, return it
+        if cached_games >= min_games_threshold:
+            return cached_data
+        
+        # If insufficient games and this isn't already a fallback call, try fallback
+        if (max_date is not None and not str(max_date).endswith('_FULL_SEASON')):
+            print(f"🔄 {player_name}: Cached data has only {cached_games} games in {season_to_use}, checking fallback...")
+            
+            # Calculate previous season correctly
+            try:
+                year_parts = season_to_use.split('-')
+                current_start_year = int(year_parts[0])
+                current_end_year = int(year_parts[1])
+                prev_season = f"{current_start_year-1}-{current_end_year-1}"
+                
+                # Only go back to certain known seasons
+                if prev_season in ["2022-2023", "2021-2022", "2020-2021", "2019-2020"]:
+                    print(f"🔄 {player_name}: Falling back to {prev_season} due to insufficient cached games")
+                    
+                    # Try to get previous season data WITHOUT recursion (use full season stats)
+                    fallback_stats = calculate_player_stats(player_name, f"{prev_season}_FULL_SEASON", prev_season)
+                    if fallback_stats and fallback_stats.get('GP', 0) >= min_games_threshold:
+                        # Add metadata to indicate fallback was used
+                        fallback_stats['FALLBACK_FROM'] = season_to_use
+                        fallback_stats['ORIGINAL_GAMES'] = cached_games
+                        return fallback_stats
+                    else:
+                        print(f"⚠️ {player_name}: No sufficient fallback data in {prev_season} either")
+                else:
+                    print(f"⚠️ {player_name}: Preventing infinite recursion, skipping fallback to {prev_season}")
+            except Exception as e:
+                print(f"⚠️ {player_name}: Fallback calculation failed: {e}")
+        
+        # If fallback failed or not applicable, return original cached data
         return cached_data
     
     # Fall back to single calculation (slower)

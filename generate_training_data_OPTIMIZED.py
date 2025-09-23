@@ -79,6 +79,30 @@ try:
 except ImportError:
     SEASON_YEAR = "2023-2024"  # Default fallback
 
+def _extract_players_on_court(row, away_abbrev, home_abbrev):
+    """Extract players_on_court from a1-a5 and h1-h5 columns."""
+    import pandas as pd
+    
+    away_lineup = []
+    home_lineup = []
+    
+    # Extract away team players (a1-a5)
+    for k in range(1, 6):
+        player = row.get(f'a{k}')
+        if pd.notna(player):
+            away_lineup.append(str(player))
+    
+    # Extract home team players (h1-h5)
+    for k in range(1, 6):
+        player = row.get(f'h{k}')
+        if pd.notna(player):
+            home_lineup.append(str(player))
+    
+    return [
+        {'team': away_abbrev, 'players': away_lineup},
+        {'team': home_abbrev, 'players': home_lineup}
+    ]
+
 class ComprehensivePCACache:
     """
     🚀 ULTRA-OPTIMIZED PCA caching system that eliminates cache misses.
@@ -448,6 +472,12 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
     - Comprehensive player coverage (fixes batch PCA gaps)
     - Smart fallback handling (batch processing)
     
+    Args:
+        use_direct_compact (bool): If True, generates compact format. If False, generates verbose format.
+    
+    Returns:
+        pd.DataFrame: DataFrame with 'json_training_data' column in chosen format
+        
     Expected speedup: 5-20x faster than original
     """
     print("🚀 ULTRA-FAST Training Data Generation (Performance Optimized)")
@@ -640,13 +670,28 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                     offense, defense, shot_selection, efficiency = get_player_pca_ULTRA_FAST(
                         player_name, current_game_date, cached_current_season, comprehensive_pca_cache
                     )
+                    
+                    # Get real MPG and usage stats
+                    try:
+                        from transform_player_stats_optimized import calculate_player_stats
+                        player_stats = calculate_player_stats(player_name, current_game_date, cached_current_season)
+                        mpg_val = player_stats.get('MPG') if player_stats else None
+                        usage_val = player_stats.get('USAGE_RATE') if player_stats else None
+                        
+                        mpg = round(float(mpg_val), 1) if mpg_val is not None and not pd.isna(mpg_val) else 25
+                        usage = round(float(usage_val), 1) if usage_val is not None and not pd.isna(usage_val) else 18
+                    except Exception:
+                        # Fallback to defaults if stats not available
+                        mpg = 25
+                        usage = 18
+                    
                     player_array = [
                         player_name,
                         round(float(offense), 2) if offense is not None else 0.0,
                         round(float(defense), 2) if defense is not None else 0.0,
                         round(float(shot_selection), 2) if shot_selection is not None else 0.0,
                         round(float(efficiency), 2) if efficiency is not None else 0.0,
-                        25, 18
+                        mpg, usage
                     ]
                     away_players.append(player_array)
                     away_name_to_idx[player_name] = len(away_players) - 1
@@ -656,13 +701,28 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                     offense, defense, shot_selection, efficiency = get_player_pca_ULTRA_FAST(
                         player_name, current_game_date, cached_current_season, comprehensive_pca_cache
                     )
+                    
+                    # Get real MPG and usage stats
+                    try:
+                        from transform_player_stats_optimized import calculate_player_stats
+                        player_stats = calculate_player_stats(player_name, current_game_date, cached_current_season)
+                        mpg_val = player_stats.get('MPG') if player_stats else None
+                        usage_val = player_stats.get('USAGE_RATE') if player_stats else None
+                        
+                        mpg = round(float(mpg_val), 1) if mpg_val is not None and not pd.isna(mpg_val) else 25
+                        usage = round(float(usage_val), 1) if usage_val is not None and not pd.isna(usage_val) else 18
+                    except Exception:
+                        # Fallback to defaults if stats not available
+                        mpg = 25
+                        usage = 18
+                    
                     player_array = [
                         player_name,
                         round(float(offense), 2) if offense is not None else 0.0,
                         round(float(defense), 2) if defense is not None else 0.0,
                         round(float(shot_selection), 2) if shot_selection is not None else 0.0,
                         round(float(efficiency), 2) if efficiency is not None else 0.0,
-                        25, 18
+                        mpg, usage
                     ]
                     home_players.append(player_array)
                     home_name_to_idx[player_name] = len(home_players) - 1
@@ -695,14 +755,14 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                     'description': row['description'],
                     'score': f"{row.get('away_score', 0) or 0} - {row.get('home_score', 0) or 0}",
                     'player': row.get('player'),
-                    'players_on_court': row.get('players_on_court', []),
+                    'players_on_court': _extract_players_on_court(row, away_abbrev, home_abbrev),
                     # ✅ Add structured fields for accurate event mapping (was missing!)
                     'type': row.get('type'),
                     'event_type': row.get('event_type'),
                     'result': row.get('result'),
                     'points': row.get('points'),
                     'shot_distance': row.get('shot_distance'),
-                    'shot_details': {'team': None, 'points': row.get('points')}
+                    'shot_details': {'team': None, 'points': float(row.get('points')) if pd.notna(row.get('points')) else None}
                 }
             else:
                 play_data = None
@@ -736,7 +796,7 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
             if len(recent_plays_verbose) > n_total:
                 recent_plays_verbose = recent_plays_verbose[-n_total:]
             
-            # 🔥 MASSIVE OPTIMIZATION: Build compact record with pre-computed base
+            # 🔥 OPTIMIZATION: Build record in chosen format
             if use_direct_compact and recent_plays_verbose:
                 try:
                     # Build only the variable parts (plays array and lineups)
@@ -807,6 +867,62 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                 except Exception as e:
                     if processed_plays < 50000:
                         print(f"⚠️ Error in batch processing for game {game_id}, play {original_idx}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                    json_training_data[original_idx] = "{}"
+            elif not use_direct_compact and recent_plays_verbose:
+                # Generate verbose format 
+                try:
+                    verbose_record = {
+                        "away_team": {
+                            "name": away_abbrev,
+                            "stats": {
+                                "OEFF": float(away_stats.get('OEFF', 110.0)),
+                                "DEFF": float(away_stats.get('DEFF', 110.0)),
+                                "PACE": float(away_stats.get('PACE', 100.0)),
+                                "REST_DAYS": int(away_stats.get('REST_DAYS', 2))
+                            },
+                            "players": [{"name": p[0], "profile": {"offense": p[1], "defense": p[2], "shot_selection": p[3], "efficiency": p[4], "MPG": p[5], "usage": p[6]}} for p in away_players]
+                        },
+                        "home_team": {
+                            "name": home_abbrev,
+                            "stats": {
+                                "OEFF": float(home_stats.get('OEFF', 110.0)),
+                                "DEFF": float(home_stats.get('DEFF', 110.0)),
+                                "PACE": float(home_stats.get('PACE', 100.0)),
+                                "REST_DAYS": int(home_stats.get('REST_DAYS', 2))
+                            },
+                            "players": [{"name": p[0], "profile": {"offense": p[1], "defense": p[2], "shot_selection": p[3], "efficiency": p[4], "MPG": p[5], "usage": p[6]}} for p in home_players]
+                        }
+                    }
+                    
+                    # For verbose format, include recent_plays only if not first_N_plays mode
+                    # Also clean up NaN values in recent_plays_verbose if they exist
+                    if generation_mode != "first_N_plays":
+                        # Clean NaN values from recent plays
+                        cleaned_plays = []
+                        for play in recent_plays_verbose:
+                            cleaned_play = {}
+                            for key, value in play.items():
+                                # Handle different value types properly
+                                if hasattr(value, '__len__') and not isinstance(value, str):
+                                    # Array-like objects (lists, arrays)
+                                    cleaned_play[key] = value
+                                elif pd.isna(value):
+                                    # Scalar NaN values
+                                    cleaned_play[key] = None
+                                else:
+                                    # Regular values
+                                    cleaned_play[key] = value
+                            cleaned_plays.append(cleaned_play)
+                        verbose_record["recent_plays"] = cleaned_plays
+                    
+                    # 🚀 Fast JSON serialization
+                    json_training_data[original_idx] = json.dumps(verbose_record, separators=(',', ':'), ensure_ascii=False)
+                    
+                except Exception as e:
+                    if processed_plays < 50000:
+                        print(f"⚠️ Error in verbose format generation for game {game_id}, play {original_idx}: {e}")
                         import traceback
                         traceback.print_exc()
                     json_training_data[original_idx] = "{}"
