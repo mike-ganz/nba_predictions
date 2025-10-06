@@ -837,27 +837,17 @@ class GeminiFormatter(BaseFormatter):
         # Check if input context is in verbose format and respond accordingly
         if self._is_compact_format(current_json):
             # Create compact play tuple for compact input
-            if points_scored and points_scored > 0:
-                # Scoring play: [q, t, score, actor, event, pts, lineup_id]
-                play_tuple = [
-                    int(next_quarter), 
-                    int(time_seconds), 
-                    [int(score_array[0]), int(score_array[1])], 
-                    actor, 
-                    event_code, 
-                    int(points_scored), 
-                    int(lineup_id)
-                ]
-            else:
-                # Non-scoring play: [q, t, score, actor, event, lineup_id]
-                play_tuple = [
-                    int(next_quarter), 
-                    int(time_seconds), 
-                    [int(score_array[0]), int(score_array[1])], 
-                    actor, 
-                    event_code, 
-                    int(lineup_id)
-                ]
+            # Always standardize to 7 elements; non-scoring uses points=0
+            pts_val = int(points_scored) if points_scored and points_scored > 0 else 0
+            play_tuple = [
+                int(next_quarter), 
+                int(time_seconds), 
+                [int(score_array[0]), int(score_array[1])], 
+                actor, 
+                event_code, 
+                pts_val, 
+                int(lineup_id)
+            ]
             return play_tuple
         else:
             # Create verbose play object for verbose input

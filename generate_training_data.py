@@ -464,18 +464,16 @@ def build_compact_training_data_direct(
         # Handle offensive foul special case - emit both o_foul and tov
         if event_code == "o_foul":
             # Add the offensive foul
-            play_tuple = [quarter, time_seconds, current_score, actor, "o_foul", current_lineup_id]
+            play_tuple = [quarter, time_seconds, current_score, actor, "o_foul", 0, current_lineup_id]
             plays_array.append(play_tuple)
             
             # Add the turnover at the same timestamp
-            play_tuple = [quarter, time_seconds, current_score, actor, "tov", current_lineup_id]
+            play_tuple = [quarter, time_seconds, current_score, actor, "tov", 0, current_lineup_id]
             plays_array.append(play_tuple)
         else:
             # Build play tuple - include points only for scoring events
-            if points is not None:
-                play_tuple = [quarter, time_seconds, current_score, actor, event_code, points, current_lineup_id]
-            else:
-                play_tuple = [quarter, time_seconds, current_score, actor, event_code, current_lineup_id]
+            play_points = int(points) if points is not None else 0
+            play_tuple = [quarter, time_seconds, current_score, actor, event_code, play_points, current_lineup_id]
             
             plays_array.append(play_tuple)
         

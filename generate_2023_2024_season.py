@@ -13,6 +13,7 @@ Usage:
 """
 
 import argparse
+import os
 import json
 import pandas as pd
 from datetime import datetime
@@ -47,6 +48,11 @@ def main():
                        help='Training data schema format (default: compact)')
     
     args = parser.parse_args()
+    
+    # Ensure output directory exists under repo's data/training
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    output_dir = os.path.join(script_dir, 'data', 'training')
+    os.makedirs(output_dir, exist_ok=True)
     
     # Set default output prefix based on season if not provided
     if args.output_prefix is None:
@@ -222,7 +228,7 @@ def main():
         print(f"\n📤 Generating {args.format.upper()} format...")
         
         if args.format == 'csv':
-            filename = f"{args.output_prefix}_{args.data_format}_{timestamp}.csv"
+            filename = os.path.join(output_dir, f"{args.output_prefix}_{args.data_format}_{timestamp}.csv")
             training_df.to_csv(filename, index=False)
             print(f"💾 CSV saved: {filename}")
             
@@ -230,7 +236,7 @@ def main():
             from training.openai_formatter import OpenAIFormatter
             openai_formatter = OpenAIFormatter()
             openai_examples = openai_formatter.create_training_data(training_df, generation_mode=args.generation_mode, n_total=args.n_total)
-            filename = f"{args.output_prefix}_openai_{args.data_format}_{args.generation_mode}_{timestamp}.jsonl"
+            filename = os.path.join(output_dir, f"{args.output_prefix}_openai_{args.data_format}_{args.generation_mode}_{timestamp}.jsonl")
             with open(filename, 'w') as f:
                 for example in openai_examples:
                     f.write(json.dumps(example, separators=(',', ':')) + '\n')
@@ -244,12 +250,12 @@ def main():
                 print("🚀 Using ULTRA-OPTIMIZED Gemini formatter...")
                 from training.gemini_formatter_ultra_optimized import create_ultra_fast_gemini_training_data
                 gemini_examples = create_ultra_fast_gemini_training_data(training_df, generation_mode=args.generation_mode, n_total=args.n_total, season=args.season)
-                filename = f"{args.output_prefix}_gemini_{args.data_format}_{args.generation_mode}_ULTRA_FAST_{timestamp}.jsonl"
+                filename = os.path.join(output_dir, f"{args.output_prefix}_gemini_{args.data_format}_{args.generation_mode}_ULTRA_FAST_{timestamp}.jsonl")
             else:
                 print("⚠️  Using standard Gemini formatter (slower)...")
                 gemini_formatter = GeminiFormatter()
                 gemini_examples = gemini_formatter.create_training_data(training_df, generation_mode=args.generation_mode, n_total=args.n_total, season=args.season)
-                filename = f"{args.output_prefix}_gemini_{args.data_format}_{args.generation_mode}_{timestamp}.jsonl"
+                filename = os.path.join(output_dir, f"{args.output_prefix}_gemini_{args.data_format}_{args.generation_mode}_{timestamp}.jsonl")
             
             with open(filename, 'w') as f:
                 for example in gemini_examples:

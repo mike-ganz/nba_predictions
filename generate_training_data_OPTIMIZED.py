@@ -755,6 +755,7 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                     'description': row['description'],
                     'score': f"{row.get('away_score', 0) or 0} - {row.get('home_score', 0) or 0}",
                     'player': row.get('player'),
+                    'team': row.get('team'),
                     'players_on_court': _extract_players_on_court(row, away_abbrev, home_abbrev),
                     # ✅ Add structured fields for accurate event mapping (was missing!)
                     'type': row.get('type'),
@@ -768,6 +769,50 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                 play_data = None
             game_play_data.append(play_data)
         
+        # 🧮 Pre-compute cumulative quarter fouls up to each play index (exclude tech, include o_foul)
+        quarter_fouls_cumulative = []  # list of [awayFouls, homeFouls] at each index
+        current_q = None
+        away_q_fouls = 0
+        home_q_fouls = 0
+        for idx, p in enumerate(game_play_data):
+            if p is None:
+                quarter_fouls_cumulative.append([away_q_fouls, home_q_fouls])
+                continue
+            if current_q != p.get('quarter'):
+                current_q = p.get('quarter')
+                away_q_fouls = 0
+                home_q_fouls = 0
+            # Map event code
+            try:
+                if p.get('type') or p.get('event_type'):
+                    ev_code, _ = map_structured_to_event_code(p)
+                else:
+                    ev_code, _ = map_description_to_event_code(p.get('description', ''), p.get('shot_details', {}), 0)
+            except Exception:
+                ev_code = "unknown"
+            # Count team fouls (exclude tech)
+            if ev_code in ("p_foul", "s_foul", "o_foul"):
+                team_name = p.get('team')
+                side = None
+                if isinstance(team_name, str):
+                    if team_name == away_abbrev:
+                        side = 'A'
+                    elif team_name == home_abbrev:
+                        side = 'H'
+                if side is None:
+                    # Fallback to actor resolution
+                    try:
+                        actor_side = resolve_actor(p.get('player'), p.get('shot_details', {}),
+                                                   away_abbrev, home_abbrev, away_name_to_idx, home_name_to_idx)
+                        side = actor_side[0] if isinstance(actor_side, list) and len(actor_side) > 0 else None
+                    except Exception:
+                        side = None
+                if side == 'A':
+                    away_q_fouls += 1
+                elif side == 'H':
+                    home_q_fouls += 1
+            quarter_fouls_cumulative.append([away_q_fouls, home_q_fouls])
+
         # 🔥 ULTRA-OPTIMIZATION: Batch process entire game with single shared compact record base
         base_compact_record = {
             "A": away_abbrev,
@@ -844,13 +889,14 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                                 play['description'], play.get('shot_details', {}), score_delta
                             )
                         
-                        # Build play tuple
-                        if points is not None:
-                            play_tuple = [quarter, time_seconds, current_score, actor, event_code, points, lineup_id]
+                        # Build play tuple(s) (standardized 7 elements; non-scoring uses points=0)
+                        if event_code == "o_foul":
+                            # Emit offensive foul and paired turnover at same timestamp
+                            plays_array.append([quarter, time_seconds, current_score, actor, "o_foul", 0, lineup_id])
+                            plays_array.append([quarter, time_seconds, current_score, actor, "tov", 0, lineup_id])
                         else:
-                            play_tuple = [quarter, time_seconds, current_score, actor, event_code, lineup_id]
-                        
-                        plays_array.append(play_tuple)
+                            play_points = int(points) if points is not None else 0
+                            plays_array.append([quarter, time_seconds, current_score, actor, event_code, play_points, lineup_id])
                         prev_score = current_score
                     
                     # Complete the compact record
@@ -860,6 +906,36 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                     # For regular mode, include recent plays
                     if generation_mode != "first_N_plays":
                         compact_record["p"] = plays_array
+                        # Add derived fields: tb (quarter fouls), sd (score diff), pos (possession)
+                        # tb: use precomputed cumulative counts at this play index
+                        compact_record["tb"] = quarter_fouls_cumulative[local_i] if local_i < len(quarter_fouls_cumulative) else [0, 0]
+                        # sd: last score diff
+                        try:
+                            last_score = plays_array[-1][2] if plays_array else [0, 0]
+                            compact_record["sd"] = int(last_score[0]) - int(last_score[1])
+                        except Exception:
+                            compact_record["sd"] = 0
+                        # pos: infer from plays
+                        def _infer_pos_from_plays(pa: list) -> str:
+                            curr = None
+                            for tup in pa:
+                                try:
+                                    actor_side = tup[3][0] if isinstance(tup[3], list) and len(tup[3]) > 0 else None
+                                    ev = str(tup[4])
+                                    # Scoring made shots and made FT -> change possession
+                                    if ev.startswith('3pm') or ev.startswith('2pm') or (ev.startswith('layup') and not ev.startswith('layupa')) or (ev.startswith('dunk') and not ev.startswith('dunka')) or ev in ('putback2', 'tipdunk_m', 'ftm'):
+                                        curr = 'H' if actor_side == 'A' else ('A' if actor_side == 'H' else curr)
+                                    elif ev in ('d_reb', 'o_reb'):
+                                        curr = actor_side
+                                    elif ev in ('tov', 'o_foul'):
+                                        curr = 'H' if actor_side == 'A' else ('A' if actor_side == 'H' else curr)
+                                    elif ev == 'stl':
+                                        curr = actor_side
+                                    # Other events: no change
+                                except Exception:
+                                    continue
+                            return curr if curr in ('A', 'H') else 'N'
+                        compact_record["pos"] = _infer_pos_from_plays(plays_array)
                     
                     # 🚀 Fast JSON serialization
                     json_training_data[original_idx] = json.dumps(compact_record, separators=(',', ':'), ensure_ascii=False)
