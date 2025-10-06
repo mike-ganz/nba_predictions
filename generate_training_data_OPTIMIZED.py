@@ -691,7 +691,8 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                         round(float(defense), 2) if defense is not None else 0.0,
                         round(float(shot_selection), 2) if shot_selection is not None else 0.0,
                         round(float(efficiency), 2) if efficiency is not None else 0.0,
-                        mpg, usage
+                        mpg, usage,
+                        0  # fouls (will be updated per context)
                     ]
                     away_players.append(player_array)
                     away_name_to_idx[player_name] = len(away_players) - 1
@@ -722,7 +723,8 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                         round(float(defense), 2) if defense is not None else 0.0,
                         round(float(shot_selection), 2) if shot_selection is not None else 0.0,
                         round(float(efficiency), 2) if efficiency is not None else 0.0,
-                        mpg, usage
+                        mpg, usage,
+                        0  # fouls (will be updated per context)
                     ]
                     home_players.append(player_array)
                     home_name_to_idx[player_name] = len(home_players) - 1
@@ -790,8 +792,11 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                     ev_code, _ = map_description_to_event_code(p.get('description', ''), p.get('shot_details', {}), 0)
             except Exception:
                 ev_code = "unknown"
-            # Count team fouls (exclude tech)
-            if ev_code in ("p_foul", "s_foul", "o_foul"):
+            # Count team fouls (exclude tech, and exclude o_foul turnovers to avoid double-counting)
+            event_type_val = str(p.get('event_type', '')).lower()
+            # Only count fouls where event_type is 'foul' (not 'turnover')
+            # This avoids double-counting offensive fouls which appear as both foul and turnover
+            if ev_code in ("p_foul", "s_foul", "o_foul") and event_type_val == 'foul':
                 team_name = p.get('team')
                 side = None
                 if isinstance(team_name, str):
@@ -812,15 +817,45 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                 elif side == 'H':
                     home_q_fouls += 1
             quarter_fouls_cumulative.append([away_q_fouls, home_q_fouls])
+        
+        # 🧮 Pre-compute cumulative player fouls up to each play index
+        player_fouls_cumulative = []  # list of dicts {player_name: foul_count} at each index
+        player_fouls = {}  # running counter {player_name: count}
+        
+        for idx, p in enumerate(game_play_data):
+            if p is None:
+                player_fouls_cumulative.append(dict(player_fouls))
+                continue
+            
+            # Map event code to identify fouls
+            try:
+                if p.get('type') or p.get('event_type'):
+                    ev_code, _ = map_structured_to_event_code(p)
+                else:
+                    ev_code, _ = map_description_to_event_code(p.get('description', ''), p.get('shot_details', {}), 0)
+            except Exception:
+                ev_code = "unknown"
+            
+            # Count player fouls (exclude tech, and exclude o_foul turnovers to avoid double-counting)
+            event_type_val = str(p.get('event_type', '')).lower()
+            if ev_code in ("p_foul", "s_foul", "o_foul") and event_type_val == 'foul':
+                player_name = p.get('player')
+                if player_name and not pd.isna(player_name):
+                    player_name = str(player_name)
+                    player_fouls[player_name] = player_fouls.get(player_name, 0) + 1
+            
+            player_fouls_cumulative.append(dict(player_fouls))
 
         # 🔥 ULTRA-OPTIMIZATION: Batch process entire game with single shared compact record base
+        # Note: player arrays will be updated per-context with current foul counts
+        base_away_players = away_players  # Keep base for copying
+        base_home_players = home_players
+        
         base_compact_record = {
             "A": away_abbrev,
             "H": home_abbrev,
             "as": away_stats_array,
-            "hs": home_stats_array,
-            "ap": away_players,
-            "hp": home_players
+            "hs": home_stats_array
         }
         
         # 🚀 VECTORIZED processing of all plays in game
@@ -846,6 +881,27 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                 try:
                     # Build only the variable parts (plays array and lineups)
                     compact_record = base_compact_record.copy()  # Shallow copy of shared data
+                    
+                    # Update player arrays with current foul counts at this context
+                    current_player_fouls = player_fouls_cumulative[local_i] if local_i < len(player_fouls_cumulative) else {}
+                    
+                    # Deep copy player arrays and update foul counts (8th element)
+                    away_players_with_fouls = []
+                    for player_arr in base_away_players:
+                        player_copy = player_arr[:]  # shallow copy of array
+                        player_name = player_copy[0]
+                        player_copy[7] = current_player_fouls.get(player_name, 0)
+                        away_players_with_fouls.append(player_copy)
+                    
+                    home_players_with_fouls = []
+                    for player_arr in base_home_players:
+                        player_copy = player_arr[:]  # shallow copy of array
+                        player_name = player_copy[0]
+                        player_copy[7] = current_player_fouls.get(player_name, 0)
+                        home_players_with_fouls.append(player_copy)
+                    
+                    compact_record["ap"] = away_players_with_fouls
+                    compact_record["hp"] = home_players_with_fouls
                     
                     # Process recent plays into compact format efficiently
                     lineup_cache = {}
