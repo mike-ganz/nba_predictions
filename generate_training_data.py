@@ -702,7 +702,8 @@ def convert_verbose_to_compact(verbose_json, for_first_n_plays=False):
             round(float(profile.get('shot_selection', 0.0)), 2),
             round(float(profile.get('efficiency', 0.0)), 2),
             int(profile.get('MPG', 20)),
-            int(profile.get('usage', 15))
+            int(profile.get('usage', 15)),
+            0  # fouls (default to 0 for start of game prediction context)
         ]
         away_players.append(player_array)
         away_name_to_idx[name] = idx
@@ -719,7 +720,8 @@ def convert_verbose_to_compact(verbose_json, for_first_n_plays=False):
             round(float(profile.get('shot_selection', 0.0)), 2),
             round(float(profile.get('efficiency', 0.0)), 2),
             int(profile.get('MPG', 20)),
-            int(profile.get('usage', 15))
+            int(profile.get('usage', 15)),
+            0  # fouls (default to 0 for start of game prediction context)
         ]
         home_players.append(player_array)
         home_name_to_idx[name] = idx
@@ -786,25 +788,44 @@ def convert_verbose_to_compact(verbose_json, for_first_n_plays=False):
         
         # Handle offensive foul special case - emit both o_foul and tov
         if event_code == "o_foul":
-            # Add the offensive foul
-            play_tuple = [quarter, time_seconds, current_score, actor, "o_foul", current_lineup_id]
+            # Add the offensive foul (non-scoring, so points=0)
+            play_tuple = [quarter, time_seconds, current_score, actor, "o_foul", 0, current_lineup_id]
             plays_array.append(play_tuple)
             
-            # Add the turnover at the same timestamp
-            play_tuple = [quarter, time_seconds, current_score, actor, "tov", current_lineup_id]
+            # Add the turnover at the same timestamp (non-scoring, so points=0)
+            play_tuple = [quarter, time_seconds, current_score, actor, "tov", 0, current_lineup_id]
             plays_array.append(play_tuple)
         else:
-            # Build play tuple - include points only for scoring events
-            if points is not None:
-                play_tuple = [quarter, time_seconds, current_score, actor, event_code, points, current_lineup_id]
-            else:
-                play_tuple = [quarter, time_seconds, current_score, actor, event_code, current_lineup_id]
-            
+            # Build play tuple - ALWAYS 7 elements [q, t, score, actor, event, points, lineup_id]
+            # Use points=0 for non-scoring events
+            if points is None:
+                points = 0
+            play_tuple = [quarter, time_seconds, current_score, actor, event_code, points, current_lineup_id]
             plays_array.append(play_tuple)
         
         prev_score = current_score
     
-    # Build compact format
+    # Calculate derived fields for the context
+    if plays_array:
+        # If we have plays, derive from the last play
+        last_play = plays_array[-1]
+        last_score = last_play[2]  # [away, home]
+        sd = last_score[0] - last_score[1]  # score difference (away - home)
+        
+        # For possession, we can't easily derive it from verbose format without event code analysis
+        # Default to "N" (unknown) for now - orchestrator should handle this correctly
+        pos = "N"
+        
+        # For team fouls, we also can't easily derive from verbose without analyzing all plays
+        # Default to [0, 0] - orchestrator should handle or we'd need full game analysis
+        tb = [0, 0]
+    else:
+        # No plays - start of game defaults
+        sd = 0
+        pos = "N"
+        tb = [0, 0]
+    
+    # Build compact format with new fields
     compact_record = {
         "A": away_abbrev,
         "H": home_abbrev,
@@ -812,7 +833,10 @@ def convert_verbose_to_compact(verbose_json, for_first_n_plays=False):
         "hs": home_stats,
         "ap": away_players,
         "hp": home_players,
-        "L": lineup_lookup
+        "L": lineup_lookup,
+        "pos": pos,   # Possession: "A", "H", or "N" (unknown)
+        "tb": tb,     # Team bonus/fouls: [away_fouls_in_quarter, home_fouls_in_quarter]
+        "sd": sd      # Score difference: away_score - home_score
     }
     
     # For first_N_plays mode, exclude the "p" field to create clean contexts

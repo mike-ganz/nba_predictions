@@ -394,13 +394,14 @@ class CompactGameContext:
         
         # Create a fresh quarter start play in compact format
         # Format: [quarter, time_seconds, score_array, actor, event_code, points, lineup_id]
+        # ALWAYS 7 elements to match training data format
         quarter_start_play = [
             quarter,           # Quarter number
             720,               # 12:00 in seconds
             last_score,        # [away_score, home_score]
             ["A", -1],         # Generic actor (away team, no specific player)
             "quarter_start",   # Event code
-            0,                 # No points
+            0,                 # No points (non-scoring event)
             0                  # Default lineup
         ]
         
@@ -788,7 +789,7 @@ def convert_compact_play_to_tuple(next_play: Dict[str, Any], context: Dict[str, 
         context: Current context for reference
         
     Returns:
-        list: Play tuple in compact format
+        list: Play tuple in compact format - ALWAYS 7 elements [q, t, score, actor, event, points, lineup_id]
     """
     try:
         quarter = next_play.get('quarter', 1)
@@ -818,24 +819,21 @@ def convert_compact_play_to_tuple(next_play: Dict[str, Any], context: Dict[str, 
         event_code = next_play.get('_compact_event_code', 'unknown')
         lineup_id = next_play.get('_compact_lineup_id', 0)
         
-        # Get points from shot_details
+        # Get points from shot_details (default to 0 for non-scoring)
         shot_details = next_play.get('shot_details', {})
         points = shot_details.get('points')
+        if points is None:
+            points = 0
         
-        # Build tuple
-        if points is not None:
-            # Scoring play: [q, t, score, actor, event, pts, lineup_id]
-            play_tuple = [quarter, time_seconds, score_array, actor, event_code, points, lineup_id]
-        else:
-            # Non-scoring play: [q, t, score, actor, event, lineup_id]
-            play_tuple = [quarter, time_seconds, score_array, actor, event_code, lineup_id]
+        # Build tuple - ALWAYS 7 elements to match training data format
+        play_tuple = [quarter, time_seconds, score_array, actor, event_code, points, lineup_id]
         
         return play_tuple
         
     except Exception as e:
         print(f"Warning: Failed to convert play to tuple: {e}")
-        # Return minimal valid tuple
-        return [1, 720, [0, 0], ['A', -1], 'unknown', 0]
+        # Return minimal valid 7-element tuple
+        return [1, 720, [0, 0], ['A', -1], 'unknown', 0, 0]
 
 def init_prediction_client() -> tuple[BasePredictionClient, Dict[str, str]]:
     """Initialize prediction client based on platform configuration."""

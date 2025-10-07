@@ -115,23 +115,23 @@ class NBAResponseValidator:
             else:
                 return {"error": "Invalid 'y' data structure"}
             
-            # Convert play tuple to verbose format
-            if len(primary_play) < 6:
-                return {"error": f"Play tuple too short: {len(primary_play)} elements"}
-            
-            quarter = primary_play[0]
-            time_seconds = primary_play[1]
-            score_array = primary_play[2] if len(primary_play[2]) >= 2 else [0, 0]
-            actor = primary_play[3]
-            event_code = primary_play[4]
-            
-            # Handle both scoring and non-scoring formats
-            if len(primary_play) == 7:  # Scoring: [q, t, score, actor, event, pts, lineup_id]
-                points = primary_play[5]
-                lineup_id = primary_play[6]
-            else:  # Non-scoring: [q, t, score, actor, event, lineup_id]
-                points = None
-                lineup_id = primary_play[5]
+        # Convert play tuple to verbose format
+        # NEW FORMAT: ALWAYS 7 elements [q, t, score, actor, event, points, lineup_id]
+        # points=0 for non-scoring events
+        if len(primary_play) != 7:
+            return {"error": f"Play tuple must be exactly 7 elements, got {len(primary_play)} elements"}
+        
+        quarter = primary_play[0]
+        time_seconds = primary_play[1]
+        score_array = primary_play[2] if len(primary_play[2]) >= 2 else [0, 0]
+        actor = primary_play[3]
+        event_code = primary_play[4]
+        points = primary_play[5]  # ALWAYS present (0 for non-scoring)
+        lineup_id = primary_play[6]
+        
+        # For validation, treat points=0 as None (non-scoring) for backward compatibility
+        if points == 0:
+            points = None
             
             # Convert time back to MM:SS format
             minutes = time_seconds // 60

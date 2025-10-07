@@ -1,8 +1,8 @@
 import os
 
 # ---- EDIT THESE VARIABLES DIRECTLY ----
-file1_path = r"C:\Users\micha\nba_predictions\data\training\nba_2023_2024_gemini_compact_first_N_plays.jsonl"     # Path to the first .jsonl file
-file2_path = r"C:\Users\micha\nba_predictions\data\training\nba_2022_2023_gemini_compact_first_N_plays.jsonl"     # Path to the second .jsonl file
+file1_path = r"C:\Users\micha\nba_predictions\data\training\nba_2022_2023_gemini_compact_first_N_plays_ULTRA_FAST_20251006_201216.jsonl"     # Path to the first .jsonl file
+file2_path = r"C:\Users\micha\nba_predictions\data\training\nba_2023_2024_gemini_compact_first_N_plays_ULTRA_FAST_20251006_193847.jsonl"     # Path to the second .jsonl file
 # file3_path = r"C:\Users\micha\nba_predictions\data\training\gemini_remainingplays_2324_part_003.jsonl"  # Optionally set a third file path, or leave as None if not used
 output_dir = r"C:\Users\micha\nba_predictions\data\training"           # Directory to save the appended file
 # ---------------------------------------
