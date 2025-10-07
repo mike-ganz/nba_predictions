@@ -34,7 +34,7 @@ MAX_TEAM_SCORE_THRESHOLD = 175      # Maximum team score to consider realistic (
 
 # BETTING ANALYSIS CONFIGURATION
 SPREAD_CONFIDENCE_THRESHOLD = 0.60  # 60% of simulations must support the bet
-MIN_SIMULATIONS_REQUIRED = 5       # Minimum simulations needed for analysis
+MIN_SIMULATIONS_REQUIRED = 1       # Minimum simulations needed for analysis
 ML_EDGE_THRESHOLD = 0.10            # 10% minimum edge over implied odds for ML bets
 SPREAD_EDGE_THRESHOLD = 0.0         # Buffer on actual spread (e.g., 3 = need 3 extra points of coverage)
 
@@ -52,7 +52,7 @@ MAX_UNDERDOG_ML_ODDS = 600          # Don't bet underdogs with odds worse than +
 #   DATABASE_PATH = "enhanced_simulation_results_20250915_113427.db"  # Specific timestamp
 #   DATABASE_PATH = "enhanced_simulation_results_latest.db"           # Latest results
 #   DATABASE_PATH = "enhanced_simulation_results_current.db"          # Current results
-DATABASE_PATH = "enhanced_simulation_results_multithreaded_current.db"
+DATABASE_PATH = "enhanced_simulation_results.db"
 
 # Historical database path (contains previous runs to include in analysis)
 HISTORICAL_DATABASE_PATH = ""
