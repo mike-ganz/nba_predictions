@@ -984,10 +984,19 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
             
             # Update context with initial plays (format-dependent)
             if is_compact:
-                # Compact format: expect "y" field with play tuples array in response  
-                if "y" in stage1_json:
+                # Compact format: handle multiple possible formats
+                # 1. Raw array of play tuples: [[play1], [play2], ...]
+                # 2. Wrapped format: {"y": [[play1], [play2], ...]}
+                # 3. Verbose fallback: {"next_plays": [play1, play2, ...]}
+                
+                if isinstance(stage1_json, list):
+                    # Raw array format - model returned play tuples directly
+                    log_config.log_normal(f"Stage 1 returned raw array of {len(stage1_json)} play tuples")
+                    optimized_context.update_plays(stage1_json)
+                elif "y" in stage1_json:
+                    # Wrapped compact format
                     optimized_context.update_plays(stage1_json["y"])
-                    # Added play tuples to context
+                    log_config.log_normal(f"Added {len(stage1_json['y'])} play tuples to context")
                 elif "next_plays" in stage1_json:
                     # Fallback: convert verbose next_plays to compact format
                     # This is for backward compatibility during transition

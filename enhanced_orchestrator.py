@@ -1003,6 +1003,8 @@ def main():
     parser = argparse.ArgumentParser(description='Enhanced NBA Prediction Orchestration System')
     
     # Configuration options
+    # Example usage:
+    # python enhanced_orchestrator.py --games 0022300001,0022300002 --runs-per-game 1 --platform gemini --output-db enhanced_simulation_results.db  --threads 1
     parser.add_argument('--config', type=str, help='Path to JSON configuration file')
     parser.add_argument('--games', type=str, help='Comma-separated list of game IDs')
     parser.add_argument('--runs-per-game', type=int, default=5, help='Number of runs per game')

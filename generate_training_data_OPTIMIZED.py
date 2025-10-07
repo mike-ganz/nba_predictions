@@ -581,9 +581,9 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
         # We'll generate it at the position where we have n_total previous plays
         for game_id in unique_games:
             game_indices = result_df[result_df['game_id'] == game_id].index.tolist()
-            if len(game_indices) >= n_total:
-                # Generate training data at position n_total (so we have n_total recent plays)
-                target_idx = game_indices[n_total - 1]  # 0-based indexing
+            if len(game_indices) > n_total:  # Need at least n_total + 1 plays
+                # Generate training data at position after n_total plays (so we have n_total plays available: 0 to n_total-1)
+                target_idx = game_indices[n_total]  # Position at n_total to have indices 0-(n_total-1) available
                 first_n_plays_target_indices.add(target_idx)
                 # Skip all other indices for this game
                 for idx in game_indices:

@@ -555,8 +555,12 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
                     home_name_to_idx[player_data[0]] = idx
             
             # Create first N play tuples
+            # Iterate until we collect n_total plays (not just n_total iterations)
             first_plays = []
-            for i in range(min(len(raw_game_df), n_total)):
+            for i in range(len(raw_game_df)):
+                if len(first_plays) >= n_total:
+                    break
+                
                 row = raw_game_df.iloc[i]
                 
                 if pd.notna(row.get('description')):
@@ -567,9 +571,6 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
                     )
                     if play_tuple:
                         first_plays.append(play_tuple)
-                
-                if len(first_plays) >= n_total:
-                    break
             
             if len(first_plays) == 0:
                 return None

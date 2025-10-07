@@ -482,27 +482,62 @@ class BasePredictionClient(ABC):
         """
         Validate Stage 1 response which should return multiple plays.
         Expected formats: 
+        - Compact wrapped: {"y": [[play_tuple1], [play_tuple2], ..., [play_tupleN]]}
+        - Compact raw array: [[play_tuple1], [play_tuple2], ..., [play_tupleN]]
         - Verbose: {"next_plays": [play1, play2, ..., playN]}
-        - Compact: {"p": [[play_tuple1], [play_tuple2], ..., [play_tupleN]]}
         """
         try:
             response_data = json.loads(response_text.strip())
         except json.JSONDecodeError as e:
             return ValidationResult.RETRY, [], f"JSON parse error: {str(e)}"
         
-        # Check for plays array - handle both compact ("y") and verbose ("next_plays") formats
+        # Check for plays array - handle multiple formats
         next_plays = None
         
-        if "y" in response_data:
-            # Compact format - convert play tuples to minimal verbose format for validation
+        # NEW: Handle raw array of play tuples (model trained on compact format may return this)
+        if isinstance(response_data, list):
+            # Raw array format - wrap it as if it were {"y": [...]}
+            play_tuples = response_data
+            if not play_tuples:
+                return ValidationResult.RETRY, [], "Empty play tuples array"
+            
+            next_plays = []
+            for i, play_tuple in enumerate(play_tuples):
+                if not isinstance(play_tuple, list) or len(play_tuple) != 7:
+                    return ValidationResult.RETRY, [], f"Play tuple {i+1} must be exactly 7 elements, got {len(play_tuple) if isinstance(play_tuple, list) else 'non-list'}"
+                
+                # Convert tuple to minimal play object for validation
+                quarter = play_tuple[0]
+                time_seconds = play_tuple[1]
+                score_array = play_tuple[2] if len(play_tuple[2]) >= 2 else [0, 0]
+                actor = play_tuple[3]
+                event_code = play_tuple[4]
+                
+                # Convert time back to MM:SS format
+                minutes = time_seconds // 60
+                seconds = time_seconds % 60
+                time_remaining = f"{minutes:02d}:{seconds:02d}"
+                
+                # Create minimal play object
+                play = {
+                    "quarter": quarter,
+                    "time_remaining": time_remaining,
+                    "description": f"Predicted {event_code}",
+                    "score": f"AWAY {score_array[0]} - HOME {score_array[1]}",
+                    "_compact_format": True
+                }
+                next_plays.append(play)
+        
+        elif "y" in response_data:
+            # Compact wrapped format - convert play tuples to minimal verbose format for validation
             play_tuples = response_data["y"]
             if not isinstance(play_tuples, list):
                 return ValidationResult.RETRY, [], "'y' field must be an array"
             
             next_plays = []
             for i, play_tuple in enumerate(play_tuples):
-                if not isinstance(play_tuple, list) or len(play_tuple) < 6:
-                    return ValidationResult.RETRY, [], f"Play tuple {i+1} invalid format"
+                if not isinstance(play_tuple, list) or len(play_tuple) != 7:
+                    return ValidationResult.RETRY, [], f"Play tuple {i+1} must be exactly 7 elements, got {len(play_tuple) if isinstance(play_tuple, list) else 'non-list'}"
                 
                 # Convert tuple to minimal play object for validation
                 quarter = play_tuple[0]

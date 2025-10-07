@@ -205,7 +205,7 @@ TEAM_ABBREVIATIONS = {
 
 # Performance settings
 DEFAULT_MIN_GAMES_THRESHOLD = 10  # Keep high threshold for data quality, but cache prior season data
-DEFAULT_N_TOTAL_PLAYS = 20
+DEFAULT_N_TOTAL_PLAYS = 12  # Match training data n_total parameter
 FAST_TEST_MODE_THRESHOLD = 100  # Use dummy PCA values below this many rows
 
 
