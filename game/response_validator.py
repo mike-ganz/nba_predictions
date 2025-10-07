@@ -129,6 +129,22 @@ class NBAResponseValidator:
             points = primary_play[5]  # ALWAYS present (0 for non-scoring)
             lineup_id = primary_play[6]
             
+            # Validate player index is within roster bounds
+            if isinstance(actor, list) and len(actor) >= 2:
+                team_code = actor[0]
+                player_idx = actor[1]
+                
+                if isinstance(player_idx, int) and player_idx >= 0:
+                    # Check against roster size metadata
+                    max_index = None
+                    if team_code == "A" and "ap_count" in context:
+                        max_index = context["ap_count"] - 1
+                    elif team_code == "H" and "hp_count" in context:
+                        max_index = context["hp_count"] - 1
+                    
+                    if max_index is not None and player_idx > max_index:
+                        return {"error": f"Player index {player_idx} out of bounds for team {team_code} (roster size: {max_index + 1})"}
+            
             # For validation, treat points=0 as None (non-scoring) for backward compatibility
             if points == 0:
                 points = None

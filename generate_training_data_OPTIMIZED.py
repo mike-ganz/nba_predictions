@@ -695,7 +695,6 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                         0  # fouls (will be updated per context)
                     ]
                     away_players.append(player_array)
-                    away_name_to_idx[player_name] = len(away_players) - 1
             
             elif is_home_team:
                 for player_name in player_list:
@@ -727,7 +726,17 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                         0  # fouls (will be updated per context)
                     ]
                     home_players.append(player_array)
-                    home_name_to_idx[player_name] = len(home_players) - 1
+        
+        # 🎯 OPTIMIZATION: Sort players by MPG (descending) for better model learning
+        # High-MPG players (starters) at low indices makes patterns easier to learn
+        # Player array format: [name, offense, defense, shot_selection, efficiency, MPG, usage, fouls]
+        #                       [  0,     1,       2,        3,              4,         5,    6,     7  ]
+        away_players.sort(key=lambda p: p[5], reverse=True)  # p[5] is MPG
+        home_players.sort(key=lambda p: p[5], reverse=True)
+        
+        # Rebuild name-to-index mappings AFTER sorting
+        away_name_to_idx = {player[0]: idx for idx, player in enumerate(away_players)}
+        home_name_to_idx = {player[0]: idx for idx, player in enumerate(home_players)}
         
         # 🔥 BREAKTHROUGH OPTIMIZATION: Batch process ALL plays in game with shared setup
         game_df_reset = game_df.reset_index(drop=True)
@@ -902,6 +911,8 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                     
                     compact_record["ap"] = away_players_with_fouls
                     compact_record["hp"] = home_players_with_fouls
+                    compact_record["ap_count"] = len(away_players_with_fouls)  # Roster size metadata
+                    compact_record["hp_count"] = len(home_players_with_fouls)  # Roster size metadata
                     
                     # Process recent plays into compact format efficiently
                     lineup_cache = {}

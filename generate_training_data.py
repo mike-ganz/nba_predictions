@@ -706,7 +706,6 @@ def convert_verbose_to_compact(verbose_json, for_first_n_plays=False):
             0  # fouls (default to 0 for start of game prediction context)
         ]
         away_players.append(player_array)
-        away_name_to_idx[name] = idx
     
     # Process home team players
     for idx, player in enumerate(home_team.get('players', [])):
@@ -724,7 +723,17 @@ def convert_verbose_to_compact(verbose_json, for_first_n_plays=False):
             0  # fouls (default to 0 for start of game prediction context)
         ]
         home_players.append(player_array)
-        home_name_to_idx[name] = idx
+    
+    # 🎯 OPTIMIZATION: Sort players by MPG (descending) for better model learning
+    # High-MPG players (starters) at low indices makes patterns easier to learn
+    # Player array format: [name, offense, defense, shot_selection, efficiency, MPG, usage, fouls]
+    #                       [  0,     1,       2,        3,              4,         5,    6,     7  ]
+    away_players.sort(key=lambda p: p[5], reverse=True)  # p[5] is MPG
+    home_players.sort(key=lambda p: p[5], reverse=True)
+    
+    # Build name-to-index mappings AFTER sorting
+    away_name_to_idx = {player[0]: idx for idx, player in enumerate(away_players)}
+    home_name_to_idx = {player[0]: idx for idx, player in enumerate(home_players)}
     
     # Process plays to build lineup lookup and play array
     lineup_cache = {}  # Maps lineup keys to lineup IDs
@@ -833,6 +842,8 @@ def convert_verbose_to_compact(verbose_json, for_first_n_plays=False):
         "hs": home_stats,
         "ap": away_players,
         "hp": home_players,
+        "ap_count": len(away_players),  # Roster size metadata
+        "hp_count": len(home_players),  # Roster size metadata
         "L": lineup_lookup,
         "pos": pos,   # Possession: "A", "H", or "N" (unknown)
         "tb": tb,     # Team bonus/fouls: [away_fouls_in_quarter, home_fouls_in_quarter]
