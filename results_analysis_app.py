@@ -18,7 +18,7 @@ st.set_page_config(
     page_title="NBA Betting Analysis Dashboard",
     page_icon="🏀",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="auto"
 )
 
 # Custom CSS for better styling
@@ -108,15 +108,27 @@ st.sidebar.markdown("---")
 
 # Betting Analysis
 st.sidebar.header("💰 Betting Analysis")
-SPREAD_CONFIDENCE_THRESHOLD = st.sidebar.slider(
-    "Spread Confidence Threshold",
-    min_value=0.5,
-    max_value=0.95,
-    value=0.60,
-    step=0.05,
-    format="%.0%",
-    help="% of simulations must support the spread bet"
-)
+
+col1, col2 = st.sidebar.columns(2)
+with col1:
+    SPREAD_CONFIDENCE_THRESHOLD = st.number_input(
+        "Spread Confidence %",
+        min_value=50,
+        max_value=95,
+        value=60,
+        step=5,
+        help="% of simulations must support the spread bet"
+    ) / 100.0
+
+with col2:
+    ML_CONFIDENCE_THRESHOLD = st.number_input(
+        "ML Confidence %",
+        min_value=50,
+        max_value=95,
+        value=60,
+        step=5,
+        help="% of simulations must support the ML bet (used for 'Best Bet' display)"
+    ) / 100.0
 
 MIN_SIMULATIONS_REQUIRED = st.sidebar.number_input(
     "Min Simulations Required",
@@ -127,24 +139,26 @@ MIN_SIMULATIONS_REQUIRED = st.sidebar.number_input(
     help="Minimum simulations needed for analysis"
 )
 
-ML_EDGE_THRESHOLD = st.sidebar.slider(
-    "ML Edge Threshold",
-    min_value=0.0,
-    max_value=0.30,
-    value=0.10,
-    step=0.01,
-    format="%.0%",
-    help="Minimum edge over implied odds for ML bets"
-)
+col3, col4 = st.sidebar.columns(2)
+with col3:
+    ML_EDGE_THRESHOLD = st.number_input(
+        "ML Edge %",
+        min_value=0,
+        max_value=30,
+        value=10,
+        step=1,
+        help="Minimum edge over implied odds for ML bets"
+    ) / 100.0
 
-SPREAD_EDGE_THRESHOLD = st.sidebar.number_input(
-    "Spread Edge Threshold",
-    min_value=0.0,
-    max_value=10.0,
-    value=0.0,
-    step=0.5,
-    help="Buffer on actual spread (e.g., 3 = need 3 extra points of coverage)"
-)
+with col4:
+    SPREAD_EDGE_THRESHOLD = st.number_input(
+        "Spread Edge (pts)",
+        min_value=0.0,
+        max_value=10.0,
+        value=0.0,
+        step=0.5,
+        help="Buffer on actual spread (e.g., 3 = need 3 extra points of coverage)"
+    )
 
 st.sidebar.markdown("---")
 

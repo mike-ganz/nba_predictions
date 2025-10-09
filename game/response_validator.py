@@ -726,6 +726,13 @@ class NBAResponseValidator:
         print(f"Validator state: time_count={self.consecutive_same_time}, last_time='{self.last_time_remaining}', current_time='{current_time}', subs_count={self.consecutive_subs}")
         print(f"Current play: {description[:60]}...")
         
+        # ⚡ NEW VALIDATION: Check for invalid quarter - END GAME
+        current_quarter = next_play.get("quarter")
+        if isinstance(current_quarter, int) and current_quarter not in [1, 2, 3, 4]:
+            print(f"🚨 INVALID QUARTER DETECTED: Quarter {current_quarter} is not valid (must be 1, 2, 3, or 4)")
+            print(f"   Ending simulation - invalid game state")
+            return ValidationResult.END_GAME, f"Invalid quarter {current_quarter} - must be 1, 2, 3, or 4"
+        
         # Update response history
         self._update_response_history(response_text)
         
@@ -1194,6 +1201,12 @@ class NBAResponseValidator:
         if current_seconds is None:
             return ValidationResult.VALID  # Invalid time format handled elsewhere
         
+        # ⚡ NEW VALIDATION: Check for negative time - ROLLBACK to prior state
+        if current_seconds < 0:
+            print(f"🚨 NEGATIVE TIME DETECTED: {current_time} ({current_seconds}s) in Q{current_quarter}")
+            print(f"   Rolling back to previous game state")
+            return ValidationResult.ROLLBACK_TIME
+        
         # If we have previous data and we're in the same quarter
         if self.last_quarter == current_quarter and self.last_time_seconds is not None:
             # Allow small increases (up to 10 seconds) for timeouts, reviews, etc.
@@ -1221,7 +1234,7 @@ class NBAResponseValidator:
         return ValidationResult.VALID
     
     def _time_to_seconds(self, time_str: str) -> Optional[int]:
-        """Convert time string (MM:SS) to total seconds."""
+        """Convert time string (MM:SS) to total seconds. Returns negative values if present."""
         try:
             parts = time_str.split(':')
             if len(parts) != 2:
@@ -1229,7 +1242,10 @@ class NBAResponseValidator:
             
             minutes = int(parts[0])
             seconds = int(parts[1])
-            return minutes * 60 + seconds
+            total_seconds = minutes * 60 + seconds
+            
+            # Allow negative values to be detected (e.g., "-1:30" or if calculation goes negative)
+            return total_seconds
         except (ValueError, IndexError):
             return None
     
