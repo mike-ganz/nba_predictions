@@ -240,21 +240,106 @@ Clusters help the model understand player archetypes and predict behavior:
 
 ---
 
-## Play Array
+## Play Array (10 Values)
 
 ### Format
 ```
-[QUARTER, TIME_SECONDS, SCORE, LINEUP_ID, ACTOR, EVENT]
+[QUARTER, TIME_SECONDS, SCORE, MARGIN, ACTOR, ACTOR_FOULS, EVENT, SHOT_ZONE, ASSIST_BY, LINEUP_ID]
 ```
 
-| Index | Field | Description | Example |
-|-------|-------|-------------|---------|
+| Index | Field | Description | Range/Example |
+|-------|-------|-------------|---------------|
 | 0 | **QUARTER** | Quarter number (1-4, 5+ for OT) | `1` |
 | 1 | **TIME_SECONDS** | Seconds remaining in quarter | `697` (11:37) |
-| 2 | **SCORE** | Score delta from previous play | `[0, 2]` (home scored 2) |
-| 3 | **LINEUP_ID** | Index into lineup lookup array | `0` |
+| 2 | **SCORE** | Current score [away, home] | `[104, 102]` |
+| 3 | **MARGIN** | Score margin (away - home) | `2` (away up 2) |
 | 4 | **ACTOR** | [Team, PlayerIndex] who made the play | `["A", 0]` |
-| 5 | **EVENT** | Event code | `"made2"` |
+| 5 | **ACTOR_FOULS** | Personal fouls for actor | `3` (0-6) |
+| 6 | **EVENT** | Event code | `"made2"` |
+| 7 | **SHOT_ZONE** | Shot location (shots only) | `"rim"`, `"mid"`, `"c3"`, `"nc3"`, or `null` |
+| 8 | **ASSIST_BY** | Assister [Team, Idx] (made baskets only) | `["A", 2]` or `null` |
+| 9 | **LINEUP_ID** | Index into lineup lookup array | `0` |
+
+### Field Descriptions
+
+**MARGIN (Index 3)** - Score Margin
+- **Positive**: Away team winning
+- **Zero**: Tied game
+- **Negative**: Home team winning
+- **Example**: `margin=2` means away team up by 2 points
+- **Purpose**: Immediate game situation context without calculation
+
+**ACTOR_FOULS (Index 5)** - Personal Fouls for Active Player
+- **Range**: 0-6 (6 = fouled out)
+- **5 fouls**: Foul trouble - player may be less aggressive
+- **6 fouls**: Player should be out (rare edge case)
+- **Example**: `actor_fouls=3` means player has 3 personal fouls
+- **Purpose**: Explains defensive strategy and substitution patterns
+
+**SHOT_ZONE (Index 7)** - Shot Location Classification
+- **"rim"**: Within 4 feet of basket (layups, dunks, hooks)
+- **"mid"**: 4-22 feet (mid-range jumpers, floaters)
+- **"c3"**: Corner 3-pointer (within 3 ft of sideline, 14 ft of baseline)
+- **"nc3"**: Non-corner 3-pointer (above the break)
+- **`null`**: Non-shooting event or zone undetermined
+- **Purpose**: Direct connection to player shot profile stats (rim%, mid%, c3%, nc3%)
+
+**ASSIST_BY (Index 8)** - Assister for Made Baskets
+- **["A", 2]**: Away team player index 2 assisted
+- **["H", 0]**: Home team player index 0 assisted
+- **`null`**: Unassisted basket (self-created)
+- **Only present**: For made2 and made3 events
+- **Purpose**: Direct connection to playmaking stats (ast/100, a2%, a3%)
+
+### Example Plays with New Format
+
+**Example 1: LeBron Self-Creates at Rim**
+```python
+[4, 120, [104, 102], 2, ["A", 0], 3, "made2", "rim", null, 2]
+
+# Quarter 4, 120 seconds left (2:00 in 4th)
+# Score: Away 104, Home 102 (close game, away up 2)
+# LeBron (player 0) with 3 fouls (not in trouble)
+# Made 2-pointer at rim (drives for unassisted layup)
+# Lineup 2 on court
+```
+
+**Connections:**
+- LeBron's stats: `rim%=0.43` → Shot zone confirms rim tendency
+- LeBron's stats: `a2%=0.46` → Unassisted confirms self-creation
+- Fouls: 3 is safe → Can be aggressive on defense
+
+**Example 2: Curry Catch-and-Shoot Corner 3**
+```python
+[2, 450, [55, 53], 2, ["H", 0], 1, "made3", "c3", ["H", 1], 0]
+
+# Quarter 2, 450 seconds left (7:30 in 2nd)
+# Score: Home 53, Away 55 (home down 2, close game)
+# Curry (player 0) with 1 foul
+# Made 3-pointer from corner, assisted by player 1
+# Lineup 0 on court
+```
+
+**Connections:**
+- Curry's stats: `c3%=0.07` → Has some corner 3s (but mostly nc3)
+- Curry's stats: `a3%=0.92` → Assisted confirms catch-and-shoot
+- Player 1 stats: `ast/100=11.0` → Likely playmaker (Draymond?)
+
+**Example 3: Role Player in Foul Trouble**
+```python
+[4, 85, [98, 98], 0, ["A", 4], 5, "miss3", "nc3", null, 1]
+
+# Quarter 4, 85 seconds left (CLUTCH TIME!)
+# Score: Tied 98-98
+# Bench player (player 4) with 5 FOULS (trouble!)
+# Missed 3-pointer, unassisted
+# Lineup 1 (likely with subs due to foul trouble)
+```
+
+**Connections:**
+- Margin: 0 → Clutch situation, tied game
+- Fouls: 5 → Explains why player 4 is on court less aggressively
+- Shot zone: "nc3" → Settling for jump shot to avoid contact
 
 ---
 

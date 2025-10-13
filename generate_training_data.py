@@ -360,6 +360,156 @@ def resolve_actor(player_name, shot_details, away_abbrev, home_abbrev, away_name
     # Default fallback - assign to away team
     return ["A", -1]
 
+# ============================================================================
+# ENHANCED PLAY FORMAT HELPERS (10-VALUE FORMAT)
+# ============================================================================
+
+def calculate_margin(score):
+    """
+    Calculate score margin (away - home).
+    
+    Args:
+        score: [away_score, home_score]
+    
+    Returns:
+        int: Positive if away winning, negative if home winning
+    """
+    return score[0] - score[1]
+
+def get_actor_fouls(actor, away_players, home_players):
+    """
+    Get foul count for the actor from player arrays.
+    
+    Args:
+        actor: [team, player_idx] e.g., ["A", 0]
+        away_players: Away team player arrays (14 values each)
+        home_players: Home team player arrays (14 values each)
+    
+    Returns:
+        int: Foul count (0-6)
+    """
+    team = actor[0]
+    player_idx = actor[1]
+    
+    if player_idx < 0:
+        return 0  # Team event, no player fouls
+    
+    try:
+        if team == "A":
+            if player_idx < len(away_players):
+                return away_players[player_idx][13]  # Fouls at index 13
+        else:  # team == "H"
+            if player_idx < len(home_players):
+                return home_players[player_idx][13]  # Fouls at index 13
+    except (IndexError, TypeError):
+        pass
+    
+    return 0  # Default if lookup fails
+
+def determine_shot_zone(play):
+    """
+    Determine shot zone from play data using same logic as player_stats_from_pbp.
+    
+    Args:
+        play: Play dictionary with shot data
+    
+    Returns:
+        str: "rim", "mid", "c3", "nc3", or None for non-shooting events
+    """
+    event_type = play.get('event_type', '')
+    
+    # Only classify shooting events
+    if event_type != 'shot':
+        return None
+    
+    shot_type = str(play.get('type', '')).lower()
+    distance = play.get('shot_distance')
+    x = play.get('converted_x')
+    y = play.get('converted_y')
+    
+    # Tier 1: Use shot_distance (most reliable)
+    if distance is not None and not pd.isna(distance):
+        if distance <= 4:
+            return 'rim'
+        elif distance < 22:
+            return 'mid'
+        else:
+            # It's a 3-pointer - check if corner
+            if x is not None and y is not None and not pd.isna(x) and not pd.isna(y):
+                # Check if corner 3 (near sideline and near baseline)
+                near_sideline = (x <= 3) or (x >= 47)
+                near_baseline = (y <= 39) or (y >= 55)
+                if near_sideline and near_baseline:
+                    return 'c3'
+            return 'nc3'
+    
+    # Tier 2: Calculate from coordinates if distance missing
+    if x is not None and y is not None and not pd.isna(x) and not pd.isna(y):
+        # Simplified distance calculation (assume shooting at bottom basket)
+        basket_y = 25.25
+        calc_distance = ((x - 25)**2 + (y - basket_y)**2)**0.5
+        
+        if calc_distance <= 4:
+            return 'rim'
+        elif calc_distance < 22:
+            return 'mid'
+        else:
+            # Check corner 3
+            near_sideline = (x <= 3) or (x >= 47)
+            near_baseline = (y <= 39)
+            if near_sideline and near_baseline:
+                return 'c3'
+            return 'nc3'
+    
+    # Tier 3: Infer from shot type
+    rim_types = {'dunk', 'layup', 'hook', 'tip', 'alley oop'}
+    if any(rt in shot_type for rt in rim_types):
+        return 'rim'
+    elif '3pt' in shot_type or 'three' in shot_type:
+        return 'nc3'  # Default to non-corner
+    else:
+        return 'mid'  # Default to mid-range for other 2-pointers
+
+def find_assister(recent_plays_verbose, current_idx, away_name_to_idx, home_name_to_idx):
+    """
+    Find assister for a made basket by looking at previous play.
+    
+    Args:
+        recent_plays_verbose: List of play dictionaries
+        current_idx: Index of current play (made basket)
+        away_name_to_idx: Mapping of away player names to indices
+        home_name_to_idx: Mapping of home player names to indices
+    
+    Returns:
+        list: ["A", idx] or ["H", idx] or None if unassisted
+    """
+    if current_idx == 0:
+        return None
+    
+    current_play = recent_plays_verbose[current_idx]
+    prev_play = recent_plays_verbose[current_idx - 1]
+    
+    # Check if previous play was an assist within ~3 seconds
+    current_time = parse_time_to_seconds(current_play.get('time_remaining', '0:00'))
+    prev_time = parse_time_to_seconds(prev_play.get('time_remaining', '0:00'))
+    
+    # Must be within 3 seconds
+    if abs(current_time - prev_time) > 3:
+        return None
+    
+    # Check if previous play was an assist
+    prev_event = prev_play.get('event_type', '')
+    if prev_event == 'assist':
+        assister_name = prev_play.get('player')
+        
+        # Find assister in player arrays
+        if assister_name and assister_name in away_name_to_idx:
+            return ["A", away_name_to_idx[assister_name]]
+        elif assister_name and assister_name in home_name_to_idx:
+            return ["H", home_name_to_idx[assister_name]]
+    
+    return None
+
 def build_compact_training_data_direct(
     current_game_id, away_abbrev, home_abbrev, 
     away_stats, home_stats, 
@@ -418,8 +568,8 @@ def build_compact_training_data_direct(
     prev_score = [0, 0]
     current_lineup_id = 0
     
-    # Process plays to build compact arrays directly
-    for play in recent_plays_verbose:
+    # Process plays to build compact arrays directly (10-value format)
+    for play_idx, play in enumerate(recent_plays_verbose):
         quarter = int(play.get('quarter', 1))
         time_remaining = play.get('time_remaining', '12:00')
         time_seconds = parse_time_to_seconds(time_remaining)
@@ -427,11 +577,8 @@ def build_compact_training_data_direct(
         score_str = play.get('score', '0 - 0')
         current_score = parse_score_string(score_str)
         
-        # Calculate score delta for this play
-        score_delta = max(0, max(
-            current_score[0] - prev_score[0],  # Away team scored
-            current_score[1] - prev_score[1]   # Home team scored
-        ))
+        # Calculate score margin (away - home)
+        margin = calculate_margin(current_score)
         
         # Get lineup for this play  
         players_on_court = play.get('players_on_court', [])
@@ -460,6 +607,9 @@ def build_compact_training_data_direct(
             away_name_to_idx, home_name_to_idx
         )
         
+        # Get actor fouls
+        actor_fouls = get_actor_fouls(actor, away_players, home_players)
+        
         # Map to event code - prefer structured data when available
         if all(key in play for key in ['type', 'event_type']):
             # Use structured mapping when available (better accuracy)
@@ -467,23 +617,34 @@ def build_compact_training_data_direct(
         else:
             # Fall back to description parsing
             description = play.get('description', '')
+            score_delta = max(0, max(
+                current_score[0] - prev_score[0],  # Away team scored
+                current_score[1] - prev_score[1]   # Home team scored
+            ))
             event_code, points = map_description_to_event_code(
                 description, shot_details, score_delta
             )
         
+        # Determine shot zone for shooting events
+        shot_zone = determine_shot_zone(play)
+        
+        # Find assister for made baskets
+        assist_by = None
+        if event_code in ['made2', 'made3']:
+            assist_by = find_assister(recent_plays_verbose, play_idx, away_name_to_idx, home_name_to_idx)
+        
         # Handle offensive foul special case - emit both o_foul and tov
         if event_code == "o_foul":
             # Add the offensive foul
-            play_tuple = [quarter, time_seconds, current_score, actor, "o_foul", 0, current_lineup_id]
+            play_tuple = [quarter, time_seconds, current_score, margin, actor, actor_fouls, "o_foul", None, None, current_lineup_id]
             plays_array.append(play_tuple)
             
             # Add the turnover at the same timestamp
-            play_tuple = [quarter, time_seconds, current_score, actor, "tov", 0, current_lineup_id]
+            play_tuple = [quarter, time_seconds, current_score, margin, actor, actor_fouls, "tov", None, None, current_lineup_id]
             plays_array.append(play_tuple)
         else:
-            # Build play tuple - include points only for scoring events
-            play_points = int(points) if points is not None else 0
-            play_tuple = [quarter, time_seconds, current_score, actor, event_code, play_points, current_lineup_id]
+            # Build 10-value play tuple: [quarter, time, score, margin, actor, actor_fouls, event, shot_zone, assist_by, lineup_id]
+            play_tuple = [quarter, time_seconds, current_score, margin, actor, actor_fouls, event_code, shot_zone, assist_by, current_lineup_id]
             
             plays_array.append(play_tuple)
         
