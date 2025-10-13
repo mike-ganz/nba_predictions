@@ -51,6 +51,8 @@ try:
         map_structured_to_event_code,
         map_description_to_event_code
     )
+    from transform_player_stats_optimized import get_player_stats_array
+    from generate_team_stats import get_team_stats_array
 except ImportError:
     # Fallback implementations if imports fail
     def determine_home_away_teams(df):
@@ -667,12 +669,9 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
             
             if is_away_team:
                 for player_name in player_list:
-                    offense, defense, shot_selection, efficiency = get_player_pca_ULTRA_FAST(
-                        player_name, current_game_date, cached_current_season, comprehensive_pca_cache
-                    )
-                    
-                    # Get real MPG and usage stats
+                    # 🔥 NEW: Use enhanced player stats (12 values: shot profile, creation, defense, usage, archetype)
                     try:
+                        # Get MPG and usage from boxscore
                         from transform_player_stats_optimized import calculate_player_stats
                         player_stats = calculate_player_stats(player_name, current_game_date, cached_current_season)
                         mpg_val = player_stats.get('MPG') if player_stats else None
@@ -680,30 +679,50 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                         
                         mpg = round(float(mpg_val), 1) if mpg_val is not None and not pd.isna(mpg_val) else 25
                         usage = round(float(usage_val), 1) if usage_val is not None and not pd.isna(usage_val) else 18
-                    except Exception:
-                        # Fallback to defaults if stats not available
-                        mpg = 25
-                        usage = 18
-                    
-                    player_array = [
-                        player_name,
-                        round(float(offense), 2) if offense is not None else 0.0,
-                        round(float(defense), 2) if defense is not None else 0.0,
-                        round(float(shot_selection), 2) if shot_selection is not None else 0.0,
-                        round(float(efficiency), 2) if efficiency is not None else 0.0,
-                        mpg, usage,
-                        0  # fouls (will be updated per context)
-                    ]
-                    away_players.append(player_array)
+                        
+                        # Get enhanced player array (12 values with PBP stats + cluster)
+                        player_array = get_player_stats_array(
+                            player_name, 
+                            current_game_date, 
+                            mpg=mpg, 
+                            usage_rate=usage,
+                            season=cached_current_season,
+                            use_rolling=True
+                        )
+                        
+                        if player_array is None:
+                            # Fallback to default array if no PBP stats
+                            player_array = [
+                                player_name,
+                                0.3, 0.05, 0.2, 0.3,  # rim%, corner3%, nonc3%, mid%
+                                0.5, 0.5,              # a2%, a3%
+                                5.0, 1.5, 0.5,         # ast/100, stl/100, blk/100
+                                mpg, usage,
+                                -1                     # cluster unknown
+                            ]
+                        
+                        # Add fouls placeholder (will be updated per context)
+                        player_array.append(0)
+                        away_players.append(player_array)
+                        
+                    except Exception as e:
+                        # Fallback to default array on error
+                        player_array = [
+                            player_name,
+                            0.3, 0.05, 0.2, 0.3,  # rim%, corner3%, nonc3%, mid%
+                            0.5, 0.5,              # a2%, a3%
+                            5.0, 1.5, 0.5,         # ast/100, stl/100, blk/100
+                            25, 18,                # mpg, usage
+                            -1,                    # cluster unknown
+                            0                      # fouls
+                        ]
+                        away_players.append(player_array)
             
             elif is_home_team:
                 for player_name in player_list:
-                    offense, defense, shot_selection, efficiency = get_player_pca_ULTRA_FAST(
-                        player_name, current_game_date, cached_current_season, comprehensive_pca_cache
-                    )
-                    
-                    # Get real MPG and usage stats
+                    # 🔥 NEW: Use enhanced player stats (12 values: shot profile, creation, defense, usage, archetype)
                     try:
+                        # Get MPG and usage from boxscore
                         from transform_player_stats_optimized import calculate_player_stats
                         player_stats = calculate_player_stats(player_name, current_game_date, cached_current_season)
                         mpg_val = player_stats.get('MPG') if player_stats else None
@@ -711,28 +730,51 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                         
                         mpg = round(float(mpg_val), 1) if mpg_val is not None and not pd.isna(mpg_val) else 25
                         usage = round(float(usage_val), 1) if usage_val is not None and not pd.isna(usage_val) else 18
-                    except Exception:
-                        # Fallback to defaults if stats not available
-                        mpg = 25
-                        usage = 18
-                    
-                    player_array = [
-                        player_name,
-                        round(float(offense), 2) if offense is not None else 0.0,
-                        round(float(defense), 2) if defense is not None else 0.0,
-                        round(float(shot_selection), 2) if shot_selection is not None else 0.0,
-                        round(float(efficiency), 2) if efficiency is not None else 0.0,
-                        mpg, usage,
-                        0  # fouls (will be updated per context)
-                    ]
-                    home_players.append(player_array)
+                        
+                        # Get enhanced player array (12 values with PBP stats + cluster)
+                        player_array = get_player_stats_array(
+                            player_name, 
+                            current_game_date, 
+                            mpg=mpg, 
+                            usage_rate=usage,
+                            season=cached_current_season,
+                            use_rolling=True
+                        )
+                        
+                        if player_array is None:
+                            # Fallback to default array if no PBP stats
+                            player_array = [
+                                player_name,
+                                0.3, 0.05, 0.2, 0.3,  # rim%, corner3%, nonc3%, mid%
+                                0.5, 0.5,              # a2%, a3%
+                                5.0, 1.5, 0.5,         # ast/100, stl/100, blk/100
+                                mpg, usage,
+                                -1                     # cluster unknown
+                            ]
+                        
+                        # Add fouls placeholder (will be updated per context)
+                        player_array.append(0)
+                        home_players.append(player_array)
+                        
+                    except Exception as e:
+                        # Fallback to default array on error
+                        player_array = [
+                            player_name,
+                            0.3, 0.05, 0.2, 0.3,  # rim%, corner3%, nonc3%, mid%
+                            0.5, 0.5,              # a2%, a3%
+                            5.0, 1.5, 0.5,         # ast/100, stl/100, blk/100
+                            25, 18,                # mpg, usage
+                            -1,                    # cluster unknown
+                            0                      # fouls
+                        ]
+                        home_players.append(player_array)
         
         # 🎯 OPTIMIZATION: Sort players by MPG (descending) for better model learning
         # High-MPG players (starters) at low indices makes patterns easier to learn
-        # Player array format: [name, offense, defense, shot_selection, efficiency, MPG, usage, fouls]
-        #                       [  0,     1,       2,        3,              4,         5,    6,     7  ]
-        away_players.sort(key=lambda p: p[5], reverse=True)  # p[5] is MPG
-        home_players.sort(key=lambda p: p[5], reverse=True)
+        # Player array format: [name, rim%, c3%, nc3%, mid%, a2%, a3%, ast/100, stl/100, blk/100, MPG, usage, cluster, fouls]
+        #                       [  0,    1,    2,    3,    4,   5,   6,     7,       8,       9,     10,   11,     12,     13 ]
+        away_players.sort(key=lambda p: p[10], reverse=True)  # p[10] is MPG
+        home_players.sort(key=lambda p: p[10], reverse=True)
         
         # Rebuild name-to-index mappings AFTER sorting
         away_name_to_idx = {player[0]: idx for idx, player in enumerate(away_players)}
@@ -742,18 +784,22 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
         game_df_reset = game_df.reset_index(drop=True)
         
         # 🚀 Pre-compute shared components ONCE per game (was being done 400x per game!)
-        away_stats_array = [
-            round(float(away_stats.get('OEFF', 110.0)), 2),
-            round(float(away_stats.get('DEFF', 110.0)), 2), 
-            round(float(away_stats.get('PACE', 100.0)), 2),
-            int(away_stats.get('REST_DAYS', 2))
-        ]
-        home_stats_array = [
-            round(float(home_stats.get('OEFF', 110.0)), 2),
-            round(float(home_stats.get('DEFF', 110.0)), 2),
-            round(float(home_stats.get('PACE', 100.0)), 2), 
-            int(home_stats.get('REST_DAYS', 2))
-        ]
+        # 🔥 NEW: Use enhanced team stats (8 values: OEFF, DEFF, PACE, 3PAr, FTr, ORr, ASTr, REST)
+        try:
+            away_stats_array = get_team_stats_array(away_full_name, current_game_date, fallback_season=cached_current_season)
+            if away_stats_array is None:
+                # Fallback to defaults
+                away_stats_array = [110.0, 110.0, 100.0, 0.33, 0.25, 0.25, 0.65, 2]
+        except Exception:
+            away_stats_array = [110.0, 110.0, 100.0, 0.33, 0.25, 0.25, 0.65, 2]
+        
+        try:
+            home_stats_array = get_team_stats_array(home_full_name, current_game_date, fallback_season=cached_current_season)
+            if home_stats_array is None:
+                # Fallback to defaults
+                home_stats_array = [110.0, 110.0, 100.0, 0.33, 0.25, 0.25, 0.65, 2]
+        except Exception:
+            home_stats_array = [110.0, 110.0, 100.0, 0.33, 0.25, 0.25, 0.65, 2]
         
         # 🚀 Pre-build ALL play data for the entire game at once
         game_play_data = []

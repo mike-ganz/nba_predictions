@@ -7,9 +7,15 @@ import hashlib
 from concurrent.futures import ProcessPoolExecutor
 import time
 
+# Import PBP stats module
+from player_stats_from_pbp import calculate_player_pbp_stats
+
 # Configuration (will be set dynamically by config.settings)
 SEASON_YEAR = "2023-2024"  # Default, overridden by global config
 CACHE_DIR = 'data/cache/player_stats'
+
+# Cluster assignments cache
+_cluster_assignments = None
 
 def load_player_data(season_year=None):
     """Load player boxscore data for the specified season year."""
@@ -69,6 +75,139 @@ def load_from_cache(player_name, max_date, current_season):
         with open(filename, 'r') as f:
             return json.load(f)
     return None
+
+# ============================================================================
+# ENHANCED PLAYER STATS (PBP + CLUSTERING)
+# ============================================================================
+
+def load_cluster_assignments(cluster_file='clustering_assignments.csv'):
+    """
+    Load player archetype cluster assignments.
+    
+    Args:
+        cluster_file: Path to clustering assignments CSV
+    
+    Returns:
+        Dict mapping player_name → cluster_id
+    """
+    global _cluster_assignments
+    
+    if _cluster_assignments is not None:
+        return _cluster_assignments
+    
+    if not os.path.exists(cluster_file):
+        print(f"⚠️  Cluster file not found: {cluster_file}")
+        print("   Players will have cluster_id = -1 (unknown)")
+        _cluster_assignments = {}
+        return _cluster_assignments
+    
+    print(f"📊 Loading cluster assignments from {cluster_file}...")
+    df = pd.read_csv(cluster_file)
+    
+    # Create mapping: player_name → cluster
+    _cluster_assignments = dict(zip(df['player_name'], df['cluster']))
+    print(f"✅ Loaded {len(_cluster_assignments)} player archetype assignments")
+    
+    return _cluster_assignments
+
+def get_player_cluster(player_name):
+    """
+    Get cluster ID for a player.
+    
+    Args:
+        player_name: Full player name
+    
+    Returns:
+        int: Cluster ID (0-21, or -1 if unknown)
+    """
+    clusters = load_cluster_assignments()
+    return clusters.get(player_name, -1)
+
+def get_enhanced_player_stats(player_name, max_date, season=None, use_rolling=True):
+    """
+    Get enhanced player stats combining PBP stats and cluster assignment.
+    
+    Args:
+        player_name: Full player name
+        max_date: Calculate stats for games before this date
+        season: Season year (e.g., "2023-2024")
+        use_rolling: If True, use 20-game rolling window
+    
+    Returns:
+        Dict with PBP stats + cluster_id, or None if unavailable
+    """
+    if season is None:
+        season = SEASON_YEAR
+    
+    # Get PBP stats
+    pbp_stats = calculate_player_pbp_stats(player_name, max_date, season, use_rolling)
+    
+    if pbp_stats is None:
+        return None
+    
+    # Get cluster assignment
+    cluster_id = get_player_cluster(player_name)
+    
+    # Add cluster to stats
+    pbp_stats['cluster_id'] = cluster_id
+    pbp_stats['player_name'] = player_name
+    
+    return pbp_stats
+
+def get_player_stats_array(player_name, max_date, mpg=None, usage_rate=None, season=None, use_rolling=True):
+    """
+    Get player stats as a compact 12-value array for training data.
+    
+    Format: [name, rim%, c3%, nc3%, mid%, a2%, a3%, ast/100, stl/100, blk/100, mpg, usg, cluster]
+    
+    Args:
+        player_name: Full player name
+        max_date: Calculate stats for games before this date  
+        mpg: Minutes per game (if None, will try to calculate from boxscore)
+        usage_rate: Usage rate (if None, will try to calculate from boxscore)
+        season: Season year
+        use_rolling: If True, use 20-game rolling window
+    
+    Returns:
+        list: 12-value array, or None if player stats unavailable
+    """
+    # Get enhanced stats
+    stats = get_enhanced_player_stats(player_name, max_date, season, use_rolling)
+    
+    if stats is None:
+        return None
+    
+    # Get MPG and usage if not provided
+    if mpg is None or usage_rate is None:
+        # Try to get from boxscore data
+        try:
+            boxscore_stats = get_player_stats(player_name, max_date, season)
+            if boxscore_stats:
+                mpg = mpg or boxscore_stats.get('MPG', 0)
+                usage_rate = usage_rate or boxscore_stats.get('USG%', 0)  # Already a percentage (15-35%)
+        except:
+            pass
+    
+    # Use defaults if still not available
+    mpg = mpg or 0
+    usage_rate = usage_rate or 0
+    
+    # Build 12-value array
+    return [
+        player_name,
+        round(stats.get('rim_attempt_rate', 0), 3),
+        round(stats.get('corner_3_rate', 0), 3),
+        round(stats.get('non_corner_3_rate', 0), 3),
+        round(stats.get('mid_range_rate', 0), 3),
+        round(stats.get('assisted_2pt_rate', 0), 3),
+        round(stats.get('assisted_3pt_rate', 0), 3),
+        round(stats.get('assists_per_100', 0), 1),
+        round(stats.get('steals_per_100', 0), 1),
+        round(stats.get('blocks_per_100', 0), 1),
+        round(mpg, 1),
+        round(usage_rate, 1),
+        stats.get('cluster_id', -1)
+    ]
 
 def calculate_advanced_stats(stats_row):
     """Calculate advanced stats from basic stats."""

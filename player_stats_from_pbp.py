@@ -25,6 +25,10 @@ from typing import Dict, Tuple, Optional, List
 CACHE_DIR = 'data/cache/player_stats_pbp'
 PBP_DATA_DIR = 'data/play_by_play/historical'
 
+# Rolling window configuration
+PLAYER_ROLLING_WINDOW = 20  # Number of games for rolling averages
+MIN_PLAYER_GAMES = 5  # Minimum games required for valid stats
+
 # Court dimensions (from official NBA court diagram)
 COURT_WIDTH = 50  # feet
 COURT_LENGTH = 94  # feet
@@ -809,7 +813,8 @@ def calculate_defensive_stats(player_pbp: pd.DataFrame,
 
 def calculate_player_pbp_stats(player_name: str, 
                                max_date: Optional[str] = None,
-                               season: str = "2023-2024") -> Optional[dict]:
+                               season: str = "2023-2024",
+                               use_rolling: bool = True) -> Optional[dict]:
     """
     Calculate all play-by-play stats for a player up to a given date.
     
@@ -818,12 +823,15 @@ def calculate_player_pbp_stats(player_name: str,
         max_date: Calculate stats for games before this date (YYYY-MM-DD)
                  If None, use all games in season
         season: Season year in format "YYYY-YYYY"
+        use_rolling: If True, use last 20 games. If False, use all games (cumulative)
     
     Returns:
         Dict with all PBP stats, or None if player not found
     """
-    # Try cache first
-    cached_data = load_from_cache(player_name, max_date or 'full_season', season)
+    # Try cache first (cache key includes rolling mode)
+    cache_mode = f"roll{PLAYER_ROLLING_WINDOW}" if use_rolling else "cumulative"
+    cache_key = f"{max_date or 'full_season'}_{cache_mode}"
+    cached_data = load_from_cache(player_name, cache_key, season)
     if cached_data is not None:
         return cached_data
     
@@ -852,12 +860,27 @@ def calculate_player_pbp_stats(player_name: str,
         (pbp_df['a5'] == player_name)
     )
     
-    player_games = pbp_df[player_mask]['game_id'].unique()
+    player_games_mask = pbp_df[player_mask]
     
-    if len(player_games) == 0:
+    # Get unique games with dates
+    game_dates = player_games_mask[['game_id', 'date']].drop_duplicates().sort_values('date')
+    
+    if len(game_dates) == 0:
         return None
     
-    # Get plays from player's games
+    # Apply rolling window if requested
+    if use_rolling and len(game_dates) > PLAYER_ROLLING_WINDOW:
+        game_dates = game_dates.tail(PLAYER_ROLLING_WINDOW)
+    
+    player_games = game_dates['game_id'].values
+    num_games = len(player_games)
+    
+    # Check minimum games requirement
+    if num_games < MIN_PLAYER_GAMES:
+        print(f"⚠️ {player_name} has only {num_games} games (minimum {MIN_PLAYER_GAMES} required)")
+        return None
+    
+    # Get plays from selected games
     player_pbp = pbp_df[pbp_df['game_id'].isin(player_games)].copy()
     
     # Count possessions
@@ -874,7 +897,8 @@ def calculate_player_pbp_stats(player_name: str,
         return None
     
     # Calculate stats
-    print(f"📊 Calculating PBP stats for {player_name} ({len(player_games)} games, {total_possessions} possessions)...")
+    mode_str = f"rolling {num_games} games" if use_rolling else f"cumulative {num_games} games"
+    print(f"📊 Calculating PBP stats for {player_name} ({mode_str}, {total_possessions} possessions)...")
     
     shot_stats = calculate_shot_profile_stats(player_pbp, player_name, total_possessions)
     creation_stats = calculate_creation_stats(player_pbp, player_name, total_possessions)
@@ -886,13 +910,15 @@ def calculate_player_pbp_stats(player_name: str,
         **creation_stats,
         **defensive_stats,
         'total_possessions': total_possessions,
-        'games_played': len(player_games),
+        'games_played': num_games,
+        'games_in_window': num_games,
+        'rolling_window_used': use_rolling,
         'season': season,
         'max_date': max_date or 'full_season'
     }
     
     # Save to cache
-    save_to_cache(player_name, max_date or 'full_season', season, all_stats)
+    save_to_cache(player_name, cache_key, season, all_stats)
     
     return all_stats
 
@@ -942,7 +968,8 @@ Games: {stats.get('games_played', 0)} | Possessions: {stats.get('total_possessio
 def build_pbp_cache_for_date_range(start_date: str,
                                     end_date: str,
                                     date_interval_days: int = 7,
-                                    season: str = "2023-2024") -> int:
+                                    season: str = "2023-2024",
+                                    use_rolling: bool = True) -> int:
     """
     Build PBP stat cache for all players across a date range.
     
@@ -951,11 +978,13 @@ def build_pbp_cache_for_date_range(start_date: str,
         end_date: End date (YYYY-MM-DD)
         date_interval_days: Days between cache points
         season: Season year
+        use_rolling: If True, use rolling 20-game windows
     
     Returns:
         Number of cache entries created
     """
-    print(f"🚀 Building PBP cache from {start_date} to {end_date}")
+    mode = f"rolling {PLAYER_ROLLING_WINDOW}-game" if use_rolling else "cumulative"
+    print(f"🚀 Building PBP cache from {start_date} to {end_date} ({mode})")
     print(f"   Interval: every {date_interval_days} days")
     print(f"   Season: {season}")
     
@@ -989,7 +1018,7 @@ def build_pbp_cache_for_date_range(start_date: str,
                 print(f"   Player {player_idx + 1}/{len(all_players)}...")
             
             try:
-                stats = calculate_player_pbp_stats(player, target_date, season)
+                stats = calculate_player_pbp_stats(player, target_date, season, use_rolling)
                 if stats is not None:
                     date_cached += 1
             except Exception as e:
@@ -1052,28 +1081,65 @@ def validate_pbp_stats(stats: dict) -> List[str]:
 
 if __name__ == "__main__":
     # Example usage
-    print("🏀 NBA Play-by-Play Stats Module")
-    print("=" * 60)
+    print("🏀 NBA Play-by-Play Stats Module - Rolling Window Test")
+    print("=" * 80)
     
     # Test with a known player
     player = "LeBron James"
     season = "2023-2024"
+    test_date = "2024-02-15"
     
-    print(f"\nTesting with: {player} ({season})")
+    print(f"\nTesting with: {player} ({season}, date: {test_date})")
     
-    stats = calculate_player_pbp_stats(player, max_date="2024-01-01", season=season)
+    # Test 1: Rolling 20-game window (default)
+    print(f"\n{'='*80}")
+    print(f"TEST 1: Rolling {PLAYER_ROLLING_WINDOW}-game window")
+    print(f"{'='*80}")
+    stats_rolling = calculate_player_pbp_stats(player, test_date, season, use_rolling=True)
     
-    if stats:
-        print(get_player_pbp_stats_summary(stats))
+    if stats_rolling:
+        print(f"✅ Games: {stats_rolling['games_played']}")
+        print(f"   Rim%: {stats_rolling.get('rim_attempt_rate', 0):.1%}")
+        print(f"   3PT%: {stats_rolling.get('non_corner_3_rate', 0) + stats_rolling.get('corner_3_rate', 0):.1%}")
+        print(f"   AST/100: {stats_rolling.get('assists_per_100', 0):.1f}")
+        print(f"   Possessions: {stats_rolling['total_possessions']}")
+    
+    # Test 2: Cumulative (all games)
+    print(f"\n{'='*80}")
+    print(f"TEST 2: Cumulative (all games up to date)")
+    print(f"{'='*80}")
+    stats_cumulative = calculate_player_pbp_stats(player, test_date, season, use_rolling=False)
+    
+    if stats_cumulative:
+        print(f"✅ Games: {stats_cumulative['games_played']}")
+        print(f"   Rim%: {stats_cumulative.get('rim_attempt_rate', 0):.1%}")
+        print(f"   3PT%: {stats_cumulative.get('non_corner_3_rate', 0) + stats_cumulative.get('corner_3_rate', 0):.1%}")
+        print(f"   AST/100: {stats_cumulative.get('assists_per_100', 0):.1f}")
+        print(f"   Possessions: {stats_cumulative['total_possessions']}")
+    
+    # Compare
+    if stats_rolling and stats_cumulative:
+        print(f"\n{'='*80}")
+        print(f"COMPARISON: Rolling vs Cumulative")
+        print(f"{'='*80}")
         
-        # Validate
-        warnings = validate_pbp_stats(stats)
-        if warnings:
-            print("\n⚠️ Validation Warnings:")
-            for warning in warnings:
-                print(f"  - {warning}")
-        else:
-            print("\n✅ All validation checks passed!")
-    else:
-        print(f"❌ No stats found for {player}")
+        rim_diff = stats_rolling.get('rim_attempt_rate', 0) - stats_cumulative.get('rim_attempt_rate', 0)
+        three_rolling = stats_rolling.get('non_corner_3_rate', 0) + stats_rolling.get('corner_3_rate', 0)
+        three_cumulative = stats_cumulative.get('non_corner_3_rate', 0) + stats_cumulative.get('corner_3_rate', 0)
+        three_diff = three_rolling - three_cumulative
+        ast_diff = stats_rolling.get('assists_per_100', 0) - stats_cumulative.get('assists_per_100', 0)
+        
+        print(f"Games: {stats_rolling['games_played']} (rolling) vs {stats_cumulative['games_played']} (cumulative)")
+        print(f"Rim% diff: {rim_diff:+.1%} ({'↑ more rim' if rim_diff > 0 else '↓ less rim'})")
+        print(f"3PT% diff: {three_diff:+.1%} ({'↑ more 3PT' if three_diff > 0 else '↓ less 3PT'})")
+        print(f"AST/100 diff: {ast_diff:+.1f} ({'↑ passing more' if ast_diff > 0 else '↓ passing less'})")
+        
+        print("\n💡 Interpretation:")
+        print("   Rolling window captures recent form/hot streaks")
+        print("   Cumulative shows season-long tendencies")
+        print("   Differences highlight if player style is evolving")
+    
+    print(f"\n{'='*80}")
+    print("✅ Rolling window test complete!")
+    print(f"{'='*80}")
 

@@ -376,8 +376,8 @@ def build_compact_training_data_direct(
     Args:
         current_game_id: Game ID for this training example
         away_abbrev, home_abbrev: Team abbreviations 
-        away_stats, home_stats: Team stats dictionaries
-        away_players, home_players: Player arrays already in compact format
+        away_stats, home_stats: Team stats arrays (8 values) or dictionaries (for backward compatibility)
+        away_players, home_players: Player arrays already in compact format (13 values)
         recent_plays_verbose: List of play dictionaries (from the verbose building process)
         away_name_to_idx, home_name_to_idx: Player name to index mappings
         
@@ -385,20 +385,30 @@ def build_compact_training_data_direct(
         dict: Compact format following the specification
     """
     
-    # Extract team stats in required order: [OEFF, DEFF, PACE, REST_DAYS]
-    away_stats_array = [
-        round(float(away_stats.get('OEFF', 110.0)), 2),
-        round(float(away_stats.get('DEFF', 110.0)), 2), 
-        round(float(away_stats.get('PACE', 100.0)), 2),
-        int(away_stats.get('REST_DAYS', 2))
-    ]
+    # Handle team stats - support both new array format (8 values) and old dict format (4 values)
+    if isinstance(away_stats, list):
+        # New format: already an 8-value array [OEFF, DEFF, PACE, 3PAr, FTr, ORr, ASTr, REST]
+        away_stats_array = away_stats
+    else:
+        # Old format: dictionary - extract 4 values for backward compatibility
+        away_stats_array = [
+            round(float(away_stats.get('OEFF', 110.0)), 2),
+            round(float(away_stats.get('DEFF', 110.0)), 2), 
+            round(float(away_stats.get('PACE', 100.0)), 2),
+            int(away_stats.get('REST_DAYS', 2))
+        ]
     
-    home_stats_array = [
-        round(float(home_stats.get('OEFF', 110.0)), 2),
-        round(float(home_stats.get('DEFF', 110.0)), 2),
-        round(float(home_stats.get('PACE', 100.0)), 2), 
-        int(home_stats.get('REST_DAYS', 2))
-    ]
+    if isinstance(home_stats, list):
+        # New format: already an 8-value array [OEFF, DEFF, PACE, 3PAr, FTr, ORr, ASTr, REST]
+        home_stats_array = home_stats
+    else:
+        # Old format: dictionary - extract 4 values for backward compatibility
+        home_stats_array = [
+            round(float(home_stats.get('OEFF', 110.0)), 2),
+            round(float(home_stats.get('DEFF', 110.0)), 2),
+            round(float(home_stats.get('PACE', 100.0)), 2), 
+            int(home_stats.get('REST_DAYS', 2))
+        ]
     
     # Build lineup lookup and plays array directly
     lineup_cache = {}  # Maps lineup keys to lineup IDs
