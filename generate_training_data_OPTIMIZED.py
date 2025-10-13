@@ -820,6 +820,7 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                     'result': row.get('result'),
                     'points': row.get('points'),
                     'shot_distance': row.get('shot_distance'),
+                    'assist': row.get('assist'),  # ✅ Add assist field for tracking
                     'shot_details': {'team': None, 'points': float(row.get('points')) if pd.notna(row.get('points')) else None}
                 }
             else:
@@ -923,13 +924,16 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
             
             # 🚀 ULTRA-FAST: Get recent plays with optimized slicing
             recent_plays_verbose = []
+            recent_plays_indices = []  # Track original indices in game_play_data
             start_idx = max(0, local_i + 1 - n_total)
             for j in range(start_idx, local_i + 1):
                 if j < len(game_play_data) and game_play_data[j] is not None:
                     recent_plays_verbose.append(game_play_data[j])
+                    recent_plays_indices.append(j)
             
             if len(recent_plays_verbose) > n_total:
                 recent_plays_verbose = recent_plays_verbose[-n_total:]
+                recent_plays_indices = recent_plays_indices[-n_total:]
             
             # 🔥 OPTIMIZATION: Build record in chosen format
             if use_direct_compact and recent_plays_verbose:
@@ -966,7 +970,7 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                     plays_array = []
                     prev_score = [0, 0]
                     
-                    for play in recent_plays_verbose:
+                    for play_idx, play in enumerate(recent_plays_verbose):
                         # 🚀 Optimized play processing (extracted from original function)
                         quarter = play['quarter']
                         time_seconds = parse_time_to_seconds(play['time_remaining'])
@@ -1028,10 +1032,10 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                         assist_by = None
                         if event_code in ['made2', 'made3']:
                             from generate_training_data import find_assister
-                            # Create a temporary dict for find_assister lookup
-                            plays_for_lookup = [p for p in game_play_data if p is not None]
-                            if local_i < len(plays_for_lookup):
-                                assist_by = find_assister(plays_for_lookup, local_i, away_name_to_idx, home_name_to_idx)
+                            # Use the correct index from recent_plays_indices
+                            game_idx = recent_plays_indices[play_idx]
+                            if game_idx < len(game_play_data) and game_play_data[game_idx] is not None:
+                                assist_by = find_assister(game_play_data, game_idx, away_name_to_idx, home_name_to_idx)
                         
                         # Build play tuple(s) (10-value format: [quarter, time, score, margin, actor, actor_fouls, event, shot_zone, assist_by, lineup_id])
                         if event_code == "o_foul":
@@ -1067,7 +1071,7 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                                     actor_side = tup[4][0] if isinstance(tup[4], list) and len(tup[4]) > 0 else None
                                     ev = str(tup[6])  # Event is at index 6 now
                                     # Scoring made shots and made FT -> change possession
-                                    if ev in ('made2', 'made3', 'mft'):
+                                    if ev in ('made2', 'made3', 'mft'):  # Standardized event codes
                                         curr = 'H' if actor_side == 'A' else ('A' if actor_side == 'H' else curr)
                                     elif ev in ('d_reb', 'o_reb'):
                                         curr = actor_side

@@ -88,63 +88,43 @@ def map_structured_to_event_code(row):
     dist_suffix = str(int(distance)) if pd.notna(distance) and distance > 0 else ""
     
     # Handle shots based on type and result
+    # 🔥 STANDARDIZED: Return made2/miss2/made3/miss3 for all shooting events
     if event_type == 'shot' or any(shot_word in play_type for shot_word in ['shot', 'layup', 'dunk']):
         
         # 3-point shots
         if '3pt' in play_type or 'three' in play_type:
             if result == 'made' or points == 3:
-                return f"3pm{dist_suffix}", 3
+                return "made3", 3
             else:
-                return f"3pa{dist_suffix}", None
+                return "miss3", None
         
-        # Layups
-        elif 'layup' in play_type:
+        # All 2-point shots (layups, dunks, hooks, jumpers)
+        elif any(shot_type in play_type for shot_type in ['layup', 'dunk', 'hook', 'jump shot', 'jumper', 'fadeaway', 'floating', 'tip']):
             if result == 'made' or points == 2:
-                return f"layup{dist_suffix}", 2
+                return "made2", 2
             else:
-                return f"layupa{dist_suffix}", None
-        
-        # Dunks
-        elif 'dunk' in play_type:
-            if result == 'made' or points == 2:
-                return f"dunk{dist_suffix}", 2
-            else:
-                return f"dunka{dist_suffix}", None
-        
-        # Hook shots
-        elif 'hook' in play_type:
-            if result == 'made' or points == 2:
-                return f"hook{dist_suffix}", 2
-            else:
-                return f"hooka{dist_suffix}", None
-        
-        # General 2-point shots
-        elif any(shot_type in play_type for shot_type in ['jump shot', 'jumper', 'fadeaway', 'floating']):
-            if result == 'made' or points == 2:
-                return f"2pm{dist_suffix}", 2
-            else:
-                return f"2pa{dist_suffix}", None
+                return "miss2", None
         
         # Fallback for other shots based on points
         elif points == 3:
-            return f"3pm{dist_suffix}", 3
+            return "made3", 3
         elif points == 2:
-            return f"2pm{dist_suffix}", 2
+            return "made2", 2
         elif points == 1:
-            return "ftm", 1
+            return "mft", 1
         else:
             # Missed shot, try to infer type
             if distance and distance >= 23:  # 3-point range
-                return f"3pa{dist_suffix}", None
+                return "miss3", None
             else:
-                return f"2pa{dist_suffix}", None
+                return "miss2", None
     
     # Free throws
     elif event_type == 'free throw' or 'free throw' in play_type:
         if result == 'made' or points == 1:
-            return "ftm", 1
+            return "mft", 1
         else:
-            return "ftx", None
+            return "xft", None
     
     # Rebounds  
     elif event_type == 'rebound' or 'rebound' in play_type:
@@ -188,11 +168,11 @@ def map_structured_to_event_code(row):
     
     # Fallback based on points if we can't categorize
     elif points == 1:
-        return "ftm", 1
+        return "mft", 1
     elif points == 2:
-        return f"2pm{dist_suffix}", 2  
+        return "made2", 2  
     elif points == 3:
-        return f"3pm{dist_suffix}", 3
+        return "made3", 3
     else:
         return "unknown", None
 
@@ -222,52 +202,27 @@ def map_description_to_event_code(description, shot_details, score_delta):
     elif score_delta > 0:
         points_scored = score_delta
     
-    # Shot mappings following spec patterns exactly
+    # Shot mappings - STANDARDIZED to made2/miss2/made3/miss3
     # 3-point shots
     if "3PT" in desc:
         if "MISS" in desc:
-            return f"3pa{dist_suffix}", None
+            return "miss3", None
         else:
-            return f"3pm{dist_suffix}", points_scored if points_scored > 0 else 3
+            return "made3", points_scored if points_scored > 0 else 3
     
-    # Layups  
-    elif "LAYUP" in desc:
-        if "MISS" in desc:
-            return f"layupa{dist_suffix}", None
-        else:
-            return f"layup{dist_suffix}", points_scored if points_scored > 0 else 2
-    
-    # Dunks
-    elif "DUNK" in desc and "TIP DUNK" not in desc:
-        if "MISS" in desc:
-            return f"dunka{dist_suffix}", None
-        else:
-            return f"dunk{dist_suffix}", points_scored if points_scored > 0 else 2
-    
-    # Tip dunk shots (specific pattern from spec)
-    elif "TIP DUNK" in desc:
+    # All 2-point shots (layups, dunks, jumpers, etc.)
+    elif any(shot_type in desc for shot_type in ["LAYUP", "DUNK", "JUMP SHOT", "PULLUP", "BANK SHOT", "HOOK", "FADEAWAY", "FLOATING", "TIP", "PUTBACK", "PUT BACK"]):
         if "MISS" in desc or points_scored == 0:
-            return "tipdunk_a", None
+            return "miss2", None
         else:
-            return "tipdunk_m", points_scored if points_scored > 0 else 2
-    
-    # Putbacks/tips (scoring)
-    elif ("PUTBACK" in desc or "PUT BACK" in desc) and points_scored > 0:
-        return "putback2", points_scored
-    
-    # 2-point shots (Jump, Pullup, Bank shots without 3PT)
-    elif ("JUMP SHOT" in desc or "PULLUP" in desc or "BANK SHOT" in desc) and "3PT" not in desc:
-        if "MISS" in desc:
-            return f"2pa{dist_suffix}", None
-        else:
-            return f"2pm{dist_suffix}", points_scored if points_scored > 0 else 2
+            return "made2", points_scored if points_scored > 0 else 2
     
     # Free throws
     elif "FREE THROW" in desc:
         if "MISS" in desc or points_scored == 0:
-            return "ftx", None
+            return "xft", None
         else:
-            return "ftm", 1
+            return "mft", 1
     
     # Rebounds
     elif "DEF.REBOUND" in desc or "DEFENSIVE REBOUND" in desc:
@@ -470,43 +425,50 @@ def determine_shot_zone(play):
     else:
         return 'mid'  # Default to mid-range for other 2-pointers
 
-def find_assister(recent_plays_verbose, current_idx, away_name_to_idx, home_name_to_idx):
+def find_assister(recent_plays_verbose, current_idx, away_name_to_idx, home_name_to_idx, debug=False):
     """
-    Find assister for a made basket by looking at previous play.
+    Find assister for a made basket using the 'assist' field in the play data.
     
     Args:
         recent_plays_verbose: List of play dictionaries
         current_idx: Index of current play (made basket)
         away_name_to_idx: Mapping of away player names to indices
         home_name_to_idx: Mapping of home player names to indices
+        debug: If True, print debug information
     
     Returns:
         list: ["A", idx] or ["H", idx] or None if unassisted
     """
-    if current_idx == 0:
+    if current_idx >= len(recent_plays_verbose):
+        if debug:
+            print(f"DEBUG: current_idx {current_idx} >= len(recent_plays_verbose) {len(recent_plays_verbose)}")
         return None
     
     current_play = recent_plays_verbose[current_idx]
-    prev_play = recent_plays_verbose[current_idx - 1]
     
-    # Check if previous play was an assist within ~3 seconds
-    current_time = parse_time_to_seconds(current_play.get('time_remaining', '0:00'))
-    prev_time = parse_time_to_seconds(prev_play.get('time_remaining', '0:00'))
-    
-    # Must be within 3 seconds
-    if abs(current_time - prev_time) > 3:
+    if current_play is None:
+        if debug:
+            print(f"DEBUG: current_play is None at index {current_idx}")
         return None
     
-    # Check if previous play was an assist
-    prev_event = prev_play.get('event_type', '')
-    if prev_event == 'assist':
-        assister_name = prev_play.get('player')
+    # Check if there's an assist field populated
+    assister_name = current_play.get('assist')
+    
+    if debug:
+        print(f"DEBUG: current_idx={current_idx}, assist field='{assister_name}'")
+        print(f"DEBUG: current_play keys: {list(current_play.keys())}")
+    
+    if assister_name and pd.notna(assister_name) and str(assister_name).strip() != '':
+        assister_name = str(assister_name).strip()
         
         # Find assister in player arrays
-        if assister_name and assister_name in away_name_to_idx:
+        if assister_name in away_name_to_idx:
             return ["A", away_name_to_idx[assister_name]]
-        elif assister_name and assister_name in home_name_to_idx:
+        elif assister_name in home_name_to_idx:
             return ["H", home_name_to_idx[assister_name]]
+        else:
+            if debug:
+                print(f"DEBUG: assister '{assister_name}' not found in either team roster")
     
     return None
 

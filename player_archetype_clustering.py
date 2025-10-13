@@ -15,7 +15,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Configuration
-K_CLUSTERS = 22  # Number of clusters to find
+K_CLUSTERS = 25  # Number of clusters to find
 MIN_CLUSTER_SIZE = 5  # Minimum players per cluster (smaller go to "Other")
 
 print("=" * 100)
@@ -105,69 +105,148 @@ cluster_profiles = df.groupby('cluster')[clustering_features].mean()
 
 # Function to name clusters based on stats
 def name_cluster(cluster_id, profile, cluster_players):
-    """Assign descriptive name to cluster based on stats and players"""
+    """Assign descriptive name to cluster based on stats and players - GRANULAR version"""
     
-    # Key thresholds
+    # Extract all key stats
     rim_rate = profile['rim_attempt_rate']
-    three_rate = profile['corner_3_rate'] + profile['non_corner_3_rate']
+    corner_3 = profile['corner_3_rate']
+    nc_3 = profile['non_corner_3_rate']
+    three_rate = corner_3 + nc_3
     mid_rate = profile['mid_range_rate']
     pullup_3 = profile['pullup_3_rate']
     catch_shoot = profile['catch_shoot_3_rate']
     assists = profile['assists_per_100']
+    turnovers = profile['turnovers_per_100']
+    ast_to = profile['ast_to_ratio']
     blocks = profile['blocks_per_100']
+    steals = profile['steals_per_100']
     def_reb = profile['def_reb_share']
     assisted_2pt = profile['assisted_2pt_rate']
+    assisted_3pt = profile['assisted_3pt_rate']
     ftr = profile['ftr']
+    and1_rate = profile['and1_rate']
     
-    # Determine archetype based on statistical profile
+    # Build name components
+    role = ""
+    volume = ""
+    style = ""
     
-    # Elite Rim Runners / Traditional Centers
-    if rim_rate > 0.75 and blocks > 1.5 and def_reb > 0.12:
-        return "Rim-Running Centers"
+    # === PRIMARY ROLE (based on shot location & creation) ===
     
-    # Stretch Bigs
-    elif rim_rate > 0.35 and three_rate > 0.25 and blocks > 1.0:
-        return "Stretch Bigs"
+    # Elite ball-dominant creators
+    if assists > 12 and pullup_3 > 0.20 and assisted_2pt < 0.40:
+        if three_rate > 0.40:
+            role = "Elite Perimeter Creator"
+        else:
+            role = "Elite Playmaking Guard"
     
-    # Floor-Spacing Bigs (high 3PT, low creation)
-    elif rim_rate < 0.40 and three_rate > 0.35 and assists < 5 and blocks > 0.8:
-        return "Floor-Spacing Centers"
+    # Secondary creators/playmakers
+    elif assists > 8 and pullup_3 > 0.15:
+        if three_rate > 0.45:
+            role = "Shot-Creating Guard"
+        elif assists > 10:
+            role = "Secondary Playmaker"
+        else:
+            role = "Scoring Guard"
     
-    # Elite Playmakers
-    elif assists > 15 and three_rate > 0.25:
-        return "Elite Playmakers"
+    # Traditional Centers (rim + defense)
+    elif rim_rate > 0.70 and blocks > 1.8:
+        if assisted_2pt > 0.75:
+            role = "Rim-Running Center"
+        else:
+            role = "Post-Up Center"
     
-    # Secondary Playmakers
-    elif assists > 10 and assists < 15:
-        return "Secondary Playmakers"
+    # Modern Bigs (rim + shooting)
+    elif rim_rate > 0.40 and three_rate > 0.25:
+        if blocks > 1.5:
+            role = "Stretch Big"
+        elif assists > 5:
+            role = "Playmaking Big"
+        else:
+            role = "Scoring Big"
     
-    # Self-Creating Wings (high pullup, low assisted)
-    elif pullup_3 > 0.15 and assisted_2pt < 0.35 and rim_rate < 0.35:
-        return "Shot-Creating Wings"
+    # Floor-spacing forwards/centers
+    elif three_rate > 0.50:
+        if corner_3 > 0.10:
+            role = "Corner Specialist"
+        elif catch_shoot > 0.45:
+            role = "Spot-Up Shooter"
+        elif pullup_3 > 0.15:
+            role = "Pull-Up Shooter"
+        else:
+            role = "High-Volume Shooter"
     
-    # 3&D Wings
-    elif three_rate > 0.45 and catch_shoot > 0.25 and assists < 8:
-        return "3&D Specialists"
+    # 3&D archetypes
+    elif three_rate > 0.40 and (steals > 1.5 or blocks > 0.8):
+        if catch_shoot > 0.40:
+            role = "3&D Wing"
+        else:
+            role = "Two-Way Wing"
     
-    # Spot-Up Shooters
-    elif catch_shoot > 0.30 and three_rate > 0.40 and assisted_2pt > 0.55:
-        return "Spot-Up Shooters"
+    # Mid-range specialists
+    elif mid_rate > 0.35:
+        if assists > 6:
+            role = "Mid-Range Playmaker"
+        elif rim_rate > 0.30:
+            role = "Mid-Range Scorer"
+        else:
+            role = "Mid-Range Specialist"
     
-    # Mid-Range Specialists
-    elif mid_rate > 0.40 and three_rate < 0.25:
-        return "Mid-Range Specialists"
+    # Slashing/cutting wings
+    elif rim_rate > 0.35 and rim_rate < 0.65:
+        if ftr > 0.30:
+            role = "Slashing Wing"
+        elif assisted_2pt > 0.65:
+            role = "Cutting Wing"
+        else:
+            role = "Versatile Wing"
     
-    # Slashing Wings (high rim, moderate 3PT)
-    elif rim_rate > 0.35 and rim_rate < 0.60 and three_rate > 0.20 and three_rate < 0.45:
-        return "Slashing Wings"
+    # Paint-bound players (non-centers)
+    elif rim_rate > 0.50 and blocks < 1.5:
+        if ftr > 0.35:
+            role = "Paint Finisher"
+        else:
+            role = "Interior Scorer"
     
-    # Paint Scorers (high rim, low 3PT, not traditional centers)
-    elif rim_rate > 0.50 and three_rate < 0.15 and blocks < 1.5:
-        return "Paint Scorers"
+    # Defensive specialists
+    elif (steals > 2.0 or blocks > 1.5) and assists < 5:
+        if rim_rate > 0.60:
+            role = "Defensive Anchor"
+        else:
+            role = "Defensive Specialist"
     
-    # Versatile Role Players
-    else:
-        return "Versatile Role Players"
+    # === MODIFIERS (usage, efficiency, style) ===
+    
+    # Volume modifier
+    if turnovers > 3.5:
+        volume = "High-Usage "
+    elif assists > 8 or (three_rate > 0.45 and catch_shoot < 0.30):
+        volume = "Primary "
+    elif assisted_2pt > 0.70 and assists < 4:
+        volume = "Low-Usage "
+    
+    # Style modifier based on assists + creation
+    if assists > 8 and ast_to > 2.5:
+        style = " (Facilitator)"
+    elif pullup_3 > 0.20 and assisted_3pt < 0.80:
+        style = " (Self-Creator)"
+    elif catch_shoot > 0.45:
+        style = " (Off-Ball)"
+    elif ftr > 0.35 and and1_rate > 0.03:
+        style = " (Aggressive)"
+    elif steals > 2.0 or blocks > 1.5:
+        style = " (Defensive)"
+    
+    # Fallback for uncategorized
+    if not role:
+        if assists > 5:
+            role = "Versatile Role Player"
+        elif three_rate > 0.30:
+            role = "Role Player"
+        else:
+            role = "Utility Player"
+    
+    return f"{volume}{role}{style}".strip()
 
 # Analyze and name each cluster
 print("\n" + "=" * 100)

@@ -139,8 +139,19 @@ def get_enhanced_player_stats(player_name, max_date, season=None, use_rolling=Tr
     if season is None:
         season = SEASON_YEAR
     
-    # Get PBP stats
+    # Get PBP stats for current season
     pbp_stats = calculate_player_pbp_stats(player_name, max_date, season, use_rolling)
+    
+    # If no stats for current season, try previous season (fallback)
+    if pbp_stats is None:
+        try:
+            year_parts = season.split('-')
+            prev_season = f"{int(year_parts[0])-1}-{int(year_parts[1])-1}"
+            print(f"🔄 {player_name}: Falling back to {prev_season} PBP data due to insufficient games")
+            pbp_stats = calculate_player_pbp_stats(player_name, None, prev_season, use_rolling=False)
+        except Exception as e:
+            print(f"⚠️ Fallback failed for {player_name}: {e}")
+            pass
     
     if pbp_stats is None:
         return None
@@ -333,7 +344,7 @@ def calculate_player_stats(player_name, max_date=None, current_season=None):
     cached_data = load_from_cache(player_name, max_date, season_to_use)
     if cached_data:
         # Check if cached data has sufficient games, if not, trigger fallback
-        min_games_threshold = 5
+        min_games_threshold = 10
         cached_games = cached_data.get('GP', 0)
         
         # If cached data has sufficient games, return it
@@ -399,7 +410,7 @@ def calculate_player_stats(player_name, max_date=None, current_season=None):
     
     # Check if we have sufficient games after date filtering
     games_played = len(player_df)
-    min_games_threshold = 5  # Minimum games needed
+    min_games_threshold = 10  # Minimum games needed
     
     # If insufficient games, try fallback to previous season (avoid infinite recursion)
     # Don't fallback if this is already a fallback call (indicated by _FULL_SEASON suffix)

@@ -27,7 +27,7 @@ PBP_DATA_DIR = 'data/play_by_play/historical'
 
 # Rolling window configuration
 PLAYER_ROLLING_WINDOW = 20  # Number of games for rolling averages
-MIN_PLAYER_GAMES = 5  # Minimum games required for valid stats
+MIN_PLAYER_GAMES = 10  # Minimum games required for valid stats
 
 # Court dimensions (from official NBA court diagram)
 COURT_WIDTH = 50  # feet
@@ -101,6 +101,7 @@ OFFENSIVE_FOUL_TYPES = {
 
 # Season file mapping
 SEASON_FILE_MAPPING = {
+    "2022-2023": "[10-18-2022]-[06-12-2023]-combined-stats.csv",
     "2023-2024": "[10-24-2023]-[06-17-2024]-combined-stats.csv",
     "2024-2025": "[10-22-2024]-[06-22-2025]-combined-stats.csv",
 }

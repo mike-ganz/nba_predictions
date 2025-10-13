@@ -46,6 +46,9 @@ def main():
     parser.add_argument('--data-format', type=str, default='compact',
                        choices=['compact', 'verbose'],
                        help='Training data schema format (default: compact)')
+
+    # Example usage:
+    # python generate_2023_2024_season.py --games 2 --n-total 12 --format gemini --generation-mode remaining_plays --season 2023-2024
     
     args = parser.parse_args()
     
