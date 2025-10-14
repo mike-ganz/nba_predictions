@@ -30,7 +30,7 @@ def load_all_player_boxscores(max_date: Optional[str] = None, current_season: Op
                 filtered_files.append(file)
         
         xlsx_files = filtered_files
-        print(f"🎯 Filtered to {len(xlsx_files)} files for CURRENT season only: {current_season}")
+        print(f" Filtered to {len(xlsx_files)} files for CURRENT season only: {current_season}")
     
     if not xlsx_files:
         raise FileNotFoundError(f"No Excel files found in {data_dir}")
@@ -58,12 +58,12 @@ def load_all_player_boxscores(max_date: Optional[str] = None, current_season: Op
             if len(df) > 0:  # Only add non-empty dataframes
                 dataframes.append(df)
                 total_loaded_rows += len(df)
-                print(f"✅ Successfully loaded {file} with {len(df)} rows")
+                print(f"Successfully loaded {file} with {len(df)} rows")
             else:
-                print(f"⚠️  Skipped {file} - no data after filtering")
+                print(f"Skipped {file} - no data after filtering")
                 
         except Exception as e:
-            print(f"❌ Error loading {file}: {e}")
+            print(f"ERROR: Error loading {file}: {e}")
             continue
     
     if not dataframes:
@@ -71,7 +71,7 @@ def load_all_player_boxscores(max_date: Optional[str] = None, current_season: Op
     
     # Combine all dataframes
     combined_df = pd.concat(dataframes, ignore_index=True)
-    print(f"🚀 OPTIMIZATION: Combined dataset has {len(combined_df)} total rows (was ~84,005 without filtering)")
+    print(f" OPTIMIZATION: Combined dataset has {len(combined_df)} total rows (was ~84,005 without filtering)")
     
     return combined_df
 
@@ -148,16 +148,9 @@ def get_lineup_by_game_id(game_id: Union[str, int], df: Optional[pd.DataFrame] =
     
     print(f"Using '{team_column}' as team column and '{player_column}' as player column")
     
-    # Group players by team
-    teams_players = {}
-    for _, row in filtered_df.iterrows():
-        team = row[team_column]
-        player = row[player_column]
-        
-        if team not in teams_players:
-            teams_players[team] = []
-        
-        teams_players[team].append(player)
+    # Vectorized: group once and collect player lists per team
+    grouped = filtered_df.groupby(team_column)[player_column].apply(list)
+    teams_players = grouped.to_dict()
     
     # Print summary
     for team, players in teams_players.items():

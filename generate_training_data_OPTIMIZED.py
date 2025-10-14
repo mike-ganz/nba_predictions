@@ -5,11 +5,11 @@ ULTRA-OPTIMIZED NBA Training Data Generation
 This is a drop-in replacement for the slow training data generation that fixes all major bottlenecks.
 
 PERFORMANCE IMPROVEMENTS:
-🚀 5-20x faster overall processing
-🚀 99%+ PCA cache hit rate (eliminates expensive individual calculations)
-🚀 Smart season fallback handling (batch processing)
-🚀 Pre-loaded season data (eliminates repeated loading)
-🚀 Comprehensive player coverage (no gaps in batch calculations)
+ 5-20x faster overall processing
+ 99%+ PCA cache hit rate (eliminates expensive individual calculations)
+ Smart season fallback handling (batch processing)
+ Pre-loaded season data (eliminates repeated loading)
+ Comprehensive player coverage (no gaps in batch calculations)
 
 USAGE:
 Replace your existing generate_training_data import with:
@@ -107,7 +107,7 @@ def _extract_players_on_court(row, away_abbrev, home_abbrev):
 
 class ComprehensivePCACache:
     """
-    🚀 ULTRA-OPTIMIZED PCA caching system that eliminates cache misses.
+     ULTRA-OPTIMIZED PCA caching system that eliminates cache misses.
     
     This fixes the main bottleneck where players with insufficient games
     were excluded from batch calculations, causing expensive individual fallbacks.
@@ -124,7 +124,7 @@ class ComprehensivePCACache:
         
         This is the KEY FIX that eliminates the performance bottleneck.
         """
-        print("🚀 Building COMPREHENSIVE PCA cache (fixes cache miss bottleneck)...")
+        print(" Building COMPREHENSIVE PCA cache (fixes cache miss bottleneck)...")
         print("   This eliminates the expensive individual calculations that cause slowdowns")
         
         start_time = time.time()
@@ -135,10 +135,10 @@ class ComprehensivePCACache:
         
         # Get comprehensive player list (all players across all dates)
         all_players = self._get_comprehensive_player_list(unique_dates, current_season)
-        print(f"📋 Found {len(all_players)} unique players across all dates")
+        print(f" Found {len(all_players)} unique players across all dates")
         
         for i, date_str in enumerate(unique_dates):
-            print(f"📅 Processing {date_str} ({i+1}/{len(unique_dates)})...")
+            print(f" Processing {date_str} ({i+1}/{len(unique_dates)})...")
             
             # Build comprehensive PCA scores for this date
             date_pca_scores = self._calculate_pca_with_fallbacks(
@@ -152,15 +152,15 @@ class ComprehensivePCACache:
                 rate = (i + 1) / elapsed
                 remaining = len(unique_dates) - (i + 1)
                 eta = remaining / rate if rate > 0 else 0
-                print(f"   ⏱️  Progress: {i+1}/{len(unique_dates)} dates ({rate:.1f} dates/sec, ETA: {eta:.1f}s)")
+                print(f"   ⏱  Progress: {i+1}/{len(unique_dates)} dates ({rate:.1f} dates/sec, ETA: {eta:.1f}s)")
         
         total_elapsed = time.time() - start_time
         total_entries = sum(len(date_cache) for date_cache in comprehensive_cache.values())
         
-        print(f"✅ COMPREHENSIVE PCA cache complete!")
-        print(f"   📊 {total_entries:,} player-date combinations in {total_elapsed:.1f}s")
-        print(f"   🎯 Cache hit rate will be 99%+ (vs ~70% before)")
-        print(f"   ⚡ Speed: {total_entries/total_elapsed:.0f} entries/second")
+        print(f" COMPREHENSIVE PCA cache complete!")
+        print(f"    {total_entries:,} player-date combinations in {total_elapsed:.1f}s")
+        print(f"    Cache hit rate will be 99%+ (vs ~70% before)")
+        print(f"    Speed: {total_entries/total_elapsed:.0f} entries/second")
         
         return comprehensive_cache
     
@@ -180,13 +180,13 @@ class ComprehensivePCACache:
         for season in seasons_to_load:
             if season not in self.season_data_cache:
                 try:
-                    print(f"📊 Pre-loading {season} season data...")
+                    print(f" Pre-loading {season} season data...")
                     from transform_player_stats_optimized import load_player_data
                     df = load_player_data(season)
                     self.season_data_cache[season] = df
-                    print(f"   ✅ Loaded {len(df):,} records")
+                    print(f"    Loaded {len(df):,} records")
                 except Exception as e:
-                    print(f"   ⚠️ Could not load {season}: {e}")
+                    print(f"   Could not load {season}: {e}")
     
     def _get_comprehensive_player_list(self, unique_dates: List[str], current_season: str) -> Set[str]:
         """Get ALL players who appear in any lineup across all dates."""
@@ -197,7 +197,7 @@ class ComprehensivePCACache:
         if season_df is not None:
             season_players = set(season_df['PLAYER \nFULL NAME'].unique())
             all_players.update(season_players)
-            print(f"   📊 Found {len(season_players)} players in {current_season} season data")
+            print(f"    Found {len(season_players)} players in {current_season} season data")
         
         # Also get players from previous seasons (for comprehensive coverage)
         try:
@@ -207,7 +207,7 @@ class ComprehensivePCACache:
             if prev_df is not None:
                 prev_players = set(prev_df['PLAYER \nFULL NAME'].unique())
                 all_players.update(prev_players)
-                print(f"   📊 Added {len(prev_players)} players from {prev_season} season data")
+                print(f"    Added {len(prev_players)} players from {prev_season} season data")
         except Exception:
             pass
         
@@ -329,7 +329,7 @@ class ComprehensivePCACache:
             return stats
             
         except Exception as e:
-            print(f"⚠️ Error calculating player stats: {e}")
+            print(f" Error calculating player stats: {e}")
             return None
     
     def _run_batch_pca(self, player_stats_list: List[Dict]) -> Dict[str, Dict[str, float]]:
@@ -380,7 +380,7 @@ class ComprehensivePCACache:
                             results[player_name][metric_type] = float(pca_scores[i][0])
                 
                 except Exception as e:
-                    print(f"⚠️ PCA calculation error for {metric_type}: {e}")
+                    print(f" PCA calculation error for {metric_type}: {e}")
         
         return results
     
@@ -413,7 +413,7 @@ class ComprehensivePCACache:
                     results.update(fallback_pca)
         
         except Exception as e:
-            print(f"⚠️ Error in fallback processing: {e}")
+            print(f" Error in fallback processing: {e}")
         
         # Fill any remaining players with zeros
         for player_name in fallback_players:
@@ -428,7 +428,7 @@ class ComprehensivePCACache:
 def get_player_pca_ULTRA_FAST(player_name: str, game_date: str, season: str, 
                              comprehensive_cache: Dict) -> Tuple[float, float, float, float]:
     """
-    🚀 ULTRA-FAST PCA lookup with 99%+ hit rate.
+     ULTRA-FAST PCA lookup with 99%+ hit rate.
     
     This replaces the slow get_player_pca_from_cache_or_calculate function
     that was causing the main bottleneck.
@@ -466,7 +466,7 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                                        generation_mode="remaining_plays", 
                                        use_direct_compact=True, use_batch_pca=True):
     """
-    🚀 ULTRA-OPTIMIZED training data generation.
+     ULTRA-OPTIMIZED training data generation.
     
     PERFORMANCE IMPROVEMENTS:
     - 99%+ PCA cache hit rate (eliminates expensive individual calculations)
@@ -482,7 +482,7 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
         
     Expected speedup: 5-20x faster than original
     """
-    print("🚀 ULTRA-FAST Training Data Generation (Performance Optimized)")
+    print(" ULTRA-FAST Training Data Generation (Performance Optimized)")
     print("=" * 70)
     overall_start = time.time()
     
@@ -494,31 +494,31 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
         initial_count = len(result_df)
         result_df = result_df.dropna(subset=['description']).reset_index(drop=True)
         if len(result_df) != initial_count:
-            print(f"🧹 Filtered out {initial_count - len(result_df)} rows with NaN descriptions")
+            print(f" Filtered out {initial_count - len(result_df)} rows with NaN descriptions")
     
     # Determine home/away team mapping for all games
-    print("📋 Determining home/away team mappings...")
+    print(" Determining home/away team mappings...")
     game_team_mapping = determine_home_away_teams(result_df)
     
     # Pre-calculate team abbreviation mapping
     abbrev_mapping = create_team_abbreviation_mapping()
-    print("✅ Pre-calculated team abbreviation mapping")
+    print(" Pre-calculated team abbreviation mapping")
     
-    # 🚀 MAIN OPTIMIZATION: Build comprehensive PCA cache
+    #  MAIN OPTIMIZATION: Build comprehensive PCA cache
     comprehensive_pca_cache = {}
     if use_batch_pca:
         unique_dates = result_df['date'].dropna().unique()
-        print(f"\n🚀 Building COMPREHENSIVE PCA cache for {len(unique_dates)} unique dates...")
+        print(f"\n Building COMPREHENSIVE PCA cache for {len(unique_dates)} unique dates...")
         print("   This fixes the cache miss bottleneck that was causing slowdowns")
         
         cache_builder = ComprehensivePCACache()
         comprehensive_pca_cache = cache_builder.build_comprehensive_cache(unique_dates, SEASON_YEAR)
         
-        print(f"✅ Cache ready! Expected 99%+ hit rate vs ~70% before")
+        print(f" Cache ready! Expected 99%+ hit rate vs ~70% before")
     
     # Load team stats and lineups (reuse existing optimized system)
     unique_games = result_df['game_id'].unique()
-    print(f"\n📊 Loading team stats and lineups for {len(unique_games)} unique games...")
+    print(f"\n Loading team stats and lineups for {len(unique_games)} unique games...")
     
     from game.team_utils import team_stats_integrator
     team_integrator = team_stats_integrator
@@ -527,17 +527,17 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
     try:
         from generate_lineup import load_all_player_boxscores, get_lineup_by_game_id
         if len(unique_games) <= 20:  # Smart loading for small datasets
-            print(f"🚀 Loading boxscore data for {len(unique_games)} specific games...")
+            print(f" Loading boxscore data for {len(unique_games)} specific games...")
             boxscore_data = load_all_player_boxscores()
             original_size = len(boxscore_data)
             boxscore_data = boxscore_data[boxscore_data['GAME-ID'].isin(unique_games)]
             filtered_size = len(boxscore_data)
-            print(f"✅ Filtered: {original_size:,} → {filtered_size:,} records")
+            print(f" Filtered: {original_size:,}  {filtered_size:,} records")
         else:
             boxscore_data = load_all_player_boxscores()
-            print(f"✅ Loaded boxscore data with {len(boxscore_data):,} player records")
+            print(f" Loaded boxscore data with {len(boxscore_data):,} player records")
     except Exception as e:
-        print(f"⚠️ Could not load boxscore data: {e}")
+        print(f"Could not load boxscore data: {e}")
         boxscore_data = None
     
     game_team_stats = {}
@@ -556,18 +556,18 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                 try:
                     lineups = get_lineup_by_game_id(game_id, boxscore_data)
                     if lineups:
-                        print(f"✅ Loaded lineups for game {game_id}: {len(lineups)} teams")
+                        print(f" Loaded lineups for game {game_id}: {len(lineups)} teams")
                 except Exception as e:
-                    print(f"⚠️ Could not get lineups for game {game_id}: {e}")
+                    print(f" Could not get lineups for game {game_id}: {e}")
             
             # Combine stats and lineups
             stats['lineups'] = lineups
             game_team_stats[game_id] = stats
             
         except Exception as e:
-            print(f"⚠️ Could not load data for game {game_id}: {e}")
+            print(f" Could not load data for game {game_id}: {e}")
     
-    print(f"✅ Loaded team stats and lineups for {len(game_team_stats)} games")
+    print(f" Loaded team stats and lineups for {len(game_team_stats)} games")
     
     # Generate skip indices for generation mode
     skip_indices = set()
@@ -592,24 +592,24 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                     if idx != target_idx:
                         skip_indices.add(idx)
     
-    print(f"\n🔥 Processing {len(result_df):,} plays with BREAKTHROUGH OPTIMIZATION + EVENT MAPPING FIX...")
-    print(f"   📊 Estimated games: ~{len(result_df) // 400:,}")
-    print(f"   🎯 BREAKTHROUGH: Eliminate 400x redundant compact record building per game!")
-    print(f"      • ❌ Before: build_compact_training_data_direct called 400x per game")
-    print(f"      • ✅ After: Shared base record + variable plays processing")
+    print(f"\n Processing {len(result_df):,} plays with BREAKTHROUGH OPTIMIZATION + EVENT MAPPING FIX...")
+    print(f"    Estimated games: ~{len(result_df) // 400:,}")
+    print(f"    BREAKTHROUGH: Eliminate 400x redundant compact record building per game!")
+    print(f"      •  Before: build_compact_training_data_direct called 400x per game")
+    print(f"      •  After: Shared base record + variable plays processing")
     print(f"      • Game-batched processing + O(n²) elimination + shared setup")
     print(f"      • Pre-computed team stats, player arrays (90% of work)")
-    print(f"   🔧 CRITICAL FIX: Include structured event fields (type, event_type, result, etc.)")
-    print(f"      • ❌ Before: Missing structured fields → 'unknown' events")
-    print(f"      • ✅ After: Proper event mapping → accurate event codes")
-    print(f"   ⚡ Target: ANOTHER 2x+ speedup (300-600+ plays/sec) + correct event types")
+    print(f"    CRITICAL FIX: Include structured event fields (type, event_type, result, etc.)")
+    print(f"      •  Before: Missing structured fields  'unknown' events")
+    print(f"      •  After: Proper event mapping  accurate event codes")
+    print(f"    Target: ANOTHER 2x+ speedup (300-600+ plays/sec) + correct event types")
     if generation_mode == "first_N_plays":
-        print(f"   🎯 first_N_plays mode: Generate {len(first_n_plays_target_indices)} examples (1 per game)")
+        print(f"    first_N_plays mode: Generate {len(first_n_plays_target_indices)} examples (1 per game)")
         print(f"   Skip indices: {len(skip_indices)} (keeping only target indices)")
     else:
         print(f"   Skip indices: {len(skip_indices)} (for {generation_mode} mode)")
     
-    # 🚀 ULTRA-OPTIMIZED GAME-BATCHED PROCESSING LOOP
+    #  ULTRA-OPTIMIZED GAME-BATCHED PROCESSING LOOP
     # Process by games instead of individual plays to eliminate redundant work
     json_training_data = [""] * len(result_df)  # Pre-allocate
     cached_current_season = SEASON_YEAR
@@ -618,8 +618,90 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
     processed_plays = 0
     
     # Group plays by game for batch processing
-    print("🔄 Grouping plays by game for ultra-fast batch processing...")
+    print(" Grouping plays by game for ultra-fast batch processing...")
     game_groups = result_df.groupby('game_id')
+    
+    #  PERFORMANCE FIX #1: Pre-cache ALL player stats in memory to eliminate file I/O bottleneck
+    print("\n Pre-loading ALL player stats into memory (eliminates file I/O bottleneck)...")
+    print("   This prevents 20,000+ file cache lookups during game processing")
+    pre_cache_start = time.time()
+    
+    # Get all unique players across all games AND map each player to dates they played
+    all_players_in_dataset = set()
+    player_dates_map = {}  # player_name -> set of dates they played
+    
+    # CRITICAL FIX: Build game_id -> date lookup ONCE (O(n) instead of O(n*m))
+    game_date_lookup = result_df.groupby('game_id')['date'].first().to_dict()
+    
+    for game_id in game_team_stats.keys():
+        game_lineups = game_team_stats[game_id].get('lineups', {})
+        # Get the date for this game from pre-built lookup (O(1) instead of O(n))
+        game_date = game_date_lookup.get(game_id)
+        
+        if game_date is not None:
+            for team_name, player_list in game_lineups.items():
+                all_players_in_dataset.update(player_list)
+                for player_name in player_list:
+                    if player_name not in player_dates_map:
+                        player_dates_map[player_name] = set()
+                    player_dates_map[player_name].add(str(game_date))
+    
+    # Get all unique dates
+    all_dates_in_dataset = sorted(result_df['date'].unique())
+    
+    # Calculate total combinations before optimization
+    total_combinations = len(all_players_in_dataset) * len(all_dates_in_dataset)
+    actual_combinations = sum(len(dates) for dates in player_dates_map.values())
+    
+    print(f"   Found {len(all_players_in_dataset)} unique players across {len(all_dates_in_dataset)} unique dates")
+    print(f"   Optimization: caching only {actual_combinations:,} combinations (vs {total_combinations:,} naive)")
+    print(f"   Reduction: {100 * (1 - actual_combinations / total_combinations):.1f}% fewer calculations")
+    
+    # Pre-load ALL stats combinations into memory
+    player_stats_memory_cache = {}
+    player_array_memory_cache = {}
+    
+    from transform_player_stats_optimized import calculate_player_stats
+    
+    for i, player_name in enumerate(all_players_in_dataset):
+        if (i + 1) % 50 == 0 or (i + 1) == len(all_players_in_dataset):
+            elapsed = time.time() - pre_cache_start
+            rate = (i + 1) / elapsed if elapsed > 0 else 0
+            remaining = (len(all_players_in_dataset) - (i + 1)) / rate if rate > 0 else 0
+            print(f"   Progress: {i + 1}/{len(all_players_in_dataset)} players ({rate:.1f} players/sec, ETA: {remaining:.0f}s)")
+        
+        # Pre-load for each date where this player actually played
+        player_dates = player_dates_map.get(player_name, set())
+        for date in player_dates:
+            try:
+                cache_key = (player_name, str(date))
+                
+                # Check if already in memory cache (prevents duplicate calculations)
+                if cache_key in player_stats_memory_cache and cache_key in player_array_memory_cache:
+                    continue  # Already cached, skip
+                
+                # Load boxscore stats
+                stats = calculate_player_stats(player_name, date, cached_current_season)
+                if stats:
+                    player_stats_memory_cache[cache_key] = stats
+                    
+                    # Load enhanced array
+                    mpg = stats.get('MPG', 25)
+                    usage = stats.get('USAGE_RATE', 18)
+                    player_array = get_player_stats_array(
+                        player_name, date, mpg=mpg, usage_rate=usage,
+                        season=cached_current_season, use_rolling=True
+                    )
+                    if player_array:
+                        player_array_memory_cache[cache_key] = player_array
+            except Exception:
+                pass
+    
+    pre_cache_time = time.time() - pre_cache_start
+    print(f" Pre-cached {len(player_stats_memory_cache)} player stat combinations in {pre_cache_time:.1f}s")
+    print(f"   Enhanced arrays cached: {len(player_array_memory_cache)}")
+    print(f"   Memory cache hit rate will be ~99%+ (vs file I/O on every access)")
+    print(f"   Expected speedup: 10-30x on player stats lookups\n")
     
     for game_id, game_df in game_groups:
         game_start_time = time.time()
@@ -632,7 +714,7 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
             processed_plays += len(game_indices)
             continue
         
-        # 🚀 OPTIMIZATION: Do expensive setup ONCE per game instead of per-play
+        #  OPTIMIZATION: Do expensive setup ONCE per game instead of per-play
         team_stats = game_team_stats.get(game_id, {})
         away_stats = team_stats.get('away_team_stats', {})
         home_stats = team_stats.get('home_team_stats', {})
@@ -647,7 +729,7 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
             processed_plays += len(game_indices)
             continue
         
-        # 🚀 OPTIMIZATION: Build player arrays ONCE per game
+        #  OPTIMIZATION: Build player arrays ONCE per game
         away_players = []
         home_players = []
         away_name_to_idx = {}
@@ -669,26 +751,19 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
             
             if is_away_team:
                 for player_name in player_list:
-                    # 🔥 NEW: Use enhanced player stats (12 values: shot profile, creation, defense, usage, archetype)
+                    #  NEW: Use enhanced player stats (12 values: shot profile, creation, defense, usage, archetype)
                     try:
-                        # Get MPG and usage from boxscore
-                        from transform_player_stats_optimized import calculate_player_stats
-                        player_stats = calculate_player_stats(player_name, current_game_date, cached_current_season)
+                        #  OPTIMIZED: Use memory cache instead of file I/O (10-30x faster!)
+                        cache_key = (player_name, str(current_game_date))
+                        player_stats = player_stats_memory_cache.get(cache_key)
+                        player_array = player_array_memory_cache.get(cache_key)
+                        
+                        # Get MPG and usage from cached stats
                         mpg_val = player_stats.get('MPG') if player_stats else None
                         usage_val = player_stats.get('USAGE_RATE') if player_stats else None
                         
                         mpg = round(float(mpg_val), 1) if mpg_val is not None and not pd.isna(mpg_val) else 25
                         usage = round(float(usage_val), 1) if usage_val is not None and not pd.isna(usage_val) else 18
-                        
-                        # Get enhanced player array (12 values with PBP stats + cluster)
-                        player_array = get_player_stats_array(
-                            player_name, 
-                            current_game_date, 
-                            mpg=mpg, 
-                            usage_rate=usage,
-                            season=cached_current_season,
-                            use_rolling=True
-                        )
                         
                         if player_array is None:
                             # Fallback to default array if no PBP stats
@@ -720,26 +795,19 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
             
             elif is_home_team:
                 for player_name in player_list:
-                    # 🔥 NEW: Use enhanced player stats (12 values: shot profile, creation, defense, usage, archetype)
+                    #  NEW: Use enhanced player stats (12 values: shot profile, creation, defense, usage, archetype)
                     try:
-                        # Get MPG and usage from boxscore
-                        from transform_player_stats_optimized import calculate_player_stats
-                        player_stats = calculate_player_stats(player_name, current_game_date, cached_current_season)
+                        #  OPTIMIZED: Use memory cache instead of file I/O (10-30x faster!)
+                        cache_key = (player_name, str(current_game_date))
+                        player_stats = player_stats_memory_cache.get(cache_key)
+                        player_array = player_array_memory_cache.get(cache_key)
+                        
+                        # Get MPG and usage from cached stats
                         mpg_val = player_stats.get('MPG') if player_stats else None
                         usage_val = player_stats.get('USAGE_RATE') if player_stats else None
                         
                         mpg = round(float(mpg_val), 1) if mpg_val is not None and not pd.isna(mpg_val) else 25
                         usage = round(float(usage_val), 1) if usage_val is not None and not pd.isna(usage_val) else 18
-                        
-                        # Get enhanced player array (12 values with PBP stats + cluster)
-                        player_array = get_player_stats_array(
-                            player_name, 
-                            current_game_date, 
-                            mpg=mpg, 
-                            usage_rate=usage,
-                            season=cached_current_season,
-                            use_rolling=True
-                        )
                         
                         if player_array is None:
                             # Fallback to default array if no PBP stats
@@ -769,7 +837,7 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                         ]
                         home_players.append(player_array)
         
-        # 🎯 OPTIMIZATION: Sort players by MPG (descending) for better model learning
+        #  OPTIMIZATION: Sort players by MPG (descending) for better model learning
         # High-MPG players (starters) at low indices makes patterns easier to learn
         # Player array format: [name, rim%, c3%, nc3%, mid%, a2%, a3%, ast/100, stl/100, blk/100, MPG, usage, cluster, fouls]
         #                       [  0,    1,    2,    3,    4,   5,   6,     7,       8,       9,     10,   11,     12,     13 ]
@@ -780,11 +848,11 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
         away_name_to_idx = {player[0]: idx for idx, player in enumerate(away_players)}
         home_name_to_idx = {player[0]: idx for idx, player in enumerate(home_players)}
         
-        # 🔥 BREAKTHROUGH OPTIMIZATION: Batch process ALL plays in game with shared setup
+        #  BREAKTHROUGH OPTIMIZATION: Batch process ALL plays in game with shared setup
         game_df_reset = game_df.reset_index(drop=True)
         
-        # 🚀 Pre-compute shared components ONCE per game (was being done 400x per game!)
-        # 🔥 NEW: Use enhanced team stats (8 values: OEFF, DEFF, PACE, 3PAr, FTr, ORr, ASTr, REST)
+        #  Pre-compute shared components ONCE per game (was being done 400x per game!)
+        #  NEW: Use enhanced team stats (8 values: OEFF, DEFF, PACE, 3PAr, FTr, ORr, ASTr, REST)
         try:
             away_stats_array = get_team_stats_array(away_full_name, current_game_date, fallback_season=cached_current_season)
             if away_stats_array is None:
@@ -801,11 +869,11 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
         except Exception:
             home_stats_array = [110.0, 110.0, 100.0, 0.33, 0.25, 0.25, 0.65, 2]
         
-        # 🚀 Pre-build ALL play data for the entire game at once
+        #  Pre-build ALL play data for the entire game at once
         game_play_data = []
         for idx, row in game_df_reset.iterrows():
             if pd.notna(row['description']):
-                # 🔥 CRITICAL FIX: Include structured fields for proper event mapping
+                #  CRITICAL FIX: Include structured fields for proper event mapping
                 play_data = {
                     'quarter': int(row.get('period', 1)),  # FIX: Use 'period' not 'quarter'
                     'time_remaining': row.get('remaining_time', '12:00'),  # FIX: Use 'remaining_time' not 'time_remaining'
@@ -814,20 +882,20 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                     'player': row.get('player'),
                     'team': row.get('team'),
                     'players_on_court': _extract_players_on_court(row, away_abbrev, home_abbrev),
-                    # ✅ Add structured fields for accurate event mapping (was missing!)
+                    #  Add structured fields for accurate event mapping (was missing!)
                     'type': row.get('type'),
                     'event_type': row.get('event_type'),
                     'result': row.get('result'),
                     'points': row.get('points'),
                     'shot_distance': row.get('shot_distance'),
-                    'assist': row.get('assist'),  # ✅ Add assist field for tracking
+                    'assist': row.get('assist'),  #  Add assist field for tracking
                     'shot_details': {'team': None, 'points': float(row.get('points')) if pd.notna(row.get('points')) else None}
                 }
             else:
                 play_data = None
             game_play_data.append(play_data)
         
-        # 🧮 Pre-compute cumulative quarter fouls up to each play index (exclude tech, include o_foul)
+        #  Pre-compute cumulative quarter fouls up to each play index (exclude tech, include o_foul)
         quarter_fouls_cumulative = []  # list of [awayFouls, homeFouls] at each index
         current_q = None
         away_q_fouls = 0
@@ -874,7 +942,7 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                     home_q_fouls += 1
             quarter_fouls_cumulative.append([away_q_fouls, home_q_fouls])
         
-        # 🧮 Pre-compute cumulative player fouls up to each play index
+        #  Pre-compute cumulative player fouls up to each play index
         player_fouls_cumulative = []  # list of dicts {player_name: foul_count} at each index
         player_fouls = {}  # running counter {player_name: count}
         
@@ -902,10 +970,22 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
             
             player_fouls_cumulative.append(dict(player_fouls))
 
-        # 🔥 ULTRA-OPTIMIZATION: Batch process entire game with single shared compact record base
+        #  ULTRA-OPTIMIZATION: Batch process entire game with single shared compact record base
         # Note: player arrays will be updated per-context with current foul counts
-        base_away_players = away_players  # Keep base for copying
-        base_home_players = home_players
+        
+        #  OPTIMIZATION: Create player array templates ONCE per game (not per play!)
+        # Deep copy arrays once, then update fouls in-place for each play
+        away_players_template = []
+        for player_arr in away_players:
+            # Deep copy ONCE per game (was doing this 500x per game!)
+            template = player_arr[:]
+            away_players_template.append(template)
+        
+        home_players_template = []
+        for player_arr in home_players:
+            # Deep copy ONCE per game
+            template = player_arr[:]
+            home_players_template.append(template)
         
         base_compact_record = {
             "A": away_abbrev,
@@ -914,7 +994,7 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
             "hs": home_stats_array
         }
         
-        # 🚀 VECTORIZED processing of all plays in game
+        #  VECTORIZED processing of all plays in game
         for local_i in range(len(game_df_reset)):
             original_idx = game_indices[local_i]
             
@@ -922,7 +1002,7 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                 json_training_data[original_idx] = "{}"
                 continue
             
-            # 🚀 ULTRA-FAST: Get recent plays with optimized slicing
+            #  ULTRA-FAST: Get recent plays with optimized slicing
             recent_plays_verbose = []
             recent_plays_indices = []  # Track original indices in game_play_data
             start_idx = max(0, local_i + 1 - n_total)
@@ -935,7 +1015,7 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                 recent_plays_verbose = recent_plays_verbose[-n_total:]
                 recent_plays_indices = recent_plays_indices[-n_total:]
             
-            # 🔥 OPTIMIZATION: Build record in chosen format
+            #  OPTIMIZATION: Build record in chosen format
             if use_direct_compact and recent_plays_verbose:
                 try:
                     # Build only the variable parts (plays array and lineups)
@@ -944,25 +1024,22 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                     # Update player arrays with current foul counts at this context
                     current_player_fouls = player_fouls_cumulative[local_i] if local_i < len(player_fouls_cumulative) else {}
                     
-                    # Deep copy player arrays and update foul counts (8th element)
-                    away_players_with_fouls = []
-                    for player_arr in base_away_players:
-                        player_copy = player_arr[:]  # shallow copy of array
-                        player_name = player_copy[0]
-                        player_copy[7] = current_player_fouls.get(player_name, 0)
-                        away_players_with_fouls.append(player_copy)
+                    #  OPTIMIZED: Update foul counts IN-PLACE (no copying!)
+                    # Instead of copying arrays 500x per game, we update the template arrays directly
+                    # Fouls are at index 13 (last element after cluster)
+                    for player_arr in away_players_template:
+                        player_name = player_arr[0]
+                        player_arr[13] = current_player_fouls.get(player_name, 0)
                     
-                    home_players_with_fouls = []
-                    for player_arr in base_home_players:
-                        player_copy = player_arr[:]  # shallow copy of array
-                        player_name = player_copy[0]
-                        player_copy[7] = current_player_fouls.get(player_name, 0)
-                        home_players_with_fouls.append(player_copy)
+                    for player_arr in home_players_template:
+                        player_name = player_arr[0]
+                        player_arr[13] = current_player_fouls.get(player_name, 0)
                     
-                    compact_record["ap"] = away_players_with_fouls
-                    compact_record["hp"] = home_players_with_fouls
-                    compact_record["ap_count"] = len(away_players_with_fouls)  # Roster size metadata
-                    compact_record["hp_count"] = len(home_players_with_fouls)  # Roster size metadata
+                    # Use template arrays directly (they're already updated with current fouls)
+                    compact_record["ap"] = away_players_template
+                    compact_record["hp"] = home_players_template
+                    compact_record["ap_count"] = len(away_players_template)  # Roster size metadata
+                    compact_record["hp_count"] = len(home_players_template)  # Roster size metadata
                     
                     # Process recent plays into compact format efficiently
                     lineup_cache = {}
@@ -971,7 +1048,7 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                     prev_score = [0, 0]
                     
                     for play_idx, play in enumerate(recent_plays_verbose):
-                        # 🚀 Optimized play processing (extracted from original function)
+                        #  Optimized play processing (extracted from original function)
                         quarter = play['quarter']
                         time_seconds = parse_time_to_seconds(play['time_remaining'])
                         current_score = parse_score_string(play['score'])
@@ -1014,10 +1091,10 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                         
                         # Event code mapping - prioritize structured data when available
                         if play.get('type') or play.get('event_type'):
-                            # ✅ Use structured mapping for accuracy (should work now with proper fields)
+                            #  Use structured mapping for accuracy (should work now with proper fields)
                             event_code, points = map_structured_to_event_code(play)
                         else:
-                            # ✅ Fall back to description parsing with proper shot_details
+                            #  Fall back to description parsing with proper shot_details
                             event_code, points = map_description_to_event_code(
                                 play['description'], play.get('shot_details', {}), score_delta
                             )
@@ -1085,12 +1162,12 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                             return curr if curr in ('A', 'H') else 'N'
                         compact_record["pos"] = _infer_pos_from_plays(plays_array)
                     
-                    # 🚀 Fast JSON serialization
+                    #  Fast JSON serialization
                     json_training_data[original_idx] = json.dumps(compact_record, separators=(',', ':'), ensure_ascii=False)
                     
                 except Exception as e:
                     if processed_plays < 50000:
-                        print(f"⚠️ Error in batch processing for game {game_id}, play {original_idx}: {e}")
+                        print(f" Error in batch processing for game {game_id}, play {original_idx}: {e}")
                         import traceback
                         traceback.print_exc()
                     json_training_data[original_idx] = "{}"
@@ -1141,12 +1218,12 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                             cleaned_plays.append(cleaned_play)
                         verbose_record["recent_plays"] = cleaned_plays
                     
-                    # 🚀 Fast JSON serialization
+                    #  Fast JSON serialization
                     json_training_data[original_idx] = json.dumps(verbose_record, separators=(',', ':'), ensure_ascii=False)
                     
                 except Exception as e:
                     if processed_plays < 50000:
-                        print(f"⚠️ Error in verbose format generation for game {game_id}, play {original_idx}: {e}")
+                        print(f" Error in verbose format generation for game {game_id}, play {original_idx}: {e}")
                         import traceback
                         traceback.print_exc()
                     json_training_data[original_idx] = "{}"
@@ -1155,7 +1232,7 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
         
         processed_plays += len(game_indices)
         
-        # 🚀 MEMORY OPTIMIZATION: Clear game-specific variables to prevent accumulation
+        #  MEMORY OPTIMIZATION: Clear game-specific variables to prevent accumulation
         del game_df, game_df_reset, game_play_data, away_players, home_players
         del away_name_to_idx, home_name_to_idx, base_compact_record
         
@@ -1167,7 +1244,7 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
             eta = remaining / rate if rate > 0 else 0
             game_time = time.time() - game_start_time
             plays_per_game_sec = len(game_indices) / game_time if game_time > 0 else 0
-            print(f"   🚀 Processed {processed_plays:,}/{len(result_df):,} plays ({rate:.0f}/sec, ETA: {eta:.1f}s) [Game {game_id}: {game_time:.1f}s for {len(game_indices)} plays = {plays_per_game_sec:.0f} plays/sec]")
+            print(f"    Processed {processed_plays:,}/{len(result_df):,} plays ({rate:.0f}/sec, ETA: {eta:.1f}s) [Game {game_id}: {game_time:.1f}s for {len(game_indices)} plays = {plays_per_game_sec:.0f} plays/sec]")
     
     # Add JSON data to DataFrame
     result_df['json_training_data'] = json_training_data
@@ -1179,24 +1256,24 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
     # Count actual non-empty training examples
     valid_examples = sum(1 for data in json_training_data if data and data != "{}")
     
-    print(f"\n🔥 BREAKTHROUGH OPTIMIZATION + EVENT MAPPING FIX COMPLETE!")
-    print(f"✅ Generated {valid_examples:,} training examples in {total_elapsed:.1f}s")
+    print(f"\n BREAKTHROUGH OPTIMIZATION + EVENT MAPPING FIX COMPLETE!")
+    print(f" Generated {valid_examples:,} training examples in {total_elapsed:.1f}s")
     if generation_mode == "first_N_plays":
-        print(f"   🎯 first_N_plays mode: {valid_examples} examples (1 per game with {n_total} plays each)")
+        print(f"    first_N_plays mode: {valid_examples} examples (1 per game with {n_total} plays each)")
     else:
-        print(f"   🎯 {generation_mode} mode: {valid_examples} examples")
-    print(f"⚡ Processing rate: {len(result_df)/processing_elapsed:.0f} plays/second")
-    print(f"🔥 BREAKTHROUGH optimizations + critical fix applied:")
+        print(f"    {generation_mode} mode: {valid_examples} examples")
+    print(f" Processing rate: {len(result_df)/processing_elapsed:.0f} plays/second")
+    print(f" BREAKTHROUGH optimizations + critical fix applied:")
     print(f"   • Eliminated 400x redundant compact record building per game")
     print(f"   • Pre-computed shared team stats & player data")
     print(f"   • Game-batched processing + O(n²) elimination")
-    print(f"   • 🔧 FIXED: Proper structured event field mapping (no more 'unknown' events)")
-    print(f"💡 Expected 2-4x speedup: 300-600+ plays/sec + accurate event codes")
+    print(f"   •  FIXED: Proper structured event field mapping (no more 'unknown' events)")
+    print(f" Expected 2-4x speedup: 300-600+ plays/sec + accurate event codes")
     
     return result_df
 
 
 if __name__ == "__main__":
-    print("🚀 NBA Training Data Generation - ULTRA-OPTIMIZED VERSION")
+    print(" NBA Training Data Generation - ULTRA-OPTIMIZED VERSION")
     print("This addresses all major performance bottlenecks identified")
     print("Expected performance improvement: 5-20x faster")

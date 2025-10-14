@@ -1635,8 +1635,15 @@ def create_llm_training_data(df, n_total=5, filter_nan=True, generation_mode="re
     
     game_team_stats = {}
     
+    # Pre-group by game_id once to avoid repeated DataFrame scans
+    game_groups = result_df.groupby('game_id', sort=False)
+    
     for game_id in unique_games:
-        game_df = result_df[result_df['game_id'] == game_id]
+        # Fast O(1) group lookup instead of O(n) boolean filtering
+        try:
+            game_df = game_groups.get_group(game_id)
+        except KeyError:
+            continue
         # Use the game date for team stats context
         game_date = game_df.iloc[0].get('date', None)
         stats = get_team_stats_for_game(game_df, game_team_mapping, target_date=game_date)
@@ -1661,7 +1668,11 @@ def create_llm_training_data(df, n_total=5, filter_nan=True, generation_mode="re
     if generation_mode == "remaining_plays":
         print(f"🎯 remaining_plays mode: Skipping first {n_total} plays of each game")
         for game_id in unique_games:
-            game_indices = result_df[result_df['game_id'] == game_id].index.tolist()
+            # Use pre-grouped indices for this game (avoids O(n) scan)
+            try:
+                game_indices = game_groups.get_group(game_id).index.tolist()
+            except KeyError:
+                continue
             valid_play_count = 0
             
             for idx in game_indices:

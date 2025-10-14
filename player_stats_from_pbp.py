@@ -50,6 +50,18 @@ THREE_POINT_DISTANCE = 22  # feet (23.75 in corners, but use 22 as threshold)
 CORNER_3_X_THRESHOLD = 3  # Within 3 feet of sideline
 CORNER_3_Y_RANGE = 14  # Within 14 feet of baseline
 
+# ============================================================================
+# IN-MEMORY CACHES (eliminates redundant calculations)
+# ============================================================================
+
+# Cache possession counts to avoid recounting for same games
+# Key: frozenset of game_ids, Value: possession_counts dict
+_POSSESSION_COUNT_CACHE = {}
+
+# Cache PBP stats to avoid recalculating for same player-date-season combinations
+# Key: (player_name, max_date, season, use_rolling), Value: stats dict
+_PBP_STATS_MEMORY_CACHE = {}
+
 # Shot type classifications
 RIM_SHOT_TYPES = {
     'dunk',
@@ -157,7 +169,7 @@ def load_pbp_data(season_year: str = "2023-2024") -> pd.DataFrame:
     
     # Check cache first
     if season_year in _pbp_data_cache:
-        print(f"✅ Using cached PBP data for {season_year}")
+        print(f" Using cached PBP data for {season_year}")
         return _pbp_data_cache[season_year]
     
     if season_year not in SEASON_FILE_MAPPING:
@@ -169,7 +181,7 @@ def load_pbp_data(season_year: str = "2023-2024") -> pd.DataFrame:
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"PBP data file not found: {filepath}")
     
-    print(f"📊 Loading PBP data: {filepath}")
+    print(f" Loading PBP data: {filepath}")
     start_time = time.time()
     
     df = pd.read_csv(filepath)
@@ -181,7 +193,7 @@ def load_pbp_data(season_year: str = "2023-2024") -> pd.DataFrame:
     df = df.sort_values(['game_id', 'play_id']).reset_index(drop=True)
     
     elapsed = time.time() - start_time
-    print(f"✅ Loaded {len(df):,} plays in {elapsed:.2f}s")
+    print(f" Loaded {len(df):,} plays in {elapsed:.2f}s")
     
     # Cache for reuse
     _pbp_data_cache[season_year] = df
@@ -421,65 +433,77 @@ def count_player_possessions(pbp_df: pd.DataFrame) -> Dict[Tuple[str, int], int]
     Returns:
         Dict mapping (player_name, game_id) -> possession_count
     """
-    print("🔄 Counting possessions...")
+    global _POSSESSION_COUNT_CACHE
+    
+    # Create cache key from game IDs
+    game_ids = frozenset(pbp_df['game_id'].unique())
+    
+    # Check cache first
+    if game_ids in _POSSESSION_COUNT_CACHE:
+        # Silently return cached result (no print to reduce noise)
+        return _POSSESSION_COUNT_CACHE[game_ids]
+    
+    print("Counting possessions...")
     start_time = time.time()
     
     possession_counts = {}
     
-    # Process each game separately
-    for game_id in pbp_df['game_id'].unique():
-        game_plays = pbp_df[pbp_df['game_id'] == game_id].reset_index(drop=True)
+    # Vectorized per-game processing
+    for game_id, game_plays in pbp_df.groupby('game_id', sort=False):
+        game_plays = game_plays.reset_index(drop=True)
         
-        for idx, play in game_plays.iterrows():
-            # Get next play for context
-            next_play = game_plays.iloc[idx + 1] if idx + 1 < len(game_plays) else None
-            
-            # Check if possession ends
-            ends, reason = is_possession_ending_event(play, next_play)
-            
-            if ends:
-                # Credit possession to all players on court for the team that had possession
-                possession_team = play.get('team')
-                
-                if pd.isna(possession_team) or possession_team == '':
-                    continue
-                
-                # Determine if possession team is home or away
-                # Check if the player (if any) is in home or away positions
-                players_to_credit = []
-                
-                # First try: check if active player is in home or away
-                active_player = play.get('player')
-                if pd.notna(active_player) and active_player != '':
-                    h_players = [play.get(f'h{i}') for i in range(1, 6)]
-                    a_players = [play.get(f'a{i}') for i in range(1, 6)]
-                    
-                    if active_player in h_players:
-                        # Possession team is home
-                        players_to_credit = h_players
-                    elif active_player in a_players:
-                        # Possession team is away
-                        players_to_credit = a_players
-                else:
-                    # No active player, try to infer from team
-                    # Look at all 10 players and check which set has someone from this team
-                    h_players = [play.get(f'h{i}') for i in range(1, 6)]
-                    a_players = [play.get(f'a{i}') for i in range(1, 6)]
-                    
-                    # Find any other play in this game with this team to determine home/away
-                    # For now, just try both and see which makes sense
-                    # This is a fallback - most plays should have an active player
-                    players_to_credit = h_players  # Default to home
-                
-                # Credit possession to each player
-                for player in players_to_credit:
-                    if pd.notna(player) and player != '':
-                        key = (player, game_id)
-                        possession_counts[key] = possession_counts.get(key, 0) + 1
+        # Pre-compute shifted columns for next-play context
+        next_event = game_plays['event_type'].shift(-1)
+        next_type = game_plays['type'].astype(str).str.lower().shift(-1)
+        next_team = game_plays['team'].shift(-1)
+        curr_event = game_plays['event_type']
+        curr_type = game_plays['type'].astype(str).str.lower()
+        curr_result = game_plays['result']
+        curr_team = game_plays['team']
+        
+        # Possession-ending masks
+        made_shot = (curr_event == 'shot') & (curr_result == 'made')
+        made_shot_continues = made_shot & (next_event == 'rebound') & next_type.str.contains('offensive', na=False) & (next_team == curr_team)
+        ends_made_shot = made_shot & (~made_shot_continues)
+        
+        def_reb = (curr_event == 'rebound') & curr_type.str.contains('defensive', na=False)
+        turnover = (curr_event == 'turnover')
+        off_foul = (curr_event == 'foul') & curr_type.isin(list(OFFENSIVE_FOUL_TYPES))
+        off_foul_followed_by_tov = off_foul & (next_event == 'turnover')
+        ends_off_foul = off_foul & (~off_foul_followed_by_tov)
+        violation = (curr_event == 'violation') & curr_type.isin(list(POSSESSION_ENDING_VIOLATIONS))
+        end_period = (curr_event == 'end of period')
+        
+        ends_possession_mask = ends_made_shot | def_reb | turnover | ends_off_foul | violation | end_period
+        end_indices = np.flatnonzero(ends_possession_mask.values)
+        
+        if end_indices.size == 0:
+            continue
+        
+        # Determine players to credit possession at each end index
+        # Prefer player’s own side if active; fallback to home lineup
+        for idx in end_indices:
+            row = game_plays.iloc[idx]
+            active_player = row.get('player')
+            h_players = [row.get(f'h{i}') for i in range(1, 6)]
+            a_players = [row.get(f'a{i}') for i in range(1, 6)]
+            players_to_credit = h_players  # default
+            if pd.notna(active_player) and active_player != '':
+                if active_player in h_players:
+                    players_to_credit = h_players
+                elif active_player in a_players:
+                    players_to_credit = a_players
+            for player in players_to_credit:
+                if pd.notna(player) and player != '':
+                    key = (player, game_id)
+                    possession_counts[key] = possession_counts.get(key, 0) + 1
     
     elapsed = time.time() - start_time
     total_possessions = sum(possession_counts.values())
-    print(f"✅ Counted {total_possessions:,} player-possessions in {elapsed:.2f}s")
+    print(f" Counted {total_possessions:,} player-possessions in {elapsed:.2f}s")
+    
+    # Store in cache for future use
+    _POSSESSION_COUNT_CACHE[game_ids] = possession_counts
     
     return possession_counts
 
@@ -617,8 +641,60 @@ def calculate_shot_profile_stats(player_pbp: pd.DataFrame,
             'total_fga': 0
         }
     
-    # Add shot classifications
-    shots['shot_location'] = shots.apply(classify_shot_location, axis=1)
+    # Add shot classifications (vectorized)
+    # Prepare fields
+    shot_type_str = shots['type'].astype(str).str.lower()
+    x = shots['converted_x']
+    y = shots['converted_y']
+    distance = shots['shot_distance']
+    team = shots['team']
+    period = shots['period'].fillna(1)
+    home = shots['home'] if 'home' in shots.columns else ''
+    away = shots['away'] if 'away' in shots.columns else ''
+    
+    # Determine shooting end (approximate without per-row function):
+    # If team equals home team, assume bottom basket in 1st half, top in 2nd; else invert
+    is_home_team = team == home
+    is_first_half = period.astype(int) <= 2
+    shooting_end_bottom = (is_home_team & is_first_half) | ((~is_home_team) & (~is_first_half))
+    
+    # If distance missing and coords present, compute distance to basket end
+    has_coords = x.notna() & y.notna()
+    calc_dist = np.where(
+        shooting_end_bottom,
+        np.sqrt((x - CENTER_X) ** 2 + (y - BASKET_BOTTOM_Y) ** 2),
+        np.sqrt((x - CENTER_X) ** 2 + (y - BASKET_TOP_Y) ** 2)
+    )
+    use_distance = distance.copy()
+    use_distance[use_distance.isna() & has_coords] = calc_dist[use_distance.isna() & has_coords]
+    
+    # 3PT identification
+    is_3pt = shot_type_str.str.contains('3pt', na=False) | (use_distance >= THREE_POINT_DISTANCE)
+    
+    # Corner 3 mask
+    near_sideline = (x <= CORNER_3_X_THRESHOLD) | (x >= (COURT_WIDTH - CORNER_3_X_THRESHOLD))
+    near_baseline = np.where(
+        shooting_end_bottom,
+        y <= (BASKET_BOTTOM_Y + CORNER_3_Y_RANGE),
+        y >= (BASKET_TOP_Y - CORNER_3_Y_RANGE)
+    )
+    is_corner3 = is_3pt & has_coords & near_sideline & near_baseline
+    
+    # Base categories
+    shot_location = pd.Series(index=shots.index, dtype='object')
+    shot_location[is_3pt & is_corner3] = 'corner_3'
+    shot_location[is_3pt & (~is_corner3)] = 'non_corner_3'
+    shot_location[(~is_3pt) & (use_distance <= RIM_DISTANCE)] = 'rim'
+    shot_location[(~is_3pt) & (use_distance > RIM_DISTANCE) & (use_distance <= SHORT_MID_MAX)] = 'short_mid'
+    shot_location[(~is_3pt) & (use_distance < THREE_POINT_DISTANCE) & (use_distance > SHORT_MID_MAX)] = 'long_mid'
+    
+    # For rows still unknown (missing distance), use type fallbacks
+    unknown_mask = shot_location.isna()
+    rim_type_mask = shot_type_str.isin(list(RIM_SHOT_TYPES))
+    shot_location[unknown_mask & rim_type_mask] = 'rim'
+    shot_location[unknown_mask & (~rim_type_mask)] = 'unknown'
+    
+    shots['shot_location'] = shot_location
     
     # 1. Rim attempt rate
     rim_attempts = shots[shots['shot_location'] == 'rim']
@@ -635,15 +711,17 @@ def calculate_shot_profile_stats(player_pbp: pd.DataFrame,
     pullup_3 = 0
     catch_shoot_3 = 0
     
-    for _, shot in three_pt_shots.iterrows():
-        shot_type = str(shot.get('type', ''))
-        assist = shot.get('assist')
-        classification = classify_3pt_type(shot_type, assist)
-        
-        if classification == 'pullup':
-            pullup_3 += 1
-        elif classification == 'catch_shoot':
-            catch_shoot_3 += 1
+    # Vectorize 3PT type classification (approximate: assist -> catch_shoot else pullup; override with known types)
+    three_types = three_pt_shots['type'].astype(str).str.lower()
+    three_assist = three_pt_shots['assist']
+    is_pullup_known = three_types.isin(list(PULLUP_3_TYPES))
+    is_cns_known = three_types.isin(list(CATCH_SHOOT_3_TYPES))
+    is_assisted = three_assist.notna() & (three_assist.astype(str).str.strip() != '')
+    # Priority: known types > assist heuristic
+    pullup_mask = is_pullup_known | (~is_cns_known & ~is_assisted)
+    cns_mask = is_cns_known | (~is_pullup_known & is_assisted)
+    pullup_3 = int(pullup_mask.sum())
+    catch_shoot_3 = int(cns_mask.sum())
     
     stats['pullup_3_rate'] = pullup_3 / total_fga if total_fga > 0 else 0
     stats['catch_shoot_3_rate'] = catch_shoot_3 / total_fga if total_fga > 0 else 0
@@ -829,11 +907,20 @@ def calculate_player_pbp_stats(player_name: str,
     Returns:
         Dict with all PBP stats, or None if player not found
     """
-    # Try cache first (cache key includes rolling mode)
+    global _PBP_STATS_MEMORY_CACHE
+    
+    # Check in-memory cache first (fastest)
+    memory_cache_key = (player_name, max_date, season, use_rolling)
+    if memory_cache_key in _PBP_STATS_MEMORY_CACHE:
+        return _PBP_STATS_MEMORY_CACHE[memory_cache_key]
+    
+    # Try file cache next (slower)
     cache_mode = f"roll{PLAYER_ROLLING_WINDOW}" if use_rolling else "cumulative"
     cache_key = f"{max_date or 'full_season'}_{cache_mode}"
     cached_data = load_from_cache(player_name, cache_key, season)
     if cached_data is not None:
+        # Store in memory cache for future calls
+        _PBP_STATS_MEMORY_CACHE[memory_cache_key] = cached_data
         return cached_data
     
     # Load PBP data
@@ -878,7 +965,7 @@ def calculate_player_pbp_stats(player_name: str,
     
     # Check minimum games requirement
     if num_games < MIN_PLAYER_GAMES:
-        print(f"⚠️ {player_name} has only {num_games} games (minimum {MIN_PLAYER_GAMES} required)")
+        print(f" {player_name} has only {num_games} games (minimum {MIN_PLAYER_GAMES} required)")
         return None
     
     # Get plays from selected games
@@ -894,12 +981,12 @@ def calculate_player_pbp_stats(player_name: str,
     )
     
     if total_possessions == 0:
-        print(f"⚠️ No possessions found for {player_name}")
+        print(f" No possessions found for {player_name}")
         return None
     
     # Calculate stats
     mode_str = f"rolling {num_games} games" if use_rolling else f"cumulative {num_games} games"
-    print(f"📊 Calculating PBP stats for {player_name} ({mode_str}, {total_possessions} possessions)...")
+    print(f" Calculating PBP stats for {player_name} ({mode_str}, {total_possessions} possessions)...")
     
     shot_stats = calculate_shot_profile_stats(player_pbp, player_name, total_possessions)
     creation_stats = calculate_creation_stats(player_pbp, player_name, total_possessions)
@@ -918,8 +1005,11 @@ def calculate_player_pbp_stats(player_name: str,
         'max_date': max_date or 'full_season'
     }
     
-    # Save to cache
+    # Save to file cache
     save_to_cache(player_name, cache_key, season, all_stats)
+    
+    # Store in memory cache for future calls in this session
+    _PBP_STATS_MEMORY_CACHE[memory_cache_key] = all_stats
     
     return all_stats
 
@@ -929,11 +1019,11 @@ def get_player_pbp_stats_summary(stats: dict) -> str:
         return "No stats available"
     
     summary = f"""
-📊 Play-by-Play Stats Summary
+ Play-by-Play Stats Summary
 {'='*50}
 Games: {stats.get('games_played', 0)} | Possessions: {stats.get('total_possessions', 0)}
 
-🎯 Shot Profile:
+ Shot Profile:
   Rim Rate: {stats.get('rim_attempt_rate', 0):.1%}
   Corner 3 Rate: {stats.get('corner_3_rate', 0):.1%}
   Non-Corner 3 Rate: {stats.get('non_corner_3_rate', 0):.1%}
@@ -941,7 +1031,7 @@ Games: {stats.get('games_played', 0)} | Possessions: {stats.get('total_possessio
   Catch & Shoot 3 Rate: {stats.get('catch_shoot_3_rate', 0):.1%}
   Mid-Range Rate: {stats.get('mid_range_rate', 0):.1%}
 
-⭐ Shot Quality:
+ Shot Quality:
   Free Throw Rate: {stats.get('ftr', 0):.3f}
   Shooting Fouls Drawn/100: {stats.get('shooting_fouls_per_100', 0):.1f}
   And-1 Rate: {stats.get('and1_rate', 0):.2f}%
@@ -953,7 +1043,7 @@ Games: {stats.get('games_played', 0)} | Possessions: {stats.get('total_possessio
   Turnovers/100: {stats.get('turnovers_per_100', 0):.1f}
   Ast/TO Ratio: {stats.get('ast_to_ratio', 0):.2f}
 
-🛡️ Defense:
+🛡 Defense:
   Steals/100: {stats.get('steals_per_100', 0):.1f}
   Blocks/100: {stats.get('blocks_per_100', 0):.1f}
   Def Reb Share: {stats.get('def_reb_share', 0):.1%}
@@ -985,7 +1075,7 @@ def build_pbp_cache_for_date_range(start_date: str,
         Number of cache entries created
     """
     mode = f"rolling {PLAYER_ROLLING_WINDOW}-game" if use_rolling else "cumulative"
-    print(f"🚀 Building PBP cache from {start_date} to {end_date} ({mode})")
+    print(f" Building PBP cache from {start_date} to {end_date} ({mode})")
     print(f"   Interval: every {date_interval_days} days")
     print(f"   Season: {season}")
     
@@ -1023,10 +1113,10 @@ def build_pbp_cache_for_date_range(start_date: str,
                 if stats is not None:
                     date_cached += 1
             except Exception as e:
-                print(f"   ⚠️ Error processing {player}: {e}")
+                print(f"    Error processing {player}: {e}")
         
         total_cached += date_cached
-        print(f"   ✅ Cached {date_cached} players for {target_date}")
+        print(f"    Cached {date_cached} players for {target_date}")
     
     print(f"\n🎉 Cache building complete! {total_cached} total entries created.")
     return total_cached
@@ -1099,7 +1189,7 @@ if __name__ == "__main__":
     stats_rolling = calculate_player_pbp_stats(player, test_date, season, use_rolling=True)
     
     if stats_rolling:
-        print(f"✅ Games: {stats_rolling['games_played']}")
+        print(f" Games: {stats_rolling['games_played']}")
         print(f"   Rim%: {stats_rolling.get('rim_attempt_rate', 0):.1%}")
         print(f"   3PT%: {stats_rolling.get('non_corner_3_rate', 0) + stats_rolling.get('corner_3_rate', 0):.1%}")
         print(f"   AST/100: {stats_rolling.get('assists_per_100', 0):.1f}")
@@ -1112,7 +1202,7 @@ if __name__ == "__main__":
     stats_cumulative = calculate_player_pbp_stats(player, test_date, season, use_rolling=False)
     
     if stats_cumulative:
-        print(f"✅ Games: {stats_cumulative['games_played']}")
+        print(f" Games: {stats_cumulative['games_played']}")
         print(f"   Rim%: {stats_cumulative.get('rim_attempt_rate', 0):.1%}")
         print(f"   3PT%: {stats_cumulative.get('non_corner_3_rate', 0) + stats_cumulative.get('corner_3_rate', 0):.1%}")
         print(f"   AST/100: {stats_cumulative.get('assists_per_100', 0):.1f}")
@@ -1141,6 +1231,6 @@ if __name__ == "__main__":
         print("   Differences highlight if player style is evolving")
     
     print(f"\n{'='*80}")
-    print("✅ Rolling window test complete!")
+    print(" Rolling window test complete!")
     print(f"{'='*80}")
 
