@@ -396,27 +396,100 @@ class OpenAIFormatter(BaseFormatter):
         """
         try:
             # Use the context row's JSON context (which should have empty recent_plays)
-            current_json = json.loads(context_row['json_training_data'])
+            current_json_raw = json.loads(context_row['json_training_data'])
+            # Support compact contexts by converting to the verbose structure the formatter expects
+            if self._is_compact_format(current_json_raw):
+                current_json = self._convert_compact_to_verbose_for_formatter(current_json_raw)
+            else:
+                current_json = current_json_raw
             
-            # Get first N non-null plays from the game  
+            # Build first N plays as COMPACT tuples (no players_on_court)
             from config.settings import DEFAULT_N_TOTAL_PLAYS
-            first_n_plays = []
-            n_total = DEFAULT_N_TOTAL_PLAYS  # Number of plays to include (configurable)
-            
+            from game.time_utils import convert_to_quarter_time
+            from game.scoring_utils import determine_scoring_info
+            from generate_training_data import map_structured_to_event_code, map_description_to_event_code
+
+            n_total = DEFAULT_N_TOTAL_PLAYS
+            compact_plays = []
+
+            # Prepare team names for scoring/team mapping
+            away_team = current_json['away_team']['name']
+            home_team = current_json['home_team']['name']
+
+            # Iterate first N valid rows and convert each to compact tuple
             for i in range(len(game_df)):
-                if len(first_n_plays) >= n_total:
+                if len(compact_plays) >= n_total:
                     break
-                    
+
                 row = game_df.iloc[i]
-                if pd.notna(row.get('description')):
-                    # Create play object similar to recent_plays format
-                    play_obj = self._create_play_object(row, current_json, game_df)
-                    first_n_plays.append(play_obj)
-            
-            # Create assistant response with next_plays (plural)
-            assistant_response = {
-                "next_plays": first_n_plays
-            }
+                if pd.isna(row.get('description')):
+                    continue
+
+                # Quarter/time
+                q, t_str = convert_to_quarter_time(row['period'], row['remaining_time'])
+                # Time to seconds
+                ts = 0
+                try:
+                    parts = str(t_str).split(':')
+                    if len(parts) >= 2:
+                        ts = int(parts[-2]) * 60 + int(parts[-1])
+                except Exception:
+                    ts = 720
+
+                # Scores
+                curr_away = int(row.get('away_score', 0) or 0)
+                curr_home = int(row.get('home_score', 0) or 0)
+                score_arr = [curr_away, curr_home]
+
+                # Previous scores (for first row, assume 0-0)
+                if i == 0:
+                    prev_away, prev_home = 0, 0
+                else:
+                    prev = game_df.iloc[i - 1]
+                    prev_away = int(prev.get('away_score', 0) or 0)
+                    prev_home = int(prev.get('home_score', 0) or 0)
+
+                scoring_team, points_scored = determine_scoring_info(
+                    prev_away, prev_home, curr_away, curr_home, away_team, home_team
+                )
+
+                # Actor (simplified like _create_next_play_response)
+                if scoring_team == away_team:
+                    actor = ["A", 0]
+                elif scoring_team == home_team:
+                    actor = ["H", 0]
+                else:
+                    actor = ["A", -1]
+
+                # Event mapping (prefer structured)
+                try:
+                    if ('type' in row) or ('event_type' in row):
+                        event_code, mapped_points = map_structured_to_event_code(row)
+                        if mapped_points is not None:
+                            points_scored = mapped_points
+                    else:
+                        score_delta = max(0, max(curr_away - prev_away, curr_home - prev_home))
+                        event_code, mapped_points = map_description_to_event_code(
+                            row.get('description', ''),
+                            { 'team': scoring_team, 'points': points_scored if points_scored else None },
+                            score_delta
+                        )
+                        if mapped_points is not None:
+                            points_scored = mapped_points
+                except Exception:
+                    event_code = "unknown"
+
+                # Build compact play tuple: scoring -> 7-tuple, non-scoring -> 6-tuple
+                lineup_id = 0
+                if points_scored and points_scored > 0:
+                    play_tuple = [int(q), int(ts), [int(score_arr[0]), int(score_arr[1])], actor, event_code, int(points_scored), int(lineup_id)]
+                else:
+                    play_tuple = [int(q), int(ts), [int(score_arr[0]), int(score_arr[1])], actor, event_code, int(lineup_id)]
+
+                compact_plays.append(play_tuple)
+
+            # Assistant response matches remaining_plays key ('y') but with a list of plays
+            assistant_response = { "y": compact_plays }
             
             # Create OpenAI training example
             training_example = {
