@@ -1170,6 +1170,7 @@ def load_play_by_play_data(season_year):
     """
     # Map season year to file path
     file_mapping = {
+        "2021-2022": r"C:\Users\micha\nba_predictions\data\play_by_play\historical\[10-19-2021]-[06-16-2022]-combined-stats.csv",
         "2022-2023": r"C:\Users\micha\nba_predictions\data\play_by_play\historical\[10-18-2022]-[06-12-2023]-combined-stats.csv",
         "2023-2024": r"C:\Users\micha\nba_predictions\data\play_by_play\historical\[10-24-2023]-[06-17-2024]-combined-stats.csv",
         "2024-2025": r"C:\Users\micha\nba_predictions\data\play_by_play\historical\[10-22-2024]-[06-22-2025]-combined-stats.csv"

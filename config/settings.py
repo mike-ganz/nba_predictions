@@ -110,6 +110,7 @@ class Config:
             # Running on GCP - return Cloud Storage paths
             base_path = f"gs://{bucket_name}/data/play_by_play/historical"
             return {
+                "2021-2022": f"{base_path}/[10-19-2021]-[06-16-2022]-combined-stats.csv",
                 "2022-2023": f"{base_path}/[10-18-2022]-[06-12-2023]-combined-stats.csv",
                 "2023-2024": f"{base_path}/[10-24-2023]-[06-17-2024]-combined-stats.csv",
                 "2024-2025": f"{base_path}/[10-22-2024]-[06-22-2025]-combined-stats.csv"
@@ -117,6 +118,10 @@ class Config:
         else:
             # Running locally - return local paths (unchanged)
             return {
+                "2021-2022": os.path.join(
+                    self.play_by_play_dir,
+                    "[10-19-2021]-[06-16-2022]-combined-stats.csv"
+                ),
                 "2022-2023": os.path.join(
                     self.play_by_play_dir, 
                     "[10-18-2022]-[06-12-2023]-combined-stats.csv"
@@ -207,6 +212,17 @@ TEAM_ABBREVIATIONS = {
 DEFAULT_MIN_GAMES_THRESHOLD = 10  # Keep high threshold for data quality, but cache prior season data
 DEFAULT_N_TOTAL_PLAYS = 12  # Match training data n_total parameter
 FAST_TEST_MODE_THRESHOLD = 100  # Use dummy PCA values below this many rows
+
+# Together.ai Fine-Tuning Configuration
+TOGETHER_API_KEY = os.getenv('TOGETHER_API_KEY')
+TOGETHER_DEFAULT_BASE_MODELS = {
+    '8B': 'meta-llama/Meta-Llama-3.1-8B-Instruct-Reference',
+    '70B': 'meta-llama/Meta-Llama-3.1-70B-Instruct-Reference',
+    '405B': 'meta-llama/Meta-Llama-3.1-405B-Instruct-Reference'
+}
+TOGETHER_DEFAULT_TRAINING_TYPE = 'lora'  # 'lora' or 'full'
+TOGETHER_DEFAULT_N_EPOCHS = None  # Auto if None
+TOGETHER_DEFAULT_N_EVALS = 10  # Validation evaluations
 
 
 

@@ -6,7 +6,7 @@ creating user-assistant conversation pairs suitable for model training.
 """
 
 import json
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional, Iterator
 import pandas as pd
 import re
 from game.time_utils import convert_to_quarter_time
@@ -15,6 +15,39 @@ from data.file_utils import file_manager
 from training.data_generator import extract_players_on_court
 from training.base_formatter import BaseFormatter, FormatterFactory
 
+_RAW_SEASON_CACHE: Dict[str, pd.DataFrame] = {}
+_SEASON_INDEX_CACHE: Dict[str, Dict[Any, Tuple[pd.DataFrame, Dict[Any, int]]]] = {}
+
+def _get_raw_df_for_season(season_year: str) -> pd.DataFrame:
+    """Load and cache raw play-by-play data for a given season."""
+    if season_year in _RAW_SEASON_CACHE:
+        return _RAW_SEASON_CACHE[season_year]
+    from generate_training_data import load_play_by_play_data
+    raw_df = load_play_by_play_data(season_year)
+    _RAW_SEASON_CACHE[season_year] = raw_df
+    return raw_df
+
+
+def _get_season_index(season_year: str) -> Dict[Any, Tuple[pd.DataFrame, Dict[Any, int]]]:
+    """Build and cache season-level per-game indices for fast lookups.
+    Returns mapping: game_id -> (raw_game_df_sorted_by_play_id, play_id_to_index)
+    """
+    if season_year in _SEASON_INDEX_CACHE:
+        return _SEASON_INDEX_CACHE[season_year]
+    raw_df = _get_raw_df_for_season(season_year)
+    # Sort once for the season
+    raw_sorted = raw_df.sort_values(['game_id', 'play_id']).reset_index(drop=True)
+    season_index: Dict[Any, Tuple[pd.DataFrame, Dict[Any, int]]] = {}
+    for game_id, grp in raw_sorted.groupby('game_id', sort=False):
+        # grp already sorted by play_id due to prior sort
+        play_ids = grp['play_id'].tolist()
+        try:
+            pid_map = {int(pid): i for i, pid in enumerate(play_ids)}
+        except Exception:
+            pid_map = {pid: i for i, pid in enumerate(play_ids)}
+        season_index[game_id] = (grp.reset_index(drop=True), pid_map)
+    _SEASON_INDEX_CACHE[season_year] = season_index
+    return season_index
 
 def remove_parentheses_content(text):
     """
@@ -147,7 +180,7 @@ class OpenAIFormatter(BaseFormatter):
             print(f"⚠️ Warning: Failed to convert compact to verbose: {e}")
             return compact_data  # Return original if conversion fails
     
-    def create_training_data(self, df: pd.DataFrame, generation_mode: str = "remaining_plays", n_total: int = None) -> List[Dict[str, Any]]:
+    def create_training_data(self, df: pd.DataFrame, generation_mode: str = "remaining_plays", n_total: int = None, season_year: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Convert our JSON training data into OpenAI fine-tuning JSONL format.
         Handles two generation modes:
@@ -166,8 +199,10 @@ class OpenAIFormatter(BaseFormatter):
         if generation_mode == "first_N_plays":
             # Mode 2: Single entry per game with first N plays as targets
             # Load raw data to ensure proper sequential play selection
-            from generate_training_data import load_play_by_play_data
-            raw_df = load_play_by_play_data('2023-2024')
+            if season_year is None:
+                from config.settings import get_current_season_year
+                season_year = get_current_season_year()
+            raw_df = _get_raw_df_for_season(season_year)
             
             for game_id in sorted(df['game_id'].unique()):
                 game_df = df[df['game_id'] == game_id].sort_values('play_id')
@@ -199,12 +234,19 @@ class OpenAIFormatter(BaseFormatter):
         else:
             # Mode 1: Standard processing (remaining_plays)
             # Load raw data to ensure proper sequential play selection
-            from generate_training_data import load_play_by_play_data
-            raw_df = load_play_by_play_data('2023-2024')
+            if season_year is None:
+                from config.settings import get_current_season_year
+                season_year = get_current_season_year()
+            raw_df = _get_raw_df_for_season(season_year)
             
             for game_id in sorted(df['game_id'].unique()):
                 game_df = df[df['game_id'] == game_id].sort_values('play_id').reset_index(drop=True)
                 raw_game_df = raw_df[raw_df['game_id'] == game_id].sort_values('play_id').reset_index(drop=True)
+                # Build O(1) lookup from play_id to index to avoid O(n^2)
+                try:
+                    play_id_to_raw_index = {int(pid): i for i, pid in enumerate(raw_game_df['play_id'].tolist())}
+                except Exception:
+                    play_id_to_raw_index = {pid: i for i, pid in enumerate(raw_game_df['play_id'].tolist())}
                 
                 for i in range(len(game_df) - 1):  # -1 because we need a next play
                     # Skip rows with invalid JSON data
@@ -212,13 +254,65 @@ class OpenAIFormatter(BaseFormatter):
                     if not current_json_data or current_json_data.strip() == "" or current_json_data.strip() == "{}":
                         continue
                     
-                    example = self._create_training_example(game_df, i, raw_game_df)
+                    example = self._create_training_example(game_df, i, raw_game_df, play_id_to_raw_index)
                     if example:
                         training_examples.append(example)
         
         return training_examples
+
+    def iter_training_data(self, df: pd.DataFrame, generation_mode: str = "remaining_plays",
+                           n_total: int = None, season_year: Optional[str] = None) -> Iterator[Dict[str, Any]]:
+        """Yield OpenAI-format training examples as they are created (streaming)."""
+        if generation_mode == "first_N_plays":
+            # Prepare raw df if needed (not strictly required here)
+            for game_id in sorted(df['game_id'].unique()):
+                game_df = df[df['game_id'] == game_id].sort_values('play_id')
+                # Find a context row
+                context_row = None
+                for i in range(len(game_df)):
+                    json_data = game_df.iloc[i]['json_training_data']
+                    if json_data and json_data.strip() and json_data.strip() != "{}":
+                        try:
+                            parsed = json.loads(json_data)
+                            if 'away_team' in parsed and 'home_team' in parsed:
+                                context_row = game_df.iloc[i]
+                                break
+                            elif self._is_compact_format(parsed):
+                                context_row = game_df.iloc[i]
+                                break
+                        except json.JSONDecodeError:
+                            continue
+                if context_row is not None:
+                    example = self._create_first_n_plays_example(game_df, context_row)
+                    if example:
+                        yield example
+        else:
+            # remaining_plays
+            if season_year is None:
+                from config.settings import get_current_season_year
+                season_year = get_current_season_year()
+            season_index = _get_season_index(season_year)
+            for game_id in sorted(df['game_id'].unique()):
+                game_df = df[df['game_id'] == game_id].sort_values('play_id').reset_index(drop=True)
+                if game_id in season_index:
+                    raw_game_df, play_id_to_raw_index = season_index[game_id]
+                else:
+                    # Fallback (should be rare)
+                    raw_df = _get_raw_df_for_season(season_year)
+                    raw_game_df = raw_df[raw_df['game_id'] == game_id].sort_values('play_id').reset_index(drop=True)
+                    try:
+                        play_id_to_raw_index = {int(pid): i for i, pid in enumerate(raw_game_df['play_id'].tolist())}
+                    except Exception:
+                        play_id_to_raw_index = {pid: i for i, pid in enumerate(raw_game_df['play_id'].tolist())}
+                for i in range(len(game_df) - 1):
+                    current_json_data = game_df.iloc[i]['json_training_data']
+                    if not current_json_data or current_json_data.strip() == "" or current_json_data.strip() == "{}":
+                        continue
+                    example = self._create_training_example(game_df, i, raw_game_df, play_id_to_raw_index)
+                    if example:
+                        yield example
     
-    def _create_training_example(self, game_df: pd.DataFrame, current_index: int, raw_game_df: pd.DataFrame = None) -> Optional[Dict[str, Any]]:
+    def _create_training_example(self, game_df: pd.DataFrame, current_index: int, raw_game_df: pd.DataFrame = None, play_id_to_raw_index: Optional[dict] = None) -> Optional[Dict[str, Any]]:
         """
         Create a single OpenAI training example from current and next plays.
         
@@ -238,11 +332,14 @@ class OpenAIFormatter(BaseFormatter):
             
             if raw_game_df is not None:
                 # Find the next sequential play in raw data
-                current_raw_index = None
-                for idx, row in raw_game_df.iterrows():
-                    if row['play_id'] == current_play_id:
-                        current_raw_index = idx
-                        break
+                if play_id_to_raw_index is not None:
+                    current_raw_index = play_id_to_raw_index.get(current_play_id)
+                else:
+                    current_raw_index = None
+                    for idx, row in raw_game_df.iterrows():
+                        if row['play_id'] == current_play_id:
+                            current_raw_index = idx
+                            break
                 
                 if current_raw_index is not None and current_raw_index < len(raw_game_df) - 1:
                     next_row = raw_game_df.iloc[current_raw_index + 1]

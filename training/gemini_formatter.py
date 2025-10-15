@@ -192,11 +192,24 @@ class GeminiFormatter(BaseFormatter):
             if season is None:
                 if len(df) > 0:
                     sample_game_id = str(df['game_id'].iloc[0])
-                    if sample_game_id.startswith('222'):
+                    # Support both 8-char (e.g., 22200001) and 10-char (e.g., 0022200001) formats
+                    season_code = None
+                    if len(sample_game_id) >= 3:
+                        # 8-char form: first 3 are code (e.g., 222, 223, 224)
+                        season_code = sample_game_id[:3]
+                    if len(sample_game_id) >= 5 and sample_game_id.startswith('00'):
+                        # 10-char form: characters 2:5 form the code (e.g., 0022200001 -> 222)
+                        season_code = sample_game_id[2:5]
+                    
+                    if season_code == '021':
+                        season = '2020-2021'
+                    elif season_code == '022':
+                        season = '2021-2022'
+                    elif season_code == '222':
                         season = '2022-2023'
-                    elif sample_game_id.startswith('223'):
+                    elif season_code == '223':
                         season = '2023-2024'
-                    elif sample_game_id.startswith('224'):
+                    elif season_code == '224':
                         season = '2024-2025'
                     else:
                         season = '2023-2024'  # Default fallback

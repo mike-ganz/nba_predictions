@@ -25,6 +25,7 @@ def load_player_data(season_year=None):
         season_year = config.season_year
     """Load player boxscore data for the specified season year."""
     file_mapping = {
+        "2020-2021": "data/player_boxscores/historical/NBA-2020-2021-Player-BoxScore-Dataset.xlsx",
         "2021-2022": "data/player_boxscores/historical/NBA-2021-2022-Player-BoxScore-Dataset.xlsx",
         "2022-2023": "data/player_boxscores/historical/NBA-2022-2023-Player-BoxScore-Dataset.xlsx", 
         "2023-2024": "data/player_boxscores/historical/NBA-2023-2024-Player-BoxScore-Dataset.xlsx",

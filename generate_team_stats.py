@@ -27,6 +27,7 @@ def load_team_data(season_year=None):
     """Load team boxscore data for the specified season year."""
     # Map season year to file path
     file_mapping = {
+        "2020-2021": "data/team_boxscores/historical/2020-2021_NBA_Box_Score_Team-Stats.xlsx",
         "2021-2022": "data/team_boxscores/historical/2021-2022_NBA_Box_Score_Team-Stats.xlsx",
         "2022-2023": "data/team_boxscores/historical/2022-2023_NBA_Box_Score_Team-Stats.xlsx",
         "2023-2024": "data/team_boxscores/historical/2023-2024_NBA_Box_Score_Team-Stats.xlsx",

@@ -28,13 +28,14 @@ This project implements two main pipelines:
 
 - Generate training data from 3 NBA seasons (2022-2023, 2023-2024, 2024-2025)
 - Support for both **compact** and **verbose** data formats
-- Multiple output formats: **Gemini**, **OpenAI**, and **CSV**
+- Multiple output formats: **Gemini**, **OpenAI**, **Together.ai**, and **CSV**
 - Two generation modes:
   - `remaining_plays`: Standard next-play prediction (high volume)
   - `first_N_plays`: Sequence generation (one example per game)
 - Ultra-optimized pipeline: 5-20x faster than baseline with comprehensive PCA caching
 - Systematic simulation orchestration with SQLite result storage
-- Support for both OpenAI and Gemini fine-tuned models
+- Support for OpenAI, Gemini, and Together.ai fine-tuned models
+- **Together.ai integration**: Fast, cost-effective LoRA fine-tuning with auto-hyperparameters
 
 ## 🏗️ Architecture
 
@@ -98,6 +99,9 @@ python generate_2023_2024_season.py
 
 # Generate with OpenAI format
 python generate_2023_2024_season.py --format openai
+
+# Generate with Together.ai format
+python generate_2023_2024_season.py --format together
 
 # Generate verbose format
 python generate_2023_2024_season.py --data-format verbose
@@ -1012,6 +1016,30 @@ os.environ['GENAI_LIMITER_JITTER'] = '0.1'
 results = predict_rolling_sequence(game_context, n_iterations=1000)
 ```
 
+### Fine-Tune with Together.ai (New!)
+
+Complete workflow for fast, cost-effective fine-tuning:
+
+```bash
+# Step 1: Generate training data
+python generate_2023_2024_season.py \
+    --format together \
+    --season 2023-2024 \
+    --games 100
+
+# Step 2: Fine-tune model
+export TOGETHER_API_KEY=your_api_key
+python fine_tune_together.py \
+    --training-file data/training/nba_2023_2024_together_*.jsonl \
+    --validation-split 0.1 \
+    --n-evals 10
+
+# Step 3: Model is ready!
+# Output: your_account/ft-llama-3.1-8b-nba-abc123
+```
+
+See [TOGETHER_AI_GUIDE.md](TOGETHER_AI_GUIDE.md) for complete documentation.
+
 ### Generate Training Data for Fine-Tuning
 
 ```bash
@@ -1021,6 +1049,13 @@ python generate_2023_2024_season.py \
     --format gemini \
     --data-format compact \
     --generation-mode remaining_plays
+
+# Together.ai format (fast, cost-effective)
+python generate_2023_2024_season.py \
+    --season 2023-2024 \
+    --format together \
+    --data-format compact \
+    --games 100
 
 # Sample dataset for testing
 python generate_2023_2024_season.py \
@@ -1128,6 +1163,7 @@ Additional documentation files:
 - `README_ORCHESTRATION.md`: Orchestration system details
 - `SEASON_HANDLING_GUIDE.md`: Multi-season support
 - `compact_schema_prompt.md`: Data format specification
+- `TOGETHER_AI_GUIDE.md`: **Together.ai fine-tuning guide** (new!)
 
 ## 🧪 Testing
 

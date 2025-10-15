@@ -5,6 +5,7 @@ Generate complete 2023-2024 NBA season training data in compact or verbose forma
 Usage:
     python generate_2023_2024_season.py                             # Full season (Gemini format, compact)
     python generate_2023_2024_season.py --format openai             # Full season (OpenAI format, compact)
+    python generate_2023_2024_season.py --format together           # Full season (Together.ai format, compact)
     python generate_2023_2024_season.py --format csv                # Full season (CSV format, compact)
     python generate_2023_2024_season.py --data-format verbose       # Full season (verbose format)
     python generate_2023_2024_season.py --sample 1000 --format gemini  # Sample + Gemini format
@@ -33,13 +34,13 @@ def main():
     parser.add_argument('--output-prefix', type=str, default=None,
                        help='Output filename prefix (default: nba_{season})')
     parser.add_argument('--format', type=str, default='gemini',
-                       choices=['csv', 'openai', 'gemini'],
+                       choices=['csv', 'openai', 'gemini', 'together'],
                        help='Output format to generate (default: gemini)')
     parser.add_argument('--generation-mode', type=str, default='remaining_plays',
                        choices=['remaining_plays', 'first_N_plays'],
                        help='Training data generation mode (default: remaining_plays)')
     parser.add_argument('--season', type=str, default='2023-2024',
-                       choices=['2022-2023', '2023-2024', '2024-2025'],
+                       choices=['2021-2022', '2022-2023', '2023-2024', '2024-2025'],
                        help='NBA season to generate data for (default: 2023-2024)')
     parser.add_argument('--ultra-fast-gemini', action='store_true',
                        help='Use ultra-optimized Gemini formatter (10-50x faster)')
@@ -238,12 +239,32 @@ def main():
         elif args.format == 'openai':
             from training.openai_formatter import OpenAIFormatter
             openai_formatter = OpenAIFormatter()
-            openai_examples = openai_formatter.create_training_data(training_df, generation_mode=args.generation_mode, n_total=args.n_total)
+            openai_examples = openai_formatter.create_training_data(
+                training_df, generation_mode=args.generation_mode, n_total=args.n_total, season_year=args.season
+            )
             filename = os.path.join(output_dir, f"{args.output_prefix}_openai_{args.data_format}_{args.generation_mode}_{timestamp}.jsonl")
-            with open(filename, 'w') as f:
+            try:
+                import ujson as _fastjson  # type: ignore
+            except Exception:
+                _fastjson = json
+            with open(filename, 'w', encoding='utf-8') as f:
                 for example in openai_examples:
-                    f.write(json.dumps(example, separators=(',', ':')) + '\n')
+                    f.write(_fastjson.dumps(example, separators=(',', ':')) + '\n')
             print(f" OpenAI JSONL saved: {filename}")
+            
+        elif args.format == 'together':
+            from training.together_formatter import TogetherFormatter
+            together_formatter = TogetherFormatter()
+            # Stream directly to disk for speed and low memory
+            filename = f"{args.output_prefix}_together_{args.data_format}_{args.generation_mode}_{timestamp}.jsonl"
+            filepath = together_formatter.stream_save_training_data(
+                training_df,
+                filename=filename,
+                generation_mode=args.generation_mode,
+                n_total=args.n_total,
+                season_year=args.season
+            )
+            print(f" Together.ai JSONL saved: {filepath}")
             
         elif args.format == 'gemini':
             # Check for ultra-fast formatter flag
