@@ -228,7 +228,7 @@ class OpenAIFormatter(BaseFormatter):
                             continue
                 
                 if context_row is not None:
-                    example = self._create_first_n_plays_example(game_df, context_row)
+                    example = self._create_first_n_plays_example(game_df, context_row, n_total=n_total)
                     if example:
                         training_examples.append(example)
         else:
@@ -283,7 +283,7 @@ class OpenAIFormatter(BaseFormatter):
                         except json.JSONDecodeError:
                             continue
                 if context_row is not None:
-                    example = self._create_first_n_plays_example(game_df, context_row)
+                    example = self._create_first_n_plays_example(game_df, context_row, n_total=n_total)
                     if example:
                         yield example
         else:
@@ -353,7 +353,8 @@ class OpenAIFormatter(BaseFormatter):
             
             # Parse the current JSON context and convert if compact
             current_json_raw = json.loads(current_row['json_training_data'])
-            if self._is_compact_format(current_json_raw):
+            is_compact_context = self._is_compact_format(current_json_raw)
+            if is_compact_context:
                 current_json = self._convert_compact_to_verbose_for_formatter(current_json_raw)
             else:
                 current_json = current_json_raw
@@ -383,7 +384,8 @@ class OpenAIFormatter(BaseFormatter):
             print(f"Warning: Skipped training example due to error: {e}")
             return None
     
-    def _create_first_n_plays_example(self, game_df: pd.DataFrame, context_row: pd.Series) -> Optional[Dict[str, Any]]:
+    def _create_first_n_plays_example(self, game_df: pd.DataFrame, context_row: pd.Series,
+                                      n_total: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """
         Create a training example for first_N_plays mode.
         
@@ -397,8 +399,9 @@ class OpenAIFormatter(BaseFormatter):
         try:
             # Use the context row's JSON context (which should have empty recent_plays)
             current_json_raw = json.loads(context_row['json_training_data'])
-            # Support compact contexts by converting to the verbose structure the formatter expects
-            if self._is_compact_format(current_json_raw):
+            # Detect original schema (needed for fallbacks) and convert if compact
+            is_compact_context = self._is_compact_format(current_json_raw)
+            if is_compact_context:
                 current_json = self._convert_compact_to_verbose_for_formatter(current_json_raw)
             else:
                 current_json = current_json_raw
@@ -407,14 +410,45 @@ class OpenAIFormatter(BaseFormatter):
             from config.settings import DEFAULT_N_TOTAL_PLAYS
             from game.time_utils import convert_to_quarter_time
             from game.scoring_utils import determine_scoring_info
-            from generate_training_data import map_structured_to_event_code, map_description_to_event_code
+            from generate_training_data import map_structured_to_event_code, map_description_to_event_code, resolve_actor
 
-            n_total = DEFAULT_N_TOTAL_PLAYS
+            if n_total is None:
+                n_total = DEFAULT_N_TOTAL_PLAYS
             compact_plays = []
 
             # Prepare team names for scoring/team mapping
             away_team = current_json['away_team']['name']
             home_team = current_json['home_team']['name']
+
+            # Build player name → index maps
+            away_name_to_idx: Dict[str, int] = {}
+            home_name_to_idx: Dict[str, int] = {}
+
+            away_players_verbose = current_json.get('away_team', {}).get('players')
+            home_players_verbose = current_json.get('home_team', {}).get('players')
+
+            if isinstance(away_players_verbose, list):
+                for idx, player in enumerate(away_players_verbose):
+                    if isinstance(player, dict):
+                        name = player.get('name')
+                        if name:
+                            away_name_to_idx[str(name)] = idx
+
+            if isinstance(home_players_verbose, list):
+                for idx, player in enumerate(home_players_verbose):
+                    if isinstance(player, dict):
+                        name = player.get('name')
+                        if name:
+                            home_name_to_idx[str(name)] = idx
+
+            # Fallback to compact arrays if verbose players missing or empty
+            if (not away_name_to_idx or not home_name_to_idx) and is_compact_context:
+                for idx, player_data in enumerate(current_json_raw.get('ap', []) or []):
+                    if isinstance(player_data, list) and player_data:
+                        away_name_to_idx[str(player_data[0])] = idx
+                for idx, player_data in enumerate(current_json_raw.get('hp', []) or []):
+                    if isinstance(player_data, list) and player_data:
+                        home_name_to_idx[str(player_data[0])] = idx
 
             # Iterate first N valid rows and convert each to compact tuple
             for i in range(len(game_df)):
@@ -453,13 +487,32 @@ class OpenAIFormatter(BaseFormatter):
                     prev_away, prev_home, curr_away, curr_home, away_team, home_team
                 )
 
-                # Actor (simplified like _create_next_play_response)
-                if scoring_team == away_team:
-                    actor = ["A", 0]
-                elif scoring_team == home_team:
-                    actor = ["H", 0]
-                else:
-                    actor = ["A", -1]
+                # Resolve actor using shared helper
+                player_name = row.get('player')
+                if pd.isna(player_name):
+                    player_name = None
+
+                team_name = row.get('team')
+                if pd.isna(team_name):
+                    team_name = None
+
+                inferred_team = scoring_team
+                if team_name:
+                    inferred_team = team_name
+
+                shot_details = {
+                    'team': inferred_team,
+                    'points': points_scored if points_scored else None
+                }
+
+                actor = resolve_actor(
+                    player_name,
+                    shot_details,
+                    away_team,
+                    home_team,
+                    away_name_to_idx,
+                    home_name_to_idx
+                )
 
                 # Event mapping (prefer structured)
                 try:

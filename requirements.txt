@@ -7,3 +7,4 @@ ujson>=5.0.0
 gcsfs>=2023.1.0
 google-generativeai>=0.3.0
 requests>=2.31.0
+together>=1.2.0

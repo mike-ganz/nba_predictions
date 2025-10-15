@@ -494,14 +494,14 @@ class NBA_Orchestrator:
             
             # Log validation termination if present
             if validation_termination:
-                self.logger.info(f"🛑 Validation termination captured for {run_id}")
+                self.logger.info(f"Validation termination captured for {run_id}")
                 self.logger.info(f"   Type: {validation_termination.get('validation_termination_type', 'N/A')}")
                 self.logger.info(f"   Trigger: {validation_termination.get('validation_trigger_condition', 'N/A')}")
                 self.logger.info(f"   Game State: Q{validation_termination.get('validation_game_state_quarter', '?')} {validation_termination.get('validation_game_state_time', 'N/A')}")
             
             # Log validation failure details if present
             if validation_failure:
-                self.logger.info(f"🔍 Validation failure details captured for {run_id}")
+                self.logger.info(f"Validation failure details captured for {run_id}")
                 self.logger.info(f"   Most common reason: {validation_failure.get('validation_most_common_reason', 'N/A')}")
                 self.logger.info(f"   Most common error type: {validation_failure.get('validation_most_common_error_type', 'N/A')}")
                 self.logger.info(f"   Total failed attempts: {validation_failure.get('validation_total_failed_attempts', 0)}")
@@ -676,7 +676,7 @@ def main():
     parser.add_argument('--games', type=str, help='Comma-separated list of game IDs')
     parser.add_argument('--runs-per-game', type=int, default=5, help='Number of runs per game')
     parser.add_argument('--season', type=str, default='2023-2024', help='Season year (YYYY-YYYY)')
-    parser.add_argument('--platform', type=str, default='gemini', choices=['openai', 'gemini'], help='AI platform')
+    parser.add_argument('--platform', type=str, default='gemini', choices=['openai', 'gemini', 'together'], help='AI platform')
     parser.add_argument('--max-iterations', type=int, default=2000, help='Max iterations per run')
     parser.add_argument('--output-db', type=str, default='simulation_results.db', help='Output database file')
     parser.add_argument('--log-level', type=str, default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'])
@@ -708,6 +708,13 @@ def main():
     
     # Create orchestrator
     orchestrator = NBA_Orchestrator(config)
+    
+    # Ensure prediction platform env aligns with CLI/config
+    try:
+        import os
+        os.environ["PREDICTION_PLATFORM"] = config.platform
+    except Exception:
+        pass
     
     if args.analyze:
         # Analyze all results

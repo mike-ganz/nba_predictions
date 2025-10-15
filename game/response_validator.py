@@ -1212,19 +1212,32 @@ class NBAResponseValidator:
             # Allow small increases (up to 10 seconds) for timeouts, reviews, etc.
             time_diff = current_seconds - self.last_time_seconds
             
+            # Track consecutive same-timestamp occurrences (allow up to 3 in a row)
+            if not hasattr(self, 'same_time_count'):
+                self.same_time_count = 0
+            if time_diff == 0:
+                self.same_time_count += 1
+                if self.same_time_count > 3:
+                    print(f"Time stagnation: more than 3 consecutive plays at {current_time} in Q{current_quarter}")
+                    return ValidationResult.ROLLBACK_TIME
+            else:
+                # Reset counter when time changes
+                self.same_time_count = 0
+            
             # Only flag significant time increases (more than 10 seconds forward in same quarter)
             if time_diff > 10:  # Time jumped forward by more than 10 seconds
                 self.time_progression_violations += 1
                 print(f"Time progression violation: {self.last_time_remaining} → {current_time} (+{time_diff}s) in Q{current_quarter}")
                 
                 if self.time_progression_violations >= 5:  # More lenient - allow more violations
-                    print(f"🚨 Time progression validation triggered! {self.time_progression_violations} violations")
+                    print(f"Time progression validation triggered! {self.time_progression_violations} violations")
                     self.time_progression_violations = 0  # Reset counter
                     return ValidationResult.RETRY
         
         elif self.last_quarter != current_quarter:
-            # Quarter changed - reset violation counter
+            # Quarter changed - reset counters
             self.time_progression_violations = 0
+            self.same_time_count = 0
             print(f"Quarter changed: Q{self.last_quarter} → Q{current_quarter} (resetting time progression tracking)")
         
         # Update tracking state

@@ -946,12 +946,30 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                 else:
                     log_config.log_verbose("Stage 1 context is clean (no recent_plays)")
             
+            # Compute a safe Stage 1 max_tokens proactively for Together/LLM limits
+            try:
+                # Serialize clean context compactly to estimate token usage
+                _ctx_json = json_dumps(stage1_context, separators=(',', ':'))
+                # Rough token estimate: chars/4 (sufficient for budget guard)
+                _est_input_tokens = max(1, len(_ctx_json) // 4)
+            except Exception:
+                _est_input_tokens = 1000
+            # Allowance: 8000 - inputs - cushion; clamp to ~1500–2000
+            _cushion = 128
+            _allowed_new = max(1500, min(2000, 8000 - _est_input_tokens - _cushion))
+            log_config.log_verbose(f"Stage 1 estimated input tokens: ~{_est_input_tokens}; initial max_tokens={_allowed_new}")
+
             # Stage 1 API call with base context only (matching first_N_plays training mode)
+            # Stage temperatures from env (allow override)
+            try:
+                _stage_temp = float(os.getenv("PREDICTION_TEMPERATURE", "0.8"))
+            except Exception:
+                _stage_temp = 0.8
             stage1_content, stage1_usage, stage1_game_ended, stage1_needs_rollback, stage1_termination_info = client.predict_with_validation(
                 context=stage1_context,  # Base context without recent_plays
                 model_id=model_config['model_1_id'],
-                max_tokens=8000,  # Higher limit for Stage 1 (generates ~20 plays)
-                temperature=1.01,
+                max_tokens=int(_allowed_new),
+                temperature=_stage_temp,
                 max_retries=6,
                 stage1_mode=True  # Use Stage 1 validation (expects next_plays array)
             )
@@ -1182,11 +1200,16 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                     ctx_min, ctx_sec = ctx_t // 60, ctx_t % 60
             
             # Stage 2 API call with validation and rollback handling
+            # Stage temperatures from env (allow override)
+            try:
+                _stage_temp2 = float(os.getenv("PREDICTION_TEMPERATURE", "0.8"))
+            except Exception:
+                _stage_temp2 = 0.8
             stage2_content, stage2_usage, stage2_game_ended, stage2_needs_rollback, termination_info = client.predict_with_validation(
                 context=context_to_send,
                 model_id=model_config['model_2_id'],
                 max_tokens=5000,
-                temperature=1.01,
+                temperature=_stage_temp2,
                 max_retries=6
             )
             
@@ -1273,6 +1296,8 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                         continue
                     else:
                         log_config.log_normal(f"Rollback snapshot was None - continuing with current state")
+                        # Skip parsing/processing of the invalid response and try again next iteration
+                        continue
             
             if stage2_game_ended:
                 log_config.log_minimal(f"🏁 Game ended during iteration {iteration + 1} - terminating prediction sequence")

@@ -13,6 +13,7 @@ import os
 import time
 import threading
 import random
+import re
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from dotenv import load_dotenv
 from .response_validator import NBAResponseValidator, ValidationResult
@@ -212,6 +213,7 @@ class BasePredictionClient(ABC):
             ValueError: If validation fails after all retries
         """
         validation_attempts = []
+        current_max_tokens = max_tokens
         
         for attempt in range(max_retries + 1):
             try:
@@ -220,7 +222,7 @@ class BasePredictionClient(ABC):
                 if limiter is not None:
                     limiter.acquire()
                 try:
-                    response_content, usage_stats = self.predict(context, model_id, max_tokens, temperature)
+                    response_content, usage_stats = self.predict(context, model_id, current_max_tokens, temperature)
                 finally:
                     if limiter is not None:
                         limiter.release()
@@ -237,16 +239,20 @@ class BasePredictionClient(ABC):
                         print("<non-printable response content>")
                     print("=== END RAW RESPONSE ===\n")
                 
+                # Sanitize and normalize JSON before validation
+                processed_content = self._sanitize_json_like_text(response_content)
+                processed_content = self._normalize_compact_response_if_applicable(processed_content)
+                
                 # Validate response (different logic for Stage 1 vs Stage 2)
                 if stage1_mode:
-                    validation_result, validation_errors, reason = self._validate_stage1_response(response_content, context)
+                    validation_result, validation_errors, reason = self._validate_stage1_response(processed_content, context)
                 else:
-                    validation_result, validation_errors, reason = self.validator.validate_response(response_content, context)
+                    validation_result, validation_errors, reason = self.validator.validate_response(processed_content, context)
                 
                 if validation_result == ValidationResult.VALID:
                     if attempt > 0:
                         print(f"Validation successful on attempt {attempt + 1}")
-                    return response_content, usage_stats, False, False, None
+                    return processed_content, usage_stats, False, False, None
                 
                 elif validation_result == ValidationResult.END_GAME:
                     print(f"🏁 Game ending condition detected: {reason}")
@@ -355,6 +361,13 @@ class BasePredictionClient(ABC):
                     print(f"Rate limited or quota exhausted (attempt {attempt + 1}). Backing off {delay:.2f}s...")
                     time.sleep(delay)
                     continue
+                # Handle Together token limit error by reducing max tokens and retrying
+                new_allowed = self._extract_together_allowed_max_tokens(e)
+                if new_allowed is not None:
+                    if new_allowed < current_max_tokens:
+                        print(f"Together token limit hit. Reducing max_tokens from {current_max_tokens} to {new_allowed} and retrying...")
+                        current_max_tokens = max(64, new_allowed)
+                        continue
                 print(f"Prediction attempt {attempt + 1} failed with error: {str(e)}")
                 if attempt == max_retries:
                     raise e
@@ -574,6 +587,18 @@ class BasePredictionClient(ABC):
             else:
                 return ValidationResult.RETRY, [], "'next_plays' must be an array"
         
+        # Enforce expected count from env if provided
+        expected_count = None
+        try:
+            from os import getenv as _getenv
+            expected_str = _getenv("STAGE1_PLAY_COUNT")
+            if expected_str:
+                expected_count = int(expected_str)
+        except Exception:
+            expected_count = None
+        if expected_count is not None and len(next_plays) != expected_count:
+            return ValidationResult.RETRY, [], f"Stage 1 plays count mismatch: expected {expected_count}, got {len(next_plays)}"
+
         # Check array length (should have reasonable number of plays)
         if len(next_plays) == 0:
             if "y" in response_data:
@@ -599,6 +624,92 @@ class BasePredictionClient(ABC):
         # Stage 1 validation passed
         return ValidationResult.VALID, [], "Valid Stage 1 response"
     
+    def _extract_together_allowed_max_tokens(self, err: Exception) -> Optional[int]:
+        """Parse Together 422 errors to compute allowed max tokens dynamically.
+        Looks for: "`inputs` tokens + `max_new_tokens` must be <= <limit>. Given: <inputs> ... <max_new_tokens>"
+        """
+        try:
+            msg = str(err)
+        except Exception:
+            return None
+        if "Input validation error" not in msg:
+            return None
+        if "max_new_tokens" not in msg:
+            return None
+        # Extract limit
+        limit_match = re.search(r"must be <=\s*(\d+)", msg)
+        limit = int(limit_match.group(1)) if limit_match else 8192
+        # Extract inputs tokens
+        given_match = re.search(r"Given:\s*(\d+) `inputs` tokens and (\d+) `max_new_tokens`", msg)
+        if not given_match:
+            return None
+        try:
+            inputs_tokens = int(given_match.group(1))
+        except Exception:
+            return None
+        # Compute allowed new tokens with a small safety cushion
+        allowed = max(64, limit - inputs_tokens - 32)
+        return allowed
+
+    def _sanitize_json_like_text(self, text: str) -> str:
+        """Trim to the first balanced {...} JSON object, strip trailing junk, return sanitized text.
+        If no braces found, return original.
+        """
+        if not isinstance(text, str):
+            return text
+        s = text.strip()
+        # Find first '{' and attempt to locate its matching '}'
+        start = s.find('{')
+        if start == -1:
+            return s
+        # Scan for matching closing, counting braces
+        depth = 0
+        end_index = None
+        for i in range(start, len(s)):
+            ch = s[i]
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    end_index = i
+                    break
+        if end_index is not None:
+            candidate = s[start:end_index+1]
+        else:
+            candidate = s[start:]
+        # Remove common trailing artifacts like comments or periods after object end
+        return candidate.strip()
+
+    def _normalize_compact_response_if_applicable(self, text: str) -> str:
+        """If response is compact JSON with 'y', normalize shapes:
+        - If y is a single tuple (list of values), wrap as [ tuple ]
+        - If first tuple length is 6, append lineup=0 to make 7 elements
+        Returns possibly re-serialized JSON string, else original text on failure.
+        """
+        try:
+            data = json.loads(text)
+        except Exception:
+            return text
+        try:
+            if isinstance(data, dict) and 'y' in data:
+                y = data['y']
+                # If y is a single tuple (list of primitives), wrap it
+                if isinstance(y, list) and y and not isinstance(y[0], list):
+                    y = [y]
+                # If y is list of tuples, ensure first one has 7 elements
+                if isinstance(y, list) and y:
+                    first = y[0]
+                    if isinstance(first, list) and len(first) == 6:
+                        # Append lineup=0 to reach 7 elements
+                        first = first + [0]
+                        y[0] = first
+                data['y'] = y
+                return json.dumps(data, separators=(',', ':'))
+        except Exception:
+            return text
+        return text
+
     @abstractmethod
     def _get_default_models(self) -> Dict[str, str]:
         """Get default model IDs for this platform."""
@@ -664,6 +775,113 @@ class OpenAIPredictionClient(BasePredictionClient):
         return {
             "model_1_id": "ft:gpt-4.1-nano-2025-04-14:personal:first-n-plays:CAieHHyW",
             "model_2_id": "ft:gpt-4.1-nano-2025-04-14:personal:part-1:CAoc9Uw6"
+        }
+
+
+class TogetherPredictionClient(BasePredictionClient):
+    """Together.ai prediction client implementation (OpenAI-compatible API)."""
+    
+    @property
+    def platform_name(self) -> str:
+        return "together"
+    
+    def _initialize_client(self):
+        """Initialize Together.ai client using official Together SDK."""
+        try:
+            from together import Together
+        except ImportError:
+            raise ImportError("Together library not found. Install with: pip install together")
+        
+        load_dotenv()
+        api_key = os.getenv("TOGETHER_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "TOGETHER_API_KEY environment variable not found. "
+                "Please set your Together.ai API key as an environment variable."
+            )
+        
+        # Initialize official Together client (uses default base URL)
+        # Note: We intentionally avoid passing unsupported kwargs like proxies
+        self.client = Together(api_key=api_key)
+    
+    def predict(self, context: Dict[str, Any], model_id: str, 
+                max_tokens: int = 1500, temperature: float = 0.1) -> Tuple[str, Dict[str, Any]]:
+        """Make prediction using Together.ai chat completions.
+        Adds a strict-format system prompt only for Stage 1 model (model_1_id) calls.
+        """
+        context_json = json.dumps(context, separators=(',', ':'))
+        return self._predict_with_messages(context_json, model_id, max_tokens, temperature)
+    
+    def predict_from_json(self, context_json: str, model_id: str, 
+                         max_tokens: int = 1500, temperature: float = 0.1) -> Tuple[str, Dict[str, Any]]:
+        """Make prediction using pre-serialized JSON (optimized)."""
+        return self._predict_with_messages(context_json, model_id, max_tokens, temperature)
+
+    def _predict_with_messages(self, context_json: str, model_id: str,
+                               max_tokens: int, temperature: float) -> Tuple[str, Dict[str, Any]]:
+        """Call Together chat.completions with optional Stage-1-only system prompt."""
+        # Detect Stage 1 vs 2 by comparing to configured model_1_id (if available)
+        # We send the strict system message only for Stage 1 to enforce exact schema
+        system_prompt = None
+        try:
+            model_cfg = self.get_model_config()
+            if model_id == model_cfg.get("model_1_id"):
+                # Stage 1 strict format
+                system_prompt = (
+                    "Return a single JSON object with key 'y' that maps to an array of tuples. "
+                    "Each tuple must have exactly 7 elements: "
+                    "[quarter:int, time_sec:int, score:[away:int,home:int], actor:[\"A\"|\"H\", int], "
+                    "event:str, points:int, lineup:int]. No prose, no extra keys."
+                )
+            elif model_id == model_cfg.get("model_2_id"):
+                # Stage 2 strict format and no trailing characters
+                system_prompt = (
+                    "Output a single strict JSON object only. No trailing characters, no comments, no prose. "
+                    "The object must contain key 'y' mapping to an array of tuples, each exactly 7 elements: "
+                    "[quarter:int, time_sec:int, score:[away:int,home:int], actor:[\"A\"|\"H\", int], event:str, points:int, lineup:int]."
+                )
+        except Exception:
+            pass
+
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": context_json})
+
+        response = self.client.chat.completions.create(
+            model=model_id,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature
+        )
+        
+        content = response.choices[0].message.content
+        # Together's response includes usage similar to OpenAI
+        usage = getattr(response, "usage", None)
+        usage_stats = {
+            "completion_tokens": getattr(usage, "completion_tokens", None) if usage else None,
+            "prompt_tokens": getattr(usage, "prompt_tokens", None) if usage else None,
+            "total_tokens": getattr(usage, "total_tokens", None) if usage else None,
+        }
+        
+        return content, usage_stats
+    
+    def _get_default_models(self) -> Dict[str, str]:
+        """Get default Together model IDs (stage 1 and stage 2)."""
+        # Allow multiple env names for convenience; leave placeholders if unset
+        model_1 = (
+            os.getenv("TOGETHER_MODEL_1_ID") or
+            os.getenv("TOGETHER_INITIAL_MODEL_ID") or
+            "YOUR_TOGETHER_MODEL_1_ID"
+        )
+        model_2 = (
+            os.getenv("TOGETHER_MODEL_2_ID") or
+            os.getenv("TOGETHER_ROLLING_MODEL_ID") or
+            "YOUR_TOGETHER_MODEL_2_ID"
+        )
+        return {
+            "model_1_id": model_1,
+            "model_2_id": model_2,
         }
 
 
@@ -924,7 +1142,8 @@ class PredictionClientFactory:
     
     _clients = {
         'openai': OpenAIPredictionClient,
-        'gemini': GeminiPredictionClient
+        'gemini': GeminiPredictionClient,
+        'together': TogetherPredictionClient
     }
     
     @classmethod

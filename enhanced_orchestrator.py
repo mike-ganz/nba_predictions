@@ -1009,12 +1009,15 @@ def main():
     parser.add_argument('--games', type=str, help='Comma-separated list of game IDs')
     parser.add_argument('--runs-per-game', type=int, default=5, help='Number of runs per game')
     parser.add_argument('--season', type=str, help='Season year (YYYY-YYYY) - auto-detected if not provided')
-    parser.add_argument('--platform', type=str, default='gemini', choices=['openai', 'gemini'], help='AI platform')
+    parser.add_argument('--platform', type=str, default='gemini', choices=['openai', 'gemini', 'together'], help='AI platform')
     parser.add_argument('--max-iterations', type=int, default=2000, help='Max iterations per run')
     parser.add_argument('--output-db', type=str, default='enhanced_simulation_results.db', help='Output database file')
     parser.add_argument('--log-level', type=str, default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'])
     parser.add_argument('--threads', type=int, default=1, help='Number of threads for parallel execution (default: 1)')
     parser.add_argument('--monitor-threads', action='store_true', help='Enable interactive thread monitoring and control')
+    # LLM logging controls
+    parser.add_argument('--llm-debug', action='store_true', help='Enable verbose LLM logging (sets PREDICTION_LOG_LEVEL=3)')
+    parser.add_argument('--raw-responses', action='store_true', help='Print raw model responses to stdout (sets VALIDATION_DEBUG=1)')
     
     # Validation options
     parser.add_argument('--validate-only', action='store_true', help='Only validate game IDs, don\'t run simulations')
@@ -1068,8 +1071,25 @@ def main():
         print(config.get_validation_report())
         return
     
+    # Configure LLM debug/response logging before starting
+    try:
+        import os
+        if args.llm_debug:
+            os.environ["PREDICTION_LOG_LEVEL"] = "3"
+        if args.raw_responses:
+            os.environ["VALIDATION_DEBUG"] = "1"
+    except Exception:
+        pass
+
     # Create enhanced orchestrator
     orchestrator = Enhanced_NBA_Orchestrator(config)
+    
+    # Ensure prediction platform env aligns with CLI/config
+    try:
+        import os
+        os.environ["PREDICTION_PLATFORM"] = config.platform
+    except Exception:
+        pass
     
     if args.analyze:
         # Analyze all results

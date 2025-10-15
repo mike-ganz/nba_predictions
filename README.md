@@ -850,10 +850,19 @@ python generate_2023_2024_season.py \
 
 # 2. Fine-tune your model (external - OpenAI/Gemini platform)
 
-# 3. Configure prediction environment
+# 3. Configure prediction environment (choose one platform)
+# Gemini
 export PREDICTION_PLATFORM=gemini
 export GEMINI_MODEL_1_ENDPOINT=your_stage1_endpoint
 export GEMINI_MODEL_2_ENDPOINT=your_stage2_endpoint
+
+# Together.ai (OpenAI-compatible)
+# export PREDICTION_PLATFORM=together
+# export TOGETHER_API_KEY=your_together_api_key
+# export TOGETHER_MODEL_1_ID=your_stage1_model
+# export TOGETHER_MODEL_2_ID=your_stage2_model
+# Optional override (defaults to https://api.together.xyz/v1):
+# export TOGETHER_BASE_URL=https://api.together.xyz/v1
 
 # 4. Run predictions
 python predict_next_play.py
