@@ -1076,18 +1076,30 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                             away_abbrev, home_abbrev, away_name_to_idx, home_name_to_idx
                         )
                         
-                        # Get actor fouls
+                        # Get actor fouls (live, at the time of this play)
                         team = actor[0] if isinstance(actor, list) and len(actor) > 0 else "A"
                         player_idx = actor[1] if isinstance(actor, list) and len(actor) > 1 else -1
                         actor_fouls = 0
+                        try:
+                            foul_counts_at_play = player_fouls_cumulative[recent_plays_indices[play_idx]] if play_idx < len(recent_plays_indices) else {}
+                        except Exception:
+                            foul_counts_at_play = {}
+                        # Resolve player name from roster index when available; else fallback to play['player']
+                        actor_name = None
                         if player_idx >= 0:
                             try:
-                                if team == "A" and player_idx < len(away_players):
-                                    actor_fouls = away_players[player_idx][13]
-                                elif team == "H" and player_idx < len(home_players):
-                                    actor_fouls = home_players[player_idx][13]
-                            except (IndexError, TypeError):
-                                actor_fouls = 0
+                                if team == "A" and player_idx < len(away_players_template):
+                                    actor_name = away_players_template[player_idx][0]
+                                elif team == "H" and player_idx < len(home_players_template):
+                                    actor_name = home_players_template[player_idx][0]
+                            except Exception:
+                                actor_name = None
+                        if not actor_name:
+                            pn = play.get('player')
+                            if pn is not None and not pd.isna(pn):
+                                actor_name = str(pn)
+                        if actor_name:
+                            actor_fouls = int(foul_counts_at_play.get(actor_name, 0))
                         
                         # Event code mapping - prioritize structured data when available
                         if play.get('type') or play.get('event_type'):
@@ -1105,22 +1117,13 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                             from generate_training_data import determine_shot_zone
                             shot_zone = determine_shot_zone(play)
                         
-                        # Find assister for made baskets
-                        assist_by = None
-                        if event_code in ['made2', 'made3']:
-                            from generate_training_data import find_assister
-                            # Use the correct index from recent_plays_indices
-                            game_idx = recent_plays_indices[play_idx]
-                            if game_idx < len(game_play_data) and game_play_data[game_idx] is not None:
-                                assist_by = find_assister(game_play_data, game_idx, away_name_to_idx, home_name_to_idx)
-                        
-                        # Build play tuple(s) (10-value format: [quarter, time, score, margin, actor, actor_fouls, event, shot_zone, assist_by, lineup_id])
+                        # Build play tuple(s) (9-value format: [quarter, time, score, margin, actor, actor_fouls, event, shot_zone, lineup_id])
                         if event_code == "o_foul":
                             # Emit offensive foul and paired turnover at same timestamp
-                            plays_array.append([quarter, time_seconds, current_score, margin, actor, actor_fouls, "o_foul", None, None, lineup_id])
-                            plays_array.append([quarter, time_seconds, current_score, margin, actor, actor_fouls, "tov", None, None, lineup_id])
+                            plays_array.append([quarter, time_seconds, current_score, margin, actor, actor_fouls, "o_foul", None, lineup_id])
+                            plays_array.append([quarter, time_seconds, current_score, margin, actor, actor_fouls, "tov", None, lineup_id])
                         else:
-                            plays_array.append([quarter, time_seconds, current_score, margin, actor, actor_fouls, event_code, shot_zone, assist_by, lineup_id])
+                            plays_array.append([quarter, time_seconds, current_score, margin, actor, actor_fouls, event_code, shot_zone, lineup_id])
                         prev_score = current_score
                     
                     # Complete the compact record
@@ -1139,12 +1142,12 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                             compact_record["sd"] = int(last_score[0]) - int(last_score[1])
                         except Exception:
                             compact_record["sd"] = 0
-                        # pos: infer from plays (updated for 10-value format)
+                        # pos: infer from plays (9-value format)
                         def _infer_pos_from_plays(pa: list) -> str:
                             curr = None
                             for tup in pa:
                                 try:
-                                    # 10-value format: [quarter, time, score, margin, actor, actor_fouls, event, shot_zone, assist_by, lineup_id]
+                                    # 9-value format: [quarter, time, score, margin, actor, actor_fouls, event, shot_zone, lineup_id]
                                     actor_side = tup[4][0] if isinstance(tup[4], list) and len(tup[4]) > 0 else None
                                     ev = str(tup[6])  # Event is at index 6 now
                                     # Scoring made shots and made FT -> change possession

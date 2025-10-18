@@ -47,12 +47,12 @@ Represent a single record as:
   ],
 
   "p": [                           // plays
-    // Non-scoring: [q, t_sec_remaining, [away_score, home_score], actor, event_code, lineup_id]
-    // Scoring:     [q, t_sec_remaining, [away_score, home_score], actor, event_code, pts, lineup_id]
+    // ALWAYS 7 elements: [q, t_sec_remaining, [away_score, home_score], actor, event_code, pts, lineup_id]
     // actor: ["A"|"H", player_index] or ["A"|"H", -1] for team events
+    // pts is 0 for non-scoring events
   ],
 
-  "y": [q,t,[a,h],actor,ev,(pts),l] // optional label (next play), same tuple shape
+  "y": [q,t,[a,h],actor,ev,pts,l]   // optional label (next play), same tuple shape; pts=0 when non-scoring
 }
 ```
 
@@ -60,7 +60,7 @@ Represent a single record as:
 - Use **indices** into `ap`/`hp` for actors and for `L` lineups.  
 - Use **integers** for time (`t_sec_remaining`) and scores.  
 - The final element of every play is the **lineup_id** (index into `L`).  
-- Include `pts` **only** for scoring events.
+- Include `pts` for all events; use **0** for non-scoring events.
 
 ---
 

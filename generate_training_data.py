@@ -2,6 +2,7 @@ import pandas as pd
 import os
 import json
 import re
+from typing import List, Dict, Optional, Any
 
 # Import required functions from other modules
 from transform_player_stats import calculate_player_stats, get_distinct_players
@@ -590,23 +591,20 @@ def build_compact_training_data_direct(
         # Determine shot zone for shooting events
         shot_zone = determine_shot_zone(play)
         
-        # Find assister for made baskets
-        assist_by = None
-        if event_code in ['made2', 'made3']:
-            assist_by = find_assister(recent_plays_verbose, play_idx, away_name_to_idx, home_name_to_idx)
+        # Remove assist_by from schema; no extraction
         
         # Handle offensive foul special case - emit both o_foul and tov
         if event_code == "o_foul":
             # Add the offensive foul
-            play_tuple = [quarter, time_seconds, current_score, margin, actor, actor_fouls, "o_foul", None, None, current_lineup_id]
+            play_tuple = [quarter, time_seconds, current_score, margin, actor, actor_fouls, "o_foul", None, current_lineup_id]
             plays_array.append(play_tuple)
             
             # Add the turnover at the same timestamp
-            play_tuple = [quarter, time_seconds, current_score, margin, actor, actor_fouls, "tov", None, None, current_lineup_id]
+            play_tuple = [quarter, time_seconds, current_score, margin, actor, actor_fouls, "tov", None, current_lineup_id]
             plays_array.append(play_tuple)
         else:
-            # Build 10-value play tuple: [quarter, time, score, margin, actor, actor_fouls, event, shot_zone, assist_by, lineup_id]
-            play_tuple = [quarter, time_seconds, current_score, margin, actor, actor_fouls, event_code, shot_zone, assist_by, current_lineup_id]
+            # Build 9-value play tuple: [quarter, time, score, margin, actor, actor_fouls, event, shot_zone, lineup_id]
+            play_tuple = [quarter, time_seconds, current_score, margin, actor, actor_fouls, event_code, shot_zone, current_lineup_id]
             
             plays_array.append(play_tuple)
         
@@ -1916,6 +1914,90 @@ def create_llm_training_data(df, n_total=5, filter_nan=True, generation_mode="re
             if generation_mode != "first_N_plays":
                 final_json_obj["recent_plays"] = recent_plays_verbose
         
+        # Seed starting lineup for first_N_plays contexts per user rule
+        if generation_mode == "first_N_plays":
+            try:
+                seeded = _seed_starting_lineups_for_first_n(
+                    result_df,
+                    game_df,
+                    final_json_obj,
+                    away_players,
+                    home_players
+                )
+                if seeded:
+                    # Ensure L exists and contains the seeded lineup as the first (id 0)
+                    existing_L = final_json_obj.get("L") or []
+                    # Represent lineup keys as tuples to compare
+                    seeded_key = tuple(seeded['A'] + seeded['H'])
+                    existing_keys = {tuple((l.get('A') or []) + (l.get('H') or [])): idx for idx, l in enumerate(existing_L) if isinstance(l, dict)}
+                    if seeded_key not in existing_keys:
+                        final_json_obj['L'] = [seeded] + existing_L
+                    else:
+                        # Move existing seeded lineup to front if not already
+                        idx = existing_keys[seeded_key]
+                        if idx != 0:
+                            reordered = [existing_L[idx]] + existing_L[:idx] + existing_L[idx+1:]
+                            final_json_obj['L'] = reordered
+            except Exception as e:
+                # Non-fatal: keep context even if seeding fails
+                print(f"Warning: Failed to seed starting lineup for first_N_plays in game {game_id}: {e}")
+        
+        # If remaining_plays, augment L to include ALL prior game lineups up to this context
+        if generation_mode == "remaining_plays":
+            try:
+                # Build prior-game lineup lookup from start through current row i
+                prior_lineup_cache = {}
+                prior_lineup_lookup = []
+                # Iterate over all rows of this game up to current index i
+                game_rows = game_df[game_df['play_id'] <= result_df.iloc[i]['play_id']].itertuples(index=False)
+                for r in game_rows:
+                    # Extract a1..a5 and h1..h5 if present
+                    away_players_on = []
+                    home_players_on = []
+                    for k in range(1, 6):
+                        try:
+                            av = getattr(r, f'a{k}')
+                            if pd.notna(av):
+                                away_players_on.append(str(av))
+                        except Exception:
+                            pass
+                    for k in range(1, 6):
+                        try:
+                            hv = getattr(r, f'h{k}')
+                            if pd.notna(hv):
+                                home_players_on.append(str(hv))
+                        except Exception:
+                            pass
+                    if not away_players_on and not home_players_on:
+                        continue
+                    players_on_court = [
+                        {'team': away_abbrev, 'players': away_players_on},
+                        {'team': home_abbrev, 'players': home_players_on}
+                    ]
+                    try:
+                        away_idx, home_idx = create_lineup_key(
+                            players_on_court, away_abbrev, home_abbrev,
+                            away_name_to_idx, home_name_to_idx
+                        )
+                        key = tuple(list(away_idx) + list(home_idx))
+                        if key not in prior_lineup_cache:
+                            prior_lineup_cache[key] = len(prior_lineup_lookup)
+                            prior_lineup_lookup.append({ 'A': list(away_idx), 'H': list(home_idx) })
+                    except Exception:
+                        continue
+
+                # Merge: append any prior lineups not already present in final_json_obj['L']
+                existing_L = final_json_obj.get('L') or []
+                existing_keys = {tuple((ld.get('A') or []) + (ld.get('H') or [])) for ld in existing_L if isinstance(ld, dict)}
+                for ld in prior_lineup_lookup:
+                    key = tuple(ld['A'] + ld['H'])
+                    if key not in existing_keys:
+                        existing_L.append(ld)
+                        existing_keys.add(key)
+                final_json_obj['L'] = existing_L
+            except Exception as e:
+                print(f"Warning: Failed to augment L with prior game lineups for game {current_game_id}: {e}")
+
         # Convert to JSON string
         json_string = json.dumps(final_json_obj, separators=(',', ':'))
         json_training_data.append(json_string)
@@ -2136,35 +2218,30 @@ def create_openai_training_data(df):
                 lineup_id = 0 if not current_lineups else len(current_lineups) - 1
                 
                 # Create compact next play tuple - ensure JSON serializable types
-                if points is not None:
-                    # Scoring play: [q, t, score, actor, event, pts, lineup_id]
-                    next_play_tuple = [
-                        int(next_quarter), 
-                        int(next_time_seconds), 
-                        [int(next_score_array[0]), int(next_score_array[1])], 
-                        actor, 
-                        event_code, 
-                        int(points), 
-                        int(lineup_id)
-                    ]
-                else:
-                    # Non-scoring play: [q, t, score, actor, event, lineup_id]
-                    next_play_tuple = [
-                        int(next_quarter),
-                        int(next_time_seconds),
-                        [int(next_score_array[0]), int(next_score_array[1])],
-                        actor,
-                        event_code,
-                        int(lineup_id)
-                    ]
+                # ALWAYS use 10-element compact tuple for labels; non-scoring uses points=0
+                pts_val = int(points) if points is not None and int(points) > 0 else 0
+                margin = int(next_score_array[0]) - int(next_score_array[1])
+                actor_fouls = 0
+                shot_zone = None
+                next_play_tuple = [
+                    int(next_quarter),                           # quarter
+                    int(next_time_seconds),                       # time_seconds
+                    [int(next_score_array[0]), int(next_score_array[1])],  # score
+                    int(margin),                                  # margin
+                    actor,                                        # actor
+                    int(actor_fouls),                             # actor_fouls
+                    event_code,                                   # event_code
+                    shot_zone,                                    # shot_zone
+                    int(lineup_id)                                # lineup_id
+                ]
                 
                 # Handle offensive foul special case - need both o_foul and tov
                 if event_code == "o_foul":
                     # Create assistant response with both plays
                     assistant_response = {
                         "y": [
-                            [int(next_quarter), int(next_time_seconds), [int(next_score_array[0]), int(next_score_array[1])], actor, "o_foul", int(lineup_id)],
-                            [int(next_quarter), int(next_time_seconds), [int(next_score_array[0]), int(next_score_array[1])], actor, "tov", int(lineup_id)]
+                            [int(next_quarter), int(next_time_seconds), [int(next_score_array[0]), int(next_score_array[1])], int(margin), actor, 0, "o_foul", None, int(lineup_id)],
+                            [int(next_quarter), int(next_time_seconds), [int(next_score_array[0]), int(next_score_array[1])], int(margin), actor, 0, "tov", None, int(lineup_id)]
                         ]
                     }
                 else:
@@ -2283,6 +2360,159 @@ def preview_llm_data(df, n_samples=3):
             print(row['json_training_data'])
             
         print("-" * 80)
+
+def resolve_lineup_from_row(row: pd.Series, context_json: Dict[str, Any]) -> Optional[Dict[str, List[int]]]:
+    """Resolve lineup information from a training row using available fields."""
+    import pandas as pd
+    away_team_name = context_json.get('away_team', {}).get('name') if 'away_team' in context_json else context_json.get('A')
+    home_team_name = context_json.get('home_team', {}).get('name') if 'home_team' in context_json else context_json.get('H')
+    away_name_to_idx = {}
+    home_name_to_idx = {}
+    for idx, player_data in enumerate(context_json.get('ap', []) or []):
+        if isinstance(player_data, list) and player_data:
+            away_name_to_idx[str(player_data[0])] = idx
+    for idx, player_data in enumerate(context_json.get('hp', []) or []):
+        if isinstance(player_data, list) and player_data:
+            home_name_to_idx[str(player_data[0])] = idx
+    players_on_court = []
+    away_players = []
+    home_players = []
+    for i in range(1, 6):
+        away_player = row.get(f'a{i}')
+        if pd.notna(away_player):
+            away_players.append(str(away_player))
+        home_player = row.get(f'h{i}')
+        if pd.notna(home_player):
+            home_players.append(str(home_player))
+    if away_players:
+        players_on_court.append({'team': away_team_name, 'players': away_players})
+    if home_players:
+        players_on_court.append({'team': home_team_name, 'players': home_players})
+    if not players_on_court:
+        return None
+    away_indices, home_indices = create_lineup_key(players_on_court, away_team_name, home_team_name, away_name_to_idx, home_name_to_idx)
+    return {'A': list(away_indices), 'H': list(home_indices)}
+
+def _seed_starting_lineups_for_first_n(result_df: pd.DataFrame,
+                                       game_df: pd.DataFrame,
+                                       compact_context: Dict[str, Any],
+                                       away_players: List[List[Any]],
+                                       home_players: List[List[Any]]) -> Optional[Dict[str, List[int]]]:
+    """Seed the starting lineup for first_N_plays per rule:
+    - Use the starting 5 from the prior game
+    - If any of those 5 never play in current game, replace with highest-MPG non-starter
+    - For season opener, use last season's final starting lineup
+
+    Returns a dict { 'A': [a_indices...], 'H': [h_indices...] } in compact index space,
+    or None if not resolvable.
+    """
+    import pandas as pd
+
+    try:
+        # Determine teams
+        away_abbrev = compact_context.get('A') or compact_context.get('away_team', {}).get('name')
+        home_abbrev = compact_context.get('H') or compact_context.get('home_team', {}).get('name')
+        if not away_abbrev or not home_abbrev:
+            return None
+
+        # Roster name → index maps from compact arrays
+        away_name_to_idx = {str(p[0]): i for i, p in enumerate(compact_context.get('ap', []) or []) if isinstance(p, list) and p}
+        home_name_to_idx = {str(p[0]): i for i, p in enumerate(compact_context.get('hp', []) or []) if isinstance(p, list) and p}
+
+        # Helper: get prior game id for a team
+        def _get_prior_game_df(team_abbrev: str) -> Optional[pd.DataFrame]:
+            team_games = result_df[result_df['team'] == team_abbrev]
+            if team_games.empty:
+                return None
+            # Sort by date then play_id to get chronological
+            team_games = team_games.sort_values(['date', 'game_id', 'play_id']).reset_index(drop=True)
+            # Find the current game boundary from game_df
+            this_game_id = int(game_df.iloc[0]['game_id'])
+            # Take the last game strictly before this_game_id by date
+            current_date = game_df.iloc[0].get('date')
+            prev_games = team_games[team_games['date'] < current_date] if 'date' in team_games.columns else team_games[team_games['game_id'] < this_game_id]
+            if prev_games.empty:
+                return None
+            prev_game_id = prev_games.iloc[-1]['game_id']
+            return result_df[result_df['game_id'] == prev_game_id].sort_values('play_id').reset_index(drop=True)
+
+        # Helper: infer starting 5 from a game df by first row a1..a5/h1..h5 if available
+        def _infer_starting_five(prior_game_df: Optional[pd.DataFrame], team_abbrev: str, is_home: bool) -> List[str]:
+            if prior_game_df is None:
+                return []
+            cols = ['h1','h2','h3','h4','h5'] if is_home else ['a1','a2','a3','a4','a5']
+            for _, row in prior_game_df.iterrows():
+                players = []
+                for c in cols:
+                    if c in row and pd.notna(row[c]):
+                        players.append(str(row[c]))
+                if len(players) >= 3:  # tolerate partial early rows
+                    return players[:5]
+            return []
+
+        # Get prior games per team
+        prior_away_df = _get_prior_game_df(away_abbrev)
+        prior_home_df = _get_prior_game_df(home_abbrev)
+
+        away_starters = _infer_starting_five(prior_away_df, away_abbrev, is_home=False)
+        home_starters = _infer_starting_five(prior_home_df, home_abbrev, is_home=True)
+
+        # If no prior starters (season opener), approximate from highest MPG in compact roster
+        def _fallback_from_mpg(roster: List[List[Any]]) -> List[str]:
+            # roster item: [name, offense, defense, shot_selection, efficiency, MPG, usage, ...]
+            try:
+                sorted_roster = sorted([p for p in roster if isinstance(p, list) and len(p) >= 6], key=lambda x: (x[5] if isinstance(x[5], (int,float)) else 0), reverse=True)
+                return [str(p[0]) for p in sorted_roster[:5]]
+            except Exception:
+                return [str(p[0]) for p in roster[:5] if isinstance(p, list) and p]
+
+        if len(away_starters) < 5:
+            away_starters = _fallback_from_mpg(compact_context.get('ap', []) or [])
+        if len(home_starters) < 5:
+            home_starters = _fallback_from_mpg(compact_context.get('hp', []) or [])
+
+        # If a starter never appears in current game_df, replace with highest-MPG non-starter
+        def _played_in_game(player_name: str) -> bool:
+            if 'player' in game_df.columns:
+                s = game_df['player'].dropna().astype(str)
+                if (s == str(player_name)).any():
+                    return True
+            # Also check on-court columns
+            for i in range(1,6):
+                col_a = f'a{i}'
+                col_h = f'h{i}'
+                if col_a in game_df.columns and game_df[col_a].dropna().astype(str).eq(str(player_name)).any():
+                    return True
+                if col_h in game_df.columns and game_df[col_h].dropna().astype(str).eq(str(player_name)).any():
+                    return True
+            return False
+
+        def _replace_never_played(starters: List[str], roster: List[List[Any]]) -> List[str]:
+            starters_set = set(starters)
+            available = [p for p in roster if isinstance(p, list) and p]
+            # Sort candidate pool by MPG desc
+            candidates = sorted(available, key=lambda x: (x[5] if len(x) > 5 and isinstance(x[5], (int,float)) else 0), reverse=True)
+            result = starters[:]
+            for idx, name in enumerate(starters):
+                if not _played_in_game(name):
+                    replacement = next((str(p[0]) for p in candidates if str(p[0]) not in starters_set), None)
+                    if replacement:
+                        result[idx] = replacement
+                        starters_set.add(replacement)
+            return result[:5]
+
+        away_starters = _replace_never_played(away_starters, compact_context.get('ap', []) or [])
+        home_starters = _replace_never_played(home_starters, compact_context.get('hp', []) or [])
+
+        # Map names to compact indices; drop any unresolved names
+        away_indices = [away_name_to_idx[n] for n in away_starters if n in away_name_to_idx][:5]
+        home_indices = [home_name_to_idx[n] for n in home_starters if n in home_name_to_idx][:5]
+        if len(away_indices) == 0 or len(home_indices) == 0:
+            return None
+
+        return { 'A': away_indices, 'H': home_indices }
+    except Exception:
+        return None
 
 if __name__ == "__main__":
     # Run tests when script is executed directly

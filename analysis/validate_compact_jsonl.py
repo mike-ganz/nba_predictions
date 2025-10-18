@@ -45,11 +45,10 @@ def extract_compact_from_gemini_wrapper(obj: dict) -> Optional[dict]:
 def update_metrics(record: dict, totals: dict) -> None:
     plays = record.get("p") or []
     for play in plays:
-        if not isinstance(play, list) or len(play) < 10:
+        if not isinstance(play, list) or len(play) < 9:
             continue
         event = str(play[6]) if len(play) > 6 else None
         shot_zone = play[7] if len(play) > 7 else None
-        assist_by = play[8] if len(play) > 8 else None
 
         if event in SHOOT_EVENTS:
             totals["shoot_events"] += 1
@@ -58,8 +57,6 @@ def update_metrics(record: dict, totals: dict) -> None:
 
             if event in MADE_EVENTS:
                 totals["made_shots"] += 1
-                if assist_by is not None:
-                    totals["assisted_makes"] += 1
 
 
 def format_pct(num: int, den: int) -> str:

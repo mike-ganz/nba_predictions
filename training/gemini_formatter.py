@@ -341,7 +341,7 @@ class GeminiFormatter(BaseFormatter):
             game_df: Full game DataFrame for scoring calculations
             
         Returns:
-            list: Compact play tuple [quarter, time_seconds, score_array, actor, event_code, points?, lineup_id?]
+            list: Compact play tuple [q, t, [a,h], margin, actor, actor_fouls, event, shot_zone, lineup_id]
         """
         try:
             # Get quarter and time
@@ -362,6 +362,7 @@ class GeminiFormatter(BaseFormatter):
             away_score = int(row.get('away_score', 0) or 0)
             home_score = int(row.get('home_score', 0) or 0)
             score_array = [away_score, home_score]
+            margin = int(away_score) - int(home_score)
             
             # Determine team names based on format
             if self._is_compact_format(context_json):
@@ -371,19 +372,42 @@ class GeminiFormatter(BaseFormatter):
                 away_team_name = context_json['away_team']['name']
                 home_team_name = context_json['home_team']['name']
             
-            # Create actor - simplified for first_N_plays
+            # Create actor - resolve to roster index when possible
             player_name = row.get('player')
             team_name = row.get('team', '')
-            
-            if team_name == away_team_name or (not team_name and player_name):
-                actor = ["A", -1]  # Away team, simplified index
-            elif team_name == home_team_name:
-                actor = ["H", -1]  # Home team, simplified index  
-            else:
-                actor = ["A", -1]  # Default to away team
+            away_name_to_idx = {}
+            home_name_to_idx = {}
+            try:
+                if self._is_compact_format(context_json):
+                    for idx, p in enumerate(context_json.get('ap', []) or []):
+                        if isinstance(p, list) and p:
+                            away_name_to_idx[str(p[0])] = idx
+                    for idx, p in enumerate(context_json.get('hp', []) or []):
+                        if isinstance(p, list) and p:
+                            home_name_to_idx[str(p[0])] = idx
+            except Exception:
+                pass
+            try:
+                from generate_training_data import resolve_actor as _resolve_actor
+                actor = _resolve_actor(
+                    player_name,
+                    {'team': team_name, 'points': None},
+                    away_team_name,
+                    home_team_name,
+                    away_name_to_idx,
+                    home_name_to_idx
+                )
+            except Exception:
+                # Fallback
+                if team_name == away_team_name or (not team_name and player_name):
+                    actor = ["A", -1]
+                elif team_name == home_team_name:
+                    actor = ["H", -1]
+                else:
+                    actor = ["A", -1]
             
             # Use structured event code mapping for better accuracy
-            from generate_training_data import map_structured_to_event_code, map_description_to_event_code
+            from generate_training_data import map_structured_to_event_code, map_description_to_event_code, determine_shot_zone
             
             # Check if structured data is available (type, event_type fields)
             if all(key in row for key in ['type', 'event_type']):
@@ -424,26 +448,28 @@ class GeminiFormatter(BaseFormatter):
                     description, shot_details, score_delta
                 )
             
-            # Build the compact play tuple
+            # Build the compact 9-element play tuple
+            actor_fouls = 0
+            shot_zone = None
+            if event_code in ['made2','miss2','made3','miss3']:
+                try:
+                    shot_zone = determine_shot_zone(row)
+                except Exception:
+                    shot_zone = None
             play_tuple = [
                 int(quarter),
                 int(time_seconds),
-                score_array,
+                [int(score_array[0]), int(score_array[1])],
+                int(margin),
                 actor,
-                event_code
+                int(actor_fouls),
+                event_code,
+                shot_zone,
+                0  # lineup_id (will be replaced by caller if tracking is active)
             ]
             
-            # Add points if this is a scoring event
-            if mapped_points is not None and mapped_points > 0:
-                play_tuple.append(int(mapped_points))
-            else:
-                play_tuple.append(0)
-            
-            # Add lineup ID if available (simplified for first_N_plays)
-            # For now, omit lineup_id since it's optional and complex to calculate
-            
             return play_tuple
-            
+        
         except Exception as e:
             # Silent failure - this is expected for some plays with incomplete data
             return None
@@ -547,6 +573,29 @@ class GeminiFormatter(BaseFormatter):
             # Parse the context JSON
             context_json = json.loads(context_row['json_training_data'])
             
+            # Initialize lineup tracking if compact format includes lineups
+            current_lineups = context_json.get('L', []) if isinstance(context_json, dict) else []
+            current_lineup_id = 0
+            lineup_cache = {}
+            if current_lineups:
+                lineup_cache = {tuple(lineup['A'] + lineup['H']): idx for idx, lineup in enumerate(current_lineups)
+                                if isinstance(lineup, dict) and 'A' in lineup and 'H' in lineup}
+            
+            # Helper to update lineup tracking when event includes substitutions
+            def _update_lineup_tracking(row_data, fallback_lineup=None):
+                nonlocal current_lineups, current_lineup_id, lineup_cache
+                from generate_training_data import resolve_lineup_from_row
+                lineup_data = resolve_lineup_from_row(row_data, context_json)
+                if not lineup_data and fallback_lineup is not None:
+                    lineup_data = fallback_lineup
+                if not lineup_data:
+                    return
+                lineup_key = tuple(lineup_data['A'] + lineup_data['H'])
+                if lineup_key not in lineup_cache:
+                    current_lineups.append(lineup_data)
+                    lineup_cache[lineup_key] = len(current_lineups) - 1
+                current_lineup_id = lineup_cache[lineup_key]
+            
             # Get first N non-null plays from the raw DataFrame data
             first_plays = []
             if n_total is None:
@@ -558,11 +607,22 @@ class GeminiFormatter(BaseFormatter):
                     
                 row = game_df.iloc[i]
                 if pd.notna(row.get('description')):
+                    # Update lineup tracking if data available
+                    _update_lineup_tracking(row)
+                    
                     # Check if input is verbose format - if so, create verbose response
                     if self._is_compact_format(context_json):
                         # Create compact play tuple for compact input
+                        fallback_lineup = None
+                        if current_lineups:
+                            latest_key = next((key for key, idx in lineup_cache.items() if isinstance(key, tuple) and idx == current_lineup_id), None)
+                            if latest_key:
+                                fallback_lineup = {'A': list(latest_key[:5]), 'H': list(latest_key[5:])}
                         play_tuple = self._create_compact_play_tuple(row, context_json, game_df)
                         if play_tuple:
+                            # Replace lineup id (last element) with tracked value when available
+                            if isinstance(play_tuple, list) and len(play_tuple) >= 7:
+                                play_tuple[-1] = current_lineup_id
                             first_plays.append(play_tuple)
                     else:
                         # Create verbose play object for verbose input
@@ -795,17 +855,38 @@ class GeminiFormatter(BaseFormatter):
         next_home_score = int(next_row.get('home_score', 0) or 0)
         score_array = [next_away_score, next_home_score]
         
-        # Create actor
+        # Create actor - resolve by player name to roster index when possible
         away_team = away_team_name
         home_team = home_team_name
-        
-        # Simple actor mapping based on team (simplified for formatter)
-        if scoring_team == away_team:
-            actor = ["A", 0]  # Away team, simplified index
-        elif scoring_team == home_team:
-            actor = ["H", 0]  # Home team, simplified index
-        else:
-            actor = ["A", -1]  # Default to away team event
+        away_name_to_idx = {}
+        home_name_to_idx = {}
+        try:
+            if self._is_compact_format(current_json):
+                for idx, p in enumerate(current_json.get('ap', []) or []):
+                    if isinstance(p, list) and p:
+                        away_name_to_idx[str(p[0])] = idx
+                for idx, p in enumerate(current_json.get('hp', []) or []):
+                    if isinstance(p, list) and p:
+                        home_name_to_idx[str(p[0])] = idx
+        except Exception:
+            pass
+        try:
+            from generate_training_data import resolve_actor as _resolve_actor
+            actor = _resolve_actor(
+                next_row.get('player'),
+                {'team': next_row.get('team',''), 'points': points_scored if points_scored>0 else None},
+                away_team,
+                home_team,
+                away_name_to_idx,
+                home_name_to_idx
+            )
+        except Exception:
+            if scoring_team == away_team:
+                actor = ["A", 0]
+            elif scoring_team == home_team:
+                actor = ["H", 0]
+            else:
+                actor = ["A", -1]
         
         # Use structured event code mapping for better accuracy
         from generate_training_data import map_structured_to_event_code, map_description_to_event_code
@@ -846,20 +927,38 @@ class GeminiFormatter(BaseFormatter):
         
         # Default lineup ID
         lineup_id = 0
+        # If compact input has lineup list, try to resolve via resolve_lineup_from_row
+        try:
+            if self._is_compact_format(current_json):
+                from generate_training_data import resolve_lineup_from_row
+                lineup_data = resolve_lineup_from_row(next_row, current_json)
+                if lineup_data:
+                    existing_lineups = current_json.get('L') or []
+                    cache = {tuple(ld.get('A', []) + ld.get('H', [])): idx for idx, ld in enumerate(existing_lineups) if isinstance(ld, dict)}
+                    key = tuple(lineup_data['A'] + lineup_data['H'])
+                    # Do not mutate L (avoid leakage). If new lineup, predict len(L)
+                    lineup_id = cache.get(key, len(existing_lineups))
+        except Exception:
+            lineup_id = 0
         
         # Check if input context is in verbose format and respond accordingly
         if self._is_compact_format(current_json):
             # Create compact play tuple for compact input
-            # Always standardize to 7 elements; non-scoring uses points=0
+            # Always standardize to 9 elements (assist removed)
             pts_val = int(points_scored) if points_scored and points_scored > 0 else 0
+            margin = int(score_array[0]) - int(score_array[1])
+            actor_fouls = 0
+            shot_zone = None
             play_tuple = [
-                int(next_quarter), 
-                int(time_seconds), 
-                [int(score_array[0]), int(score_array[1])], 
-                actor, 
-                event_code, 
-                pts_val, 
-                int(lineup_id)
+                int(next_quarter),               # quarter
+                int(time_seconds),               # time_seconds
+                [int(score_array[0]), int(score_array[1])],  # score
+                int(margin),                    # margin
+                actor,                           # actor
+                int(actor_fouls),                # actor_fouls
+                event_code,                      # event_code
+                shot_zone,                       # shot_zone
+                int(lineup_id)                   # lineup_id
             ]
             return play_tuple
         else:

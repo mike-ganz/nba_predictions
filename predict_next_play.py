@@ -38,7 +38,8 @@ the appropriate prediction client.
 import json
 import os
 import re
-from typing import Dict, Any, Optional
+from pathlib import Path
+from typing import Dict, Any, Optional, Tuple
 from dotenv import load_dotenv
 from game.prediction_client import PredictionClientFactory, BasePredictionClient
 
@@ -52,6 +53,100 @@ except ImportError:
     json_dumps = json.dumps
     json_loads = json.loads
     print("Using standard json library (consider installing ujson for better performance)")
+
+
+_STATIC_STAGE1_CACHE: Dict[str, Any] = {}
+
+
+def _resolve_static_path(path_str: str) -> str:
+    """Resolve Stage 1 static path relative to workspace when needed."""
+    path_obj = Path(path_str)
+    if path_obj.is_absolute():
+        return str(path_obj)
+
+    # Allow referencing files relative to the project root (this file's directory)
+    base_dir = Path(__file__).resolve().parent
+    candidate = base_dir / path_obj
+    if candidate.exists():
+        return str(candidate)
+    return str(path_obj)
+
+
+def _load_stage1_static_from_path(path: str) -> Optional[Any]:
+    """Load and cache a static Stage 1 response from disk."""
+    if not path:
+        return None
+
+    normalized_path = _resolve_static_path(path)
+
+    if normalized_path in _STATIC_STAGE1_CACHE:
+        return _STATIC_STAGE1_CACHE[normalized_path]
+
+    if not os.path.exists(normalized_path):
+        print(f"⚠️ Static Stage 1 response file not found: {normalized_path}")
+        return None
+
+    try:
+        with open(normalized_path, "r", encoding="utf-8") as f:
+            file_contents = f.read()
+        try:
+            data = json_loads(file_contents)
+        except Exception:
+            data = json.loads(file_contents)
+        _STATIC_STAGE1_CACHE[normalized_path] = data
+        print(f"🧪 Loaded static Stage 1 response from {normalized_path}")
+        return data
+    except Exception as exc:
+        print(f"⚠️ Failed to load static Stage 1 response from {normalized_path}: {exc}")
+        return None
+
+
+def _normalize_stage1_payload(payload: Any) -> Any:
+    """Normalize payload strings that contain embedded JSON."""
+    if isinstance(payload, str):
+        for loader in (json_loads, json.loads):
+            try:
+                payload = loader(payload)
+                break
+            except Exception:
+                continue
+    return payload
+
+
+def _select_stage1_payload(static_data: Any, requested_key: Optional[str]) -> Optional[Any]:
+    """Select appropriate Stage 1 payload from cached/static data."""
+    payload = None
+
+    if isinstance(static_data, dict):
+        if requested_key and requested_key in static_data:
+            payload = static_data[requested_key]
+        elif any(k in static_data for k in ("y", "next_plays", "messages")):
+            payload = static_data
+
+    elif isinstance(static_data, list):
+        if requested_key:
+            for item in static_data:
+                if isinstance(item, dict) and item.get("game_id") == requested_key:
+                    payload = item.get("response") or item
+                    break
+        if payload is None and static_data and isinstance(static_data[0], list):
+            payload = static_data
+
+    elif isinstance(static_data, str):
+        payload = static_data
+
+    if isinstance(payload, dict) and "messages" in payload:
+        # Extract assistant content from chat transcript style payloads
+        messages = payload.get("messages", [])
+        for message in reversed(messages):
+            if isinstance(message, dict) and message.get("role") == "assistant":
+                payload = message.get("content")
+                break
+
+    if payload is not None:
+        payload = _normalize_stage1_payload(payload)
+
+    return payload
 
 
 class OptimizedGameContext:
@@ -334,7 +429,7 @@ class CompactGameContext:
     def add_play_tuple(self, new_play_tuple: list, max_plays: int = 20) -> None:
         """Add a new play tuple and maintain sliding window."""
         current_len = len(self.current_plays)
-        
+
         if current_len < max_plays:
             new_plays = self.current_plays + [new_play_tuple]
         else:
@@ -835,7 +930,7 @@ def convert_compact_play_to_tuple(next_play: Dict[str, Any], context: Dict[str, 
         # Return minimal valid 7-element tuple
         return [1, 720, [0, 0], ['A', -1], 'unknown', 0, 0]
 
-def init_prediction_client() -> tuple[BasePredictionClient, Dict[str, str]]:
+def init_prediction_client() -> Tuple[BasePredictionClient, Dict[str, str]]:
     """Initialize prediction client based on platform configuration."""
     platform = get_prediction_platform()
     validation_mode = os.getenv("VALIDATION_MODE", "fast")
@@ -965,15 +1060,45 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                 _stage_temp = float(os.getenv("PREDICTION_TEMPERATURE", "0.8"))
             except Exception:
                 _stage_temp = 0.8
-            stage1_content, stage1_usage, stage1_game_ended, stage1_needs_rollback, stage1_termination_info = client.predict_with_validation(
-                context=stage1_context,  # Base context without recent_plays
-                model_id=model_config['model_1_id'],
-                max_tokens=int(_allowed_new),
-                temperature=_stage_temp,
-                max_retries=6,
-                stage1_mode=True  # Use Stage 1 validation (expects next_plays array)
-            )
-            
+
+            use_live_stage1 = True
+            static_config = {
+                "enabled": os.getenv("STATIC_STAGE1_ENABLED", "0").lower() in ("1", "true", "yes", "on"),
+                "path": os.getenv("STATIC_STAGE1_RESPONSE_PATH"),
+                "game_key": os.getenv("STATIC_STAGE1_GAME_KEY"),
+                "should_skip_api": os.getenv("STATIC_STAGE1_SKIP_API", "0").lower() in ("1", "true", "yes", "on"),
+            }
+
+            stage1_payload = None
+            if static_config["enabled"] and static_config["path"]:
+                requested_key = static_config["game_key"] or str(game_context.get("game_id"))
+                if not requested_key:
+                    requested_key = str(game_context.get("gid") or game_context.get("game"))
+
+                static_data = _load_stage1_static_from_path(static_config["path"])
+                stage1_payload = _select_stage1_payload(static_data, requested_key)
+
+                if stage1_payload is not None:
+                    log_config.log_normal("🧪 Using static Stage 1 response from file")
+                    stage1_content = json_dumps(stage1_payload)
+                    stage1_usage = {"completion_tokens": 0}
+                    stage1_game_ended = False
+                    stage1_needs_rollback = False
+                    stage1_termination_info = None
+                    use_live_stage1 = not static_config["should_skip_api"]
+                else:
+                    log_config.log_normal("⚠️ Static Stage 1 file loaded but no payload detected; using live call")
+
+            if use_live_stage1:
+                stage1_content, stage1_usage, stage1_game_ended, stage1_needs_rollback, stage1_termination_info = client.predict_with_validation(
+                    context=stage1_context,
+                    model_id=model_config['model_1_id'],
+                    max_tokens=int(_allowed_new),
+                    temperature=_stage_temp,
+                    max_retries=6,
+                    stage1_mode=True
+                )
+
             # Store Stage 1 termination information if present (shouldn't normally happen)
             if stage1_termination_info:
                 log_config.log_normal(f"Warning: Unexpected Stage 1 termination: {stage1_termination_info.get('validation_termination_type', 'unknown')}")

@@ -169,7 +169,7 @@ For Each Play:
   "ap": [["De'Andre Hunter", 0.35, 0.06, 0.22, 0.37, 0.52, 0.48, 4.2, 1.8, 0.4, 31, 18, 2, 0], ...],
   "hp": [["Ausar Thompson", 0.40, 0.04, 0.18, 0.38, 0.55, 0.50, 3.5, 2.1, 0.8, 32, 19, 1, 1], ...],
   "L": [{"A": [0,1,2,3,4], "H": [0,1,2,3,4]}],
-  "p": [[1, 375, [18,11], 7, ["A",0], 0, "made2", "mid", null, 0], ...],
+  "p": [[1, 375, [18,11], 7, ["A",0], 1, "made2", "mid", 0], ...],
   "tb": [2, 1],
   "sd": 7,
   "pos": "H"
@@ -180,8 +180,14 @@ For Each Play:
 - `A`, `H`: Team abbreviations (away/home)
 - `as`, `hs`: Team stats arrays [OEFF, DEFF, PACE, 3PAr, FTr, ORr, ASTr, REST_DAYS]
 - `ap`, `hp`: Player arrays [name, rim%, c3%, nc3%, mid%, a2%, a3%, ast/100, stl/100, blk/100, MPG, usage, cluster, fouls]
-- `L`: Lineup lookup (maps lineup IDs to player indices)
-- `p`: Plays array (10-value tuples: [quarter, time_sec, score, margin, actor, actor_fouls, event, zone, assist_by, lineup_id])
+- `L`: Lineup lookup (maps lineup IDs to player indices). For remaining_plays input, `L` contains only lineups observed up to the context play (no future lineups).
+- `p`: Plays array (9-value tuples):
+  - `[quarter, time_seconds, [away, home], margin, actor, actor_fouls, event_code, shot_zone, lineup_id]`
+  - `actor` = `["A"|"H", playerIndex]` with `playerIndex >= 0` when actor is known; `-1` if unknown.
+  - `actor_fouls` = live, cumulative personal fouls for the acting player at that moment (counts `p_foul`, `s_foul`, `o_foul` where `event_type == 'foul'`).
+  - `event_code` = one of: made2, made3, miss2, miss3, mft, xft, d_reb, o_reb, tov, s_foul, p_foul, o_foul, sub, timeout, period, jumpball, viol, tech, unknown.
+  - `shot_zone` = one of: rim, mid, nc3, c3, or `null` for non-shots/unknown.
+  - `lineup_id` = index into `L` (0-based).
 - `tb`: Team bonus (quarter fouls: [away, home])
 - `sd`: Score difference (away - home)
 - `pos`: Possession ("A", "H", or "N")
@@ -227,15 +233,42 @@ For Each Play:
 - **Purpose**: Next-play prediction training
 - **Volume**: High (~400 examples per game)
 - **Usage**: Standard supervised learning for play-by-play prediction
-- **Output**: Each training example predicts the next play given context
+- **Output**: Each training example predicts the next play given context.
+- **Lineup handling (no leakage)**:
+  - Input `L`: only lineups observed up to the context (no future).
+  - Label `y.lineup_id`:
+    - If next lineup exists in `L`: emit its index (0..len(L)-1).
+    - If next lineup is new: emit `lineup_id == len(L)` as an explicit “new lineup” signal (we do not mutate `L` in the input).
+  - Inference: if `y.lineup_id < len(L)` use that lineup; if `y.lineup_id == len(L)`, append the new lineup to `L` downstream and proceed.
 
 #### 2. `first_N_plays` Mode (Sequence)
 - **Purpose**: Game opening sequence generation
 - **Volume**: Low (1 example per game)
 - **Usage**: Teaching model to generate realistic game openings
 - **Output**: Clean context → first N plays of the game
+- **Starting lineup seeding**: `L[0]` is seeded from prior game starters per team (replace DNPs with highest-MPG non-starters; for season opener, use last season’s final starting lineup).
+- **Lineup progression**:
+  - When raw on-court data (a1–a5/h1–h5) is available (Gemini path), lineup changes are tracked via `resolve_lineup_from_row` and `lineup_id` advances across the first-N sequence.
+  - Input contexts remain clean (no `p`).
 
 ### Event Codes
+### Actor Resolution
+- We resolve actor indices using roster indices from `ap`/`hp` when the player name is present. We fall back to `-1` only when the player is truly unavailable/unmappable.
+
+### Actor Fouls (Live)
+- `actor_fouls` is a live, in-game cumulative count at the moment of the play (counts personal/shooting/offensive fouls where `event_type == 'foul'`; excludes technicals and avoids double-counting o_foul turnovers).
+
+### Shot Zone
+- For shots (made2, miss2, made3, miss3) we attempt to classify as `rim`, `mid`, `nc3` or `c3`; otherwise `null`.
+
+### New Lineup Signal in Labels
+- To avoid leaking future information into inputs, labels signal lineup changes without mutating the input `L`:
+  - If the next lineup is not in `L`, we set `y.lineup_id = len(L)`.
+  - Consumers should treat `lineup_id == len(L)` as “append new lineup” at inference time.
+
+### Validation
+- Use `analysis/validate_tuple_distributions.py` to validate tuple lengths and distributions for all fields.
+- The validator treats `y.lineup_id == len(L)` as a valid “new lineup” signal and does not count it as invalid.
 
 The system uses standardized event codes for play classification:
 
@@ -363,6 +396,14 @@ export GENAI_TARGET_RPS=2.0
   ...
 ]
 ```
+
+**Test Mode (Static Stage 1)**:
+- Set `STATIC_STAGE1_ENABLED=1` to enable the static Stage 1 pipeline
+- Provide the file path via `STATIC_STAGE1_RESPONSE_PATH` (relative paths resolve from project root)
+- Select the Stage 1 payload by key with `STATIC_STAGE1_GAME_KEY` (defaults to the game id when present)
+- Optional: set `STATIC_STAGE1_SKIP_API=1` to skip the live Stage 1 endpoint entirely
+
+This mode injects the pre-recorded Stage 1 response before the rolling stage so you can run the rest of the pipeline without making the initial endpoint request.
 
 **Why Skip Stage 1?**
 - Testing with pre-built contexts

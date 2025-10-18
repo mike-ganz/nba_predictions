@@ -78,6 +78,41 @@ def remove_parentheses_content(text):
 class OpenAIFormatter(BaseFormatter):
     """Handles conversion to OpenAI fine-tuning format."""
     
+    def _get_player_fouls_cumulative(self, raw_game_df: pd.DataFrame) -> list[dict[str, int]]:
+        """Build per-play cumulative player foul counts for a raw game DataFrame."""
+        cache_attr = "_player_fouls_cache"
+        if not hasattr(self, cache_attr):
+            setattr(self, cache_attr, {})
+        cache = getattr(self, cache_attr)
+        try:
+            game_id = raw_game_df.iloc[0]['game_id'] if len(raw_game_df) > 0 else None
+        except Exception:
+            game_id = None
+        if game_id in cache:
+            return cache[game_id]
+        cumulative = []
+        running: dict[str, int] = {}
+        for _, row in raw_game_df.iterrows():
+            # Map event code
+            try:
+                if all(k in row for k in ['type', 'event_type']):
+                    from generate_training_data import map_structured_to_event_code
+                    ev_code, _ = map_structured_to_event_code(row)
+                else:
+                    from generate_training_data import map_description_to_event_code
+                    ev_code, _ = map_description_to_event_code(row.get('description', ''), {'team': None, 'points': None}, 0)
+            except Exception:
+                ev_code = "unknown"
+            event_type_val = str(row.get('event_type', '')).lower()
+            if ev_code in ("p_foul", "s_foul", "o_foul") and event_type_val == 'foul':
+                pn = row.get('player')
+                if pn is not None and not pd.isna(pn):
+                    name = str(pn)
+                    running[name] = running.get(name, 0) + 1
+            cumulative.append(dict(running))
+        cache[game_id] = cumulative
+        return cumulative
+    
     @property
     def platform_name(self) -> str:
         """Return the platform name."""
@@ -228,7 +263,7 @@ class OpenAIFormatter(BaseFormatter):
                             continue
                 
                 if context_row is not None:
-                    example = self._create_first_n_plays_example(game_df, context_row, n_total=n_total)
+                    example = self._create_first_n_plays_example(game_df, context_row, n_total=n_total, raw_game_df=raw_game_df)
                     if example:
                         training_examples.append(example)
         else:
@@ -360,8 +395,15 @@ class OpenAIFormatter(BaseFormatter):
                 current_json = current_json_raw
             
             # Create the next play response
+            # Provide raw_game_df and computed next_raw_index for live fouls
+            if raw_game_df is not None and play_id_to_raw_index is not None:
+                next_raw_index = play_id_to_raw_index.get(next_row['play_id'])
+            else:
+                next_raw_index = None
             assistant_response = self._create_next_play_response(
-                game_df, current_index, next_row, current_json
+                game_df, current_index, next_row, current_json,
+                current_json_raw if is_compact_context else None,
+                raw_game_df=raw_game_df, next_raw_index=next_raw_index
             )
             
             # Create OpenAI training example
@@ -385,7 +427,8 @@ class OpenAIFormatter(BaseFormatter):
             return None
     
     def _create_first_n_plays_example(self, game_df: pd.DataFrame, context_row: pd.Series,
-                                      n_total: Optional[int] = None) -> Optional[Dict[str, Any]]:
+                                      n_total: Optional[int] = None,
+                                      raw_game_df: Optional[pd.DataFrame] = None) -> Optional[Dict[str, Any]]:
         """
         Create a training example for first_N_plays mode.
         
@@ -406,19 +449,30 @@ class OpenAIFormatter(BaseFormatter):
             else:
                 current_json = current_json_raw
             
-            # Build first N plays as COMPACT tuples (no players_on_court)
+            # Build first N plays as COMPACT tuples using raw game data where available
             from config.settings import DEFAULT_N_TOTAL_PLAYS
             from game.time_utils import convert_to_quarter_time
             from game.scoring_utils import determine_scoring_info
-            from generate_training_data import map_structured_to_event_code, map_description_to_event_code, resolve_actor
+            from generate_training_data import map_structured_to_event_code, map_description_to_event_code, resolve_actor, create_lineup_key, determine_shot_zone, resolve_lineup_from_row
 
             if n_total is None:
                 n_total = DEFAULT_N_TOTAL_PLAYS
             compact_plays = []
 
-            # Prepare team names for scoring/team mapping
+            # Prepare team names and roster maps for actor resolution
             away_team = current_json['away_team']['name']
             home_team = current_json['home_team']['name']
+            away_name_to_idx: Dict[str, int] = {}
+            home_name_to_idx: Dict[str, int] = {}
+            try:
+                for idx, p in enumerate(current_json_raw.get('ap', []) or []):
+                    if isinstance(p, list) and p:
+                        away_name_to_idx[str(p[0])] = idx
+                for idx, p in enumerate(current_json_raw.get('hp', []) or []):
+                    if isinstance(p, list) and p:
+                        home_name_to_idx[str(p[0])] = idx
+            except Exception:
+                pass
 
             # Build player name → index maps
             away_name_to_idx: Dict[str, int] = {}
@@ -441,7 +495,6 @@ class OpenAIFormatter(BaseFormatter):
                         if name:
                             home_name_to_idx[str(name)] = idx
 
-            # Fallback to compact arrays if verbose players missing or empty
             if (not away_name_to_idx or not home_name_to_idx) and is_compact_context:
                 for idx, player_data in enumerate(current_json_raw.get('ap', []) or []):
                     if isinstance(player_data, list) and player_data:
@@ -450,14 +503,39 @@ class OpenAIFormatter(BaseFormatter):
                     if isinstance(player_data, list) and player_data:
                         home_name_to_idx[str(player_data[0])] = idx
 
-            # Iterate first N valid rows and convert each to compact tuple
-            for i in range(len(game_df)):
+            # Initialize lineup tracking for first_N_plays from compact context L, if present
+            current_lineups: List[Dict[str, List[int]]] = []
+            lineup_cache: Dict[tuple, int] = {}
+            current_lineup_id = 0
+            try:
+                seed_lineups = current_json_raw.get('L') if isinstance(current_json_raw, dict) else []
+                if isinstance(seed_lineups, list):
+                    current_lineups = [ld for ld in seed_lineups if isinstance(ld, dict) and 'A' in ld and 'H' in ld]
+                    lineup_cache = {tuple(ld['A'] + ld['H']): idx for idx, ld in enumerate(current_lineups)}
+                    if len(current_lineups) > 0:
+                        current_lineup_id = len(current_lineups) - 1
+            except Exception:
+                pass
+
+            # Live player foul accumulation from raw_game_df
+            foul_cumulative = []
+            if raw_game_df is not None:
+                foul_cumulative = self._get_player_fouls_cumulative(raw_game_df)
+
+            # Iterate first N valid rows from raw_game_df if available (prefer Q1), else fall back to game_df
+            rows_source = raw_game_df if raw_game_df is not None else game_df
+            for i in range(len(rows_source)):
                 if len(compact_plays) >= n_total:
                     break
-
-                row = game_df.iloc[i]
+                row = rows_source.iloc[i]
                 if pd.isna(row.get('description')):
                     continue
+                # Restrict to quarter 1 for first_N
+                try:
+                    if int(row.get('period', 1)) != 1:
+                        continue
+                except Exception:
+                    pass
 
                 # Quarter/time
                 q, t_str = convert_to_quarter_time(row['period'], row['remaining_time'])
@@ -487,7 +565,7 @@ class OpenAIFormatter(BaseFormatter):
                     prev_away, prev_home, curr_away, curr_home, away_team, home_team
                 )
 
-                # Resolve actor using shared helper
+                # Resolve actor using shared helper and compact roster maps
                 player_name = row.get('player')
                 if pd.isna(player_name):
                     player_name = None
@@ -532,12 +610,48 @@ class OpenAIFormatter(BaseFormatter):
                 except Exception:
                     event_code = "unknown"
 
-                # Build compact play tuple: scoring -> 7-tuple, non-scoring -> 6-tuple
-                lineup_id = 0
-                if points_scored and points_scored > 0:
-                    play_tuple = [int(q), int(ts), [int(score_arr[0]), int(score_arr[1])], actor, event_code, int(points_scored), int(lineup_id)]
-                else:
-                    play_tuple = [int(q), int(ts), [int(score_arr[0]), int(score_arr[1])], actor, event_code, int(lineup_id)]
+                # Live actor fouls at this play index
+                actor_fouls = 0
+                try:
+                    if raw_game_df is not None and i < len(foul_cumulative):
+                        pn = row.get('player')
+                        if pn is not None and not pd.isna(pn):
+                            actor_fouls = int(foul_cumulative[i].get(str(pn), 0))
+                except Exception:
+                    actor_fouls = 0
+
+                # Resolve lineup from this row if possible
+                lineup_data = resolve_lineup_from_row(row, current_json_raw)
+                if lineup_data:
+                    lineup_key = tuple(lineup_data['A'] + lineup_data['H'])
+                    if lineup_key not in lineup_cache:
+                        current_lineups.append(lineup_data)
+                        lineup_cache[lineup_key] = len(current_lineups) - 1
+                    current_lineup_id = lineup_cache[lineup_key]
+
+                # Determine shot zone when possible (shots only)
+                shot_zone = None
+                try:
+                    if event_code in ['made2','miss2','made3','miss3']:
+                        shot_zone = determine_shot_zone(row)
+                except Exception:
+                    shot_zone = None
+
+                # Build compact play tuple - ALWAYS 9 elements; non-scoring uses points=0
+                lineup_id = current_lineup_id
+                pts_val = int(points_scored) if points_scored and points_scored > 0 else 0
+                margin = int(score_arr[0]) - int(score_arr[1])
+                play_tuple = [
+                    int(q),                         # quarter
+                    int(ts),                        # time_seconds
+                    [int(score_arr[0]), int(score_arr[1])],  # score
+                    int(margin),                   # margin (away - home)
+                    actor,                         # actor [team, idx]
+                    int(actor_fouls),              # actor_fouls (live cumulative)
+                    event_code,                    # event_code
+                    shot_zone,                     # shot_zone (None if unknown)
+                    int(lineup_id)                 # lineup_id
+                ]
 
                 compact_plays.append(play_tuple)
 
@@ -633,7 +747,8 @@ class OpenAIFormatter(BaseFormatter):
         }
     
     def _create_next_play_response(self, game_df: pd.DataFrame, current_index: int, 
-                                 next_row: pd.Series, current_json: Dict[str, Any]) -> Dict[str, Any]:
+                                 next_row: pd.Series, current_json: Dict[str, Any], current_json_raw: Dict[str, Any] = None,
+                                 raw_game_df: pd.DataFrame = None, next_raw_index: int = None) -> Dict[str, Any]:
         """
         Create the assistant response (next play prediction) for OpenAI training.
         
@@ -721,17 +836,40 @@ class OpenAIFormatter(BaseFormatter):
         next_home_score = int(next_row.get('home_score', 0) or 0)
         score_array = [next_away_score, next_home_score]
         
-        # Create actor
+        # Create actor - resolve to roster index using shared helper when possible
         away_team = current_json['away_team']['name']
         home_team = current_json['home_team']['name']
-        
-        # Simple actor mapping based on team (simplified for formatter)
-        if scoring_team == away_team:
-            actor = ["A", 0]  # Away team, simplified index
-        elif scoring_team == home_team:
-            actor = ["H", 0]  # Home team, simplified index
-        else:
-            actor = ["A", -1]  # Default to away team event
+        away_name_to_idx = {}
+        home_name_to_idx = {}
+        try:
+            # Build name→index maps when compact raw context is available
+            src = current_json_raw if current_json_raw is not None else {}
+            for idx, p in enumerate(src.get('ap', []) or []):
+                if isinstance(p, list) and p:
+                    away_name_to_idx[str(p[0])] = idx
+            for idx, p in enumerate(src.get('hp', []) or []):
+                if isinstance(p, list) and p:
+                    home_name_to_idx[str(p[0])] = idx
+        except Exception:
+            pass
+        try:
+            from generate_training_data import resolve_actor as _resolve_actor
+            actor = _resolve_actor(
+                next_row.get('player'),
+                {'team': next_row.get('team',''), 'points': points_scored if points_scored>0 else None},
+                away_team,
+                home_team,
+                away_name_to_idx,
+                home_name_to_idx
+            )
+        except Exception:
+            # Fallback
+            if scoring_team == away_team:
+                actor = ["A", 0]
+            elif scoring_team == home_team:
+                actor = ["H", 0]
+            else:
+                actor = ["A", -1]
         
         # Use structured event code mapping for better accuracy
         from generate_training_data import map_structured_to_event_code, map_description_to_event_code
@@ -773,28 +911,63 @@ class OpenAIFormatter(BaseFormatter):
         # Default lineup ID
         lineup_id = 0
         
-        # Create compact play tuple - ensure all numbers are regular Python ints for JSON serialization
-        if points_scored and points_scored > 0:
-            # Scoring play: [q, t, score, actor, event, pts, lineup_id]
-            play_tuple = [
-                int(next_quarter), 
-                int(time_seconds), 
-                [int(score_array[0]), int(score_array[1])], 
-                actor, 
-                event_code, 
-                int(points_scored), 
-                int(lineup_id)
-            ]
-        else:
-            # Non-scoring play: [q, t, score, actor, event, lineup_id]
-            play_tuple = [
-                int(next_quarter), 
-                int(time_seconds), 
-                [int(score_array[0]), int(score_array[1])], 
-                actor, 
-                event_code, 
-                int(lineup_id)
-            ]
+        # Resolve lineup_id intelligently for remaining_plays
+        try:
+            from generate_training_data import resolve_lineup_from_row
+            # Use compact raw context if provided, else fall back to verbose
+            context_for_lineup = current_json_raw if current_json_raw is not None else current_json
+            lineup_data = resolve_lineup_from_row(next_row, context_for_lineup)
+            if lineup_data:
+                # Build a stable cache keyed by the lineup tuple
+                # Use the existing L list if present; else start fresh
+                existing_lineups = context_for_lineup.get('L') or []
+                lineup_cache = {}
+                for idx, ld in enumerate(existing_lineups):
+                    key = tuple(ld.get('A', []) + ld.get('H', []))
+                    lineup_cache[key] = idx
+                lineup_key = tuple(lineup_data['A'] + lineup_data['H'])
+                # Do NOT mutate input L (no leakage). If new lineup, emit id == len(L)
+                lineup_id = lineup_cache.get(lineup_key, len(existing_lineups))
+        except Exception:
+            lineup_id = 0
+        
+        # Create compact play tuple - ALWAYS 9 elements (assist removed); non-scoring uses points=0
+        pts_val = int(points_scored) if points_scored and points_scored > 0 else 0
+        margin = int(score_array[0]) - int(score_array[1])
+        # Actor fouls: default 0, then try live cumulative if raw_game_df provided
+        actor_fouls = 0
+        
+        # Live cumulative fouls lookup (remaining_plays)
+        try:
+            if raw_game_df is not None and next_raw_index is not None and 0 <= next_raw_index < len(raw_game_df):
+                cum = self._get_player_fouls_cumulative(raw_game_df)
+                pn = next_row.get('player')
+                if pn is not None and not pd.isna(pn):
+                    actor_fouls = int(cum[next_raw_index].get(str(pn), 0))
+        except Exception:
+            actor_fouls = 0
+        
+        # Infer shot_zone for shooting events when possible
+        shot_zone = None
+        try:
+            if event_code in ['made2', 'miss2', 'made3', 'miss3']:
+                from generate_training_data import determine_shot_zone
+                shot_zone = determine_shot_zone(next_row)
+        except Exception:
+            shot_zone = None
+        
+        # Build the final 9-element play tuple
+        play_tuple = [
+            int(next_quarter), 
+            int(time_seconds), 
+            [int(score_array[0]), int(score_array[1])], 
+            int(margin),
+            actor, 
+            int(actor_fouls),
+            event_code, 
+            shot_zone, 
+            int(lineup_id)
+        ]
         
         # Return compact format response
         return {

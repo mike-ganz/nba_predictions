@@ -415,11 +415,39 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
                     away_abbrev, home_abbrev
                 )
             
-            # Determine points (convert to native Python int)
-            points = int(mapped_points) if mapped_points is not None else 0
-            
-            # Create compact play tuple
-            play_tuple = [quarter, time_seconds, current_score, actor, event_code, points, 0]
+            # Determine lineup id using resolve_lineup_from_row if possible
+            lineup_id = 0
+            try:
+                from generate_training_data import resolve_lineup_from_row
+                lineup_data = resolve_lineup_from_row(next_row, context_json)
+                if lineup_data:
+                    existing_lineups = context_json.get('L') or []
+                    cache = {tuple(ld.get('A', []) + ld.get('H', [])): idx for idx, ld in enumerate(existing_lineups) if isinstance(ld, dict)}
+                    key = tuple(lineup_data['A'] + lineup_data['H'])
+                    if key in cache:
+                        lineup_id = cache[key]
+                    else:
+                        existing_lineups.append(lineup_data)
+                        context_json['L'] = existing_lineups
+                        lineup_id = len(existing_lineups) - 1
+            except Exception:
+                lineup_id = 0
+
+            # Create standardized 9-element compact play tuple
+            margin = int(current_score[0]) - int(current_score[1])
+            actor_fouls = 0
+            shot_zone = None
+            play_tuple = [
+                int(quarter),
+                int(time_seconds),
+                [int(current_score[0]), int(current_score[1])],
+                int(margin),
+                actor,
+                int(actor_fouls),
+                event_code,
+                shot_zone,
+                int(lineup_id)
+            ]
             
             # Return raw tuple for maximum efficiency
             return json.dumps(play_tuple, separators=(',', ':'))
@@ -557,6 +585,12 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
             # Create first N play tuples
             # Iterate until we collect n_total plays (not just n_total iterations)
             first_plays = []
+            # Prepare lineup tracking helpers
+            current_lineups = context_json.get('L', []) if isinstance(context_json, dict) else []
+            lineup_cache = {tuple(lineup['A'] + lineup['H']): idx for idx, lineup in enumerate(current_lineups)
+                            if isinstance(lineup, dict) and 'A' in lineup and 'H' in lineup}
+            current_lineup_id = 0
+
             for i in range(len(raw_game_df)):
                 if len(first_plays) >= n_total:
                     break
@@ -564,12 +598,15 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
                 row = raw_game_df.iloc[i]
                 
                 if pd.notna(row.get('description')):
-                    play_tuple = self._create_compact_play_tuple_ultra_fast(
+                    play_tuple, current_lineup_id = self._create_compact_play_tuple_ultra_fast(
                         row, context_json, raw_game_df, away_team_name, home_team_name,
                         away_name_to_idx, home_name_to_idx,
-                        map_structured_to_event_code, map_description_to_event_code
+                        map_structured_to_event_code, map_description_to_event_code,
+                        current_lineups, lineup_cache, current_lineup_id
                     )
                     if play_tuple:
+                        # ensure lineup id uses tracked value
+                        play_tuple[-1] = current_lineup_id
                         first_plays.append(play_tuple)
             
             if len(first_plays) == 0:
@@ -598,7 +635,9 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
     def _create_compact_play_tuple_ultra_fast(self, row: pd.Series, context_json: Dict[str, Any], 
                                             raw_game_df: pd.DataFrame, away_team_name: str, home_team_name: str,
                                             away_name_to_idx: Dict[str, int], home_name_to_idx: Dict[str, int],
-                                            map_structured_to_event_code, map_description_to_event_code) -> Optional[List]:
+                                            map_structured_to_event_code, map_description_to_event_code,
+                                            current_lineups: List[Dict[str, List[int]]], lineup_cache: Dict[tuple, int],
+                                            current_lineup_id: int) -> tuple[Optional[List], int]:
         """
         Create a compact play tuple from a raw DataFrame row (ultra-fast version).
         """
@@ -644,6 +683,17 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
                 away_name_to_idx, home_name_to_idx
             )
             
+            # Update lineup tracking using helper from generate_training_data
+            from generate_training_data import resolve_lineup_from_row
+            lineup_data = resolve_lineup_from_row(row, context_json)
+            if lineup_data:
+                lineup_key = tuple(lineup_data['A'] + lineup_data['H'])
+                if lineup_key not in lineup_cache:
+                    current_lineups.append(lineup_data)
+                    lineup_cache[lineup_key] = len(current_lineups) - 1
+                current_lineup_id = lineup_cache[lineup_key]
+            lineup_cache['latest'] = current_lineup_id
+
             # Map event code using structured data if available
             if all(key in row for key in ['type', 'event_type']):
                 event_code, mapped_points = map_structured_to_event_code(row)
@@ -657,12 +707,25 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
             
             # Build compact play tuple
             points = int(mapped_points) if mapped_points is not None else 0
-            play_tuple = [quarter, time_seconds, score_array, actor, event_code, points, 0]
+            margin = int(score_array[0]) - int(score_array[1])
+            actor_fouls = 0
+            shot_zone = None
+            play_tuple = [
+                int(quarter),
+                int(time_seconds),
+                [int(score_array[0]), int(score_array[1])],
+                int(margin),
+                actor,
+                int(actor_fouls),
+                event_code,
+                shot_zone,
+                int(current_lineup_id)
+            ]
             
-            return play_tuple
+            return play_tuple, current_lineup_id
             
         except Exception as e:
-            return None
+            return None, lineup_cache.get('latest', current_lineup_id)
 
 # Convenience function to use the optimized formatter
 def create_ultra_fast_gemini_training_data(df: pd.DataFrame, generation_mode: str = "remaining_plays", 

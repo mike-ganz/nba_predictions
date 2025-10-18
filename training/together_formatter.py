@@ -178,7 +178,10 @@ class TogetherFormatter(OpenAIFormatter):
         with open(filepath, 'w', encoding='utf-8') as f:
             for example in super().iter_training_data(df, generation_mode, n_total, season_year):
                 f.write(_fastjson.dumps(example, separators=(',', ':')) + '\n')
-        print(f"✓ Stream-saved Together.ai dataset to: {filepath}")
+        try:
+            print(f"✓ Stream-saved Together.ai dataset to: {filepath}")
+        except UnicodeEncodeError:
+            print(f"Stream-saved Together.ai dataset to: {filepath}")
         return filepath
 
 
