@@ -516,15 +516,22 @@ class BasePredictionClient(ABC):
             
             next_plays = []
             for i, play_tuple in enumerate(play_tuples):
-                if not isinstance(play_tuple, list) or len(play_tuple) != 7:
-                    return ValidationResult.RETRY, [], f"Play tuple {i+1} must be exactly 7 elements, got {len(play_tuple) if isinstance(play_tuple, list) else 'non-list'}"
+                if not isinstance(play_tuple, list) or len(play_tuple) not in (9, 7):
+                    return ValidationResult.RETRY, [], f"Play tuple {i+1} must have 9 elements (preferred) or 7 (legacy), got {len(play_tuple) if isinstance(play_tuple, list) else 'non-list'}"
                 
                 # Convert tuple to minimal play object for validation
-                quarter = play_tuple[0]
-                time_seconds = play_tuple[1]
-                score_array = play_tuple[2] if len(play_tuple[2]) >= 2 else [0, 0]
-                actor = play_tuple[3]
-                event_code = play_tuple[4]
+                if len(play_tuple) == 9:
+                    quarter = play_tuple[0]
+                    time_seconds = play_tuple[1]
+                    score_array = play_tuple[2] if len(play_tuple[2]) >= 2 else [0, 0]
+                    actor = play_tuple[4]
+                    event_code = play_tuple[6]
+                else:
+                    quarter = play_tuple[0]
+                    time_seconds = play_tuple[1]
+                    score_array = play_tuple[2] if len(play_tuple[2]) >= 2 else [0, 0]
+                    actor = play_tuple[3]
+                    event_code = play_tuple[4]
                 
                 # Convert time back to MM:SS format
                 minutes = time_seconds // 60
@@ -549,15 +556,22 @@ class BasePredictionClient(ABC):
             
             next_plays = []
             for i, play_tuple in enumerate(play_tuples):
-                if not isinstance(play_tuple, list) or len(play_tuple) != 7:
-                    return ValidationResult.RETRY, [], f"Play tuple {i+1} must be exactly 7 elements, got {len(play_tuple) if isinstance(play_tuple, list) else 'non-list'}"
+                if not isinstance(play_tuple, list) or len(play_tuple) not in (9, 7):
+                    return ValidationResult.RETRY, [], f"Play tuple {i+1} must have 9 elements (preferred) or 7 (legacy), got {len(play_tuple) if isinstance(play_tuple, list) else 'non-list'}"
                 
                 # Convert tuple to minimal play object for validation
-                quarter = play_tuple[0]
-                time_seconds = play_tuple[1]
-                score_array = play_tuple[2] if len(play_tuple[2]) >= 2 else [0, 0]
-                actor = play_tuple[3]
-                event_code = play_tuple[4]
+                if len(play_tuple) == 9:
+                    quarter = play_tuple[0]
+                    time_seconds = play_tuple[1]
+                    score_array = play_tuple[2] if len(play_tuple[2]) >= 2 else [0, 0]
+                    actor = play_tuple[4]
+                    event_code = play_tuple[6]
+                else:
+                    quarter = play_tuple[0]
+                    time_seconds = play_tuple[1]
+                    score_array = play_tuple[2] if len(play_tuple[2]) >= 2 else [0, 0]
+                    actor = play_tuple[3]
+                    event_code = play_tuple[4]
                 
                 # Convert time back to MM:SS format
                 minutes = time_seconds // 60
@@ -829,16 +843,17 @@ class TogetherPredictionClient(BasePredictionClient):
                 # Stage 1 strict format
                 system_prompt = (
                     "Return a single JSON object with key 'y' that maps to an array of tuples. "
-                    "Each tuple must have exactly 7 elements: "
-                    "[quarter:int, time_sec:int, score:[away:int,home:int], actor:[\"A\"|\"H\", int], "
-                    "event:str, points:int, lineup:int]. No prose, no extra keys."
+                    "Each tuple must have exactly 9 elements: "
+                    "[quarter:int, time_sec:int, score:[away:int,home:int], margin:int, actor:[\"A\"|\"H\", int], "
+                    "actor_fouls:int, event:str, shot_zone:null|str, lineup:int]. No prose, no extra keys."
                 )
             elif model_id == model_cfg.get("model_2_id"):
                 # Stage 2 strict format and no trailing characters
                 system_prompt = (
                     "Output a single strict JSON object only. No trailing characters, no comments, no prose. "
-                    "The object must contain key 'y' mapping to an array of tuples, each exactly 7 elements: "
-                    "[quarter:int, time_sec:int, score:[away:int,home:int], actor:[\"A\"|\"H\", int], event:str, points:int, lineup:int]."
+                    "The object must contain key 'y' mapping to an array of tuples, each exactly 9 elements: "
+                    "[quarter:int, time_sec:int, score:[away:int,home:int], margin:int, actor:[\"A\"|\"H\", int], "
+                    "actor_fouls:int, event:str, shot_zone:null|str, lineup:int]."
                 )
         except Exception:
             pass

@@ -185,15 +185,25 @@ class OptimizedGameContext:
                 simple_hash ^= hash(desc[:20])  # First 20 chars only
             return f"small_{play_count}_{simple_hash}"
         
-        # For larger sequences or when identity fails, use efficient content-based hash
-        # Avoid creating intermediate tuple - use hash accumulation instead
-        hash_acc = hash(play_count)  # Start with length
-        for i, play in enumerate(plays):
-            if i < 5:  # Only hash first 5 plays for speed (most variance is at the beginning)
-                desc = play.get('description', '')
-                time_r = play.get('time_remaining', '')
-                hash_acc ^= hash(desc[:30])  # Only hash first 30 chars of description
-                hash_acc ^= hash(time_r)
+        # For larger sequences, incorporate both head and tail plays to detect tail-only changes
+        # Avoid creating intermediate tuples - use hash accumulation instead
+        hash_acc = hash(play_count)
+        # Head sample (first up to 5 plays)
+        head_n = min(5, play_count)
+        for i in range(head_n):
+            play = plays[i]
+            desc = play.get('description', '')
+            time_r = play.get('time_remaining', '')
+            hash_acc ^= hash(desc[:30])
+            hash_acc ^= hash(time_r)
+        # Tail sample (last up to 3 plays)
+        tail_n = min(3, play_count)
+        for i in range(play_count - tail_n, play_count):
+            play = plays[i]
+            desc = play.get('description', '')
+            time_r = play.get('time_remaining', '')
+            hash_acc ^= hash(desc[-30:])  # Different slice to reduce collision
+            hash_acc ^= hash(time_r)
         
         return str(hash_acc)
     
@@ -368,11 +378,21 @@ class CompactGameContext:
                     simple_hash ^= hash(str(play[:5]))  # Hash first 5 elements
             return f"compact_{play_count}_{simple_hash}"
         
-        # For larger sequences, hash more efficiently
+        # For larger sequences, incorporate both head and tail to detect tail-only changes
         hash_acc = hash(play_count)
-        for i, play in enumerate(plays):
-            if i < 5 and len(play) >= 5:  # Only hash first 5 plays
-                hash_acc ^= hash(str(play[:5]))  # Hash essential play elements
+        head_n = min(5, play_count)
+        for i in range(head_n):
+            play = plays[i]
+            if len(play) >= 5:
+                hash_acc ^= hash(str(play[:5]))
+        tail_n = min(3, play_count)
+        for i in range(play_count - tail_n, play_count):
+            play = plays[i]
+            if len(play) >= 5:
+                # Include elements likely to change at end (time, event, lineup)
+                # Use a different slice pattern to reduce accidental collisions with head
+                sample = [play[0], play[1], play[4] if len(play) > 4 else None, play[-1]]
+                hash_acc ^= hash(str(sample))
         
         return str(hash_acc)
     
@@ -487,17 +507,19 @@ class CompactGameContext:
         last_score = self._extract_last_known_score_compact()
         print(f"DEBUG: Last known score: {last_score}")
         
-        # Create a fresh quarter start play in compact format
-        # Format: [quarter, time_seconds, score_array, actor, event_code, points, lineup_id]
-        # ALWAYS 7 elements to match training data format
+        # Create a fresh quarter start play in compact format (9-element)
+        # [q, t, [as,hs], margin, actor, actor_fouls, event, shot_zone, lineup_id]
+        margin = int(last_score[0]) - int(last_score[1]) if isinstance(last_score, list) and len(last_score) == 2 else 0
         quarter_start_play = [
-            quarter,           # Quarter number
+            int(quarter),
             720,               # 12:00 in seconds
-            last_score,        # [away_score, home_score]
-            ["A", -1],         # Generic actor (away team, no specific player)
-            "quarter_start",   # Event code
-            0,                 # No points (non-scoring event)
-            0                  # Default lineup
+            last_score if isinstance(last_score, list) else [0, 0],
+            int(margin),
+            ["A", -1],         # Generic actor (team-level)
+            0,                  # actor_fouls
+            "quarter_start",   # event
+            None,               # shot_zone
+            0                   # lineup_id
         ]
         
         print(f"DEBUG: Created quarter start play: {quarter_start_play}")
@@ -578,17 +600,30 @@ log_config = LoggingConfig()
 
 
 def format_play_description(play_tuple: list, game_context: Dict[str, Any]) -> str:
-    """Convert a play tuple to human-readable description with player names."""
-    if len(play_tuple) < 5:
+    """Convert a play tuple to human-readable description with player names.
+    Supports both 9-element (preferred) and 7-element (legacy) compact tuples.
+    """
+    if not isinstance(play_tuple, list):
+        return "Invalid play"
+    if len(play_tuple) < 7:
         return "Invalid play"
     
     try:
-        quarter = play_tuple[0]
-        time_seconds = play_tuple[1] 
-        score_array = play_tuple[2] if len(play_tuple[2]) >= 2 else [0, 0]
-        actor = play_tuple[3]  # [team, player_index]
-        event_code = play_tuple[4]
-        points = play_tuple[5] if len(play_tuple) > 5 else 0
+        if len(play_tuple) >= 9:
+            # 9-element schema: [q, t, score, margin, actor, actor_fouls, event, shot_zone, lineup_id]
+            quarter = play_tuple[0]
+            time_seconds = play_tuple[1]
+            score_array = play_tuple[2] if len(play_tuple[2]) >= 2 else [0, 0]
+            actor = play_tuple[4]  # [team, player_index]
+            event_code = play_tuple[6]
+        else:
+            # 7-element legacy: [q, t, score, actor, event, points, lineup_id]
+            quarter = play_tuple[0]
+            time_seconds = play_tuple[1]
+            score_array = play_tuple[2] if len(play_tuple[2]) >= 2 else [0, 0]
+            actor = play_tuple[3]
+            event_code = play_tuple[4]
+        # points are not needed for description
         
         # Extract team and player info
         if isinstance(actor, list) and len(actor) >= 2:
@@ -826,20 +861,23 @@ def parse_compact_response(response_content: str, game_context: Dict[str, Any] =
                 
                 # Convert first/primary play to verbose-like format for compatibility
                 primary_play = plays[0]
-                if len(primary_play) >= 6:
-                    quarter = primary_play[0]
-                    time_seconds = primary_play[1]
-                    score_array = primary_play[2]
-                    actor = primary_play[3]
-                    event_code = primary_play[4]
-                    
-                    # Handle both scoring and non-scoring formats
-                    if len(primary_play) == 7:  # Scoring: [q, t, score, actor, event, pts, lineup_id]
+                if isinstance(primary_play, list) and len(primary_play) >= 7:
+                    if len(primary_play) == 9:
+                        quarter = primary_play[0]
+                        time_seconds = primary_play[1]
+                        score_array = primary_play[2]
+                        actor = primary_play[4]
+                        event_code = primary_play[6]
+                        lineup_id = primary_play[8]
+                        points = None  # not present in 9-element schema
+                    else:
+                        quarter = primary_play[0]
+                        time_seconds = primary_play[1]
+                        score_array = primary_play[2]
+                        actor = primary_play[3]
+                        event_code = primary_play[4]
                         points = primary_play[5]
                         lineup_id = primary_play[6]
-                    else:  # Non-scoring: [q, t, score, actor, event, lineup_id]
-                        points = None
-                        lineup_id = primary_play[5]
                     
                     # Convert time back to MM:SS format
                     minutes = time_seconds // 60
@@ -884,7 +922,7 @@ def convert_compact_play_to_tuple(next_play: Dict[str, Any], context: Dict[str, 
         context: Current context for reference
         
     Returns:
-        list: Play tuple in compact format - ALWAYS 7 elements [q, t, score, actor, event, points, lineup_id]
+        list: 9-element tuple [q, t, [as,hs], margin, actor, actor_fouls, event, shot_zone, lineup_id]
     """
     try:
         quarter = next_play.get('quarter', 1)
@@ -914,21 +952,30 @@ def convert_compact_play_to_tuple(next_play: Dict[str, Any], context: Dict[str, 
         event_code = next_play.get('_compact_event_code', 'unknown')
         lineup_id = next_play.get('_compact_lineup_id', 0)
         
-        # Get points from shot_details (default to 0 for non-scoring)
-        shot_details = next_play.get('shot_details', {})
-        points = shot_details.get('points')
-        if points is None:
-            points = 0
+        # Derived fields for 9-element schema
+        margin = int(score_array[0]) - int(score_array[1])
+        actor_fouls = int(next_play.get('_compact_actor_fouls', 0) or 0)
+        shot_zone = next_play.get('_compact_shot_zone')  # may be None
         
-        # Build tuple - ALWAYS 7 elements to match training data format
-        play_tuple = [quarter, time_seconds, score_array, actor, event_code, points, lineup_id]
+        # Build 9-element tuple
+        play_tuple = [
+            int(quarter),
+            int(time_seconds),
+            [int(score_array[0]), int(score_array[1])],
+            int(margin),
+            actor,
+            int(actor_fouls),
+            str(event_code),
+            shot_zone,
+            int(lineup_id)
+        ]
         
         return play_tuple
         
     except Exception as e:
         print(f"Warning: Failed to convert play to tuple: {e}")
-        # Return minimal valid 7-element tuple
-        return [1, 720, [0, 0], ['A', -1], 'unknown', 0, 0]
+        # Return minimal valid 9-element tuple
+        return [1, 720, [0, 0], 0, ['A', -1], 0, 'unknown', None, 0]
 
 def init_prediction_client() -> Tuple[BasePredictionClient, Dict[str, str]]:
     """Initialize prediction client based on platform configuration."""
@@ -1090,6 +1137,20 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                     log_config.log_normal("⚠️ Static Stage 1 file loaded but no payload detected; using live call")
 
             if use_live_stage1:
+                # In llm-debug mode, print the exact Stage 1 input JSON
+                try:
+                    from os import getenv as _getenv
+                    _dbg = int(_getenv("PREDICTION_LOG_LEVEL", "1")) >= 3 or _getenv("VALIDATION_DEBUG", "0").lower() in ("1","true","yes","on")
+                except Exception:
+                    _dbg = False
+                if _dbg:
+                    try:
+                        print("=== STAGE 1 INPUT JSON ===")
+                        print(json_dumps(stage1_context, separators=(',', ':')))
+                        print("=== END STAGE 1 INPUT ===")
+                    except Exception:
+                        pass
+
                 stage1_content, stage1_usage, stage1_game_ended, stage1_needs_rollback, stage1_termination_info = client.predict_with_validation(
                     context=stage1_context,
                     model_id=model_config['model_1_id'],
@@ -1194,10 +1255,25 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                 if is_compact and optimized_context.current_plays:
                     latest_play = optimized_context.current_plays[-1]
                     if len(latest_play) >= 3:
-                        current_game_state = (latest_play[0], latest_play[1], tuple(latest_play[2]))  # (quarter, time, score)
+                        # Include event and window length so multiple same-time events don't look identical
+                        event_code = latest_play[6] if len(latest_play) > 6 else None
+                        current_game_state = (
+                            latest_play[0],                      # quarter
+                            latest_play[1],                      # time_seconds
+                            tuple(latest_play[2]),               # score tuple
+                            event_code,                          # event
+                            len(optimized_context.current_plays) # window length
+                        )
                 elif not is_compact and optimized_context.current_recent_plays:
                     latest_play = optimized_context.current_recent_plays[-1]
-                    current_game_state = (latest_play.get('quarter'), latest_play.get('time_remaining'), latest_play.get('score'))
+                    # Include description and window length for verbose
+                    current_game_state = (
+                        latest_play.get('quarter'),
+                        latest_play.get('time_remaining'),
+                        latest_play.get('score'),
+                        latest_play.get('description'),
+                        len(optimized_context.current_recent_plays)
+                    )
                 
                 if current_game_state == last_game_state:
                     consecutive_stuck_iterations += 1
@@ -1251,9 +1327,9 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                     else:
                         log_config.log_normal(f"DEBUG: Latest play too short: {len(latest_play)} elements")
                         
-                    # Show last 5 play tuples for context
+                    # Show last 15 play tuples for context
                     log_config.log_normal("Recent plays:")
-                    recent_to_show = current_plays[-5:]
+                    recent_to_show = current_plays[-15:]
                     for i, play_tuple in enumerate(recent_to_show, 1):
                         if len(play_tuple) >= 5:
                             q = play_tuple[0]
@@ -1271,9 +1347,9 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                     
                     log_config.log_normal(f"Game State: Q{current_quarter} {current_time} | {current_score}")
                     
-                    # Show last 5 plays for context
+                    # Show last 15 plays for context
                     log_config.log_normal("Recent plays context:")
-                    recent_to_show = current_plays[-5:]
+                    recent_to_show = current_plays[-15:]
                     for i, play in enumerate(recent_to_show, 1):
                         play_desc = play.get('description', 'No description')[:60]
                         play_time = play.get('time_remaining', 'N/A')
@@ -1468,6 +1544,10 @@ def predict_rolling_sequence(game_context: Dict[str, Any], n_iterations: int = 5
                     parsed_response = parse_compact_response(stage2_content, game_context)
                     if "next_play" in parsed_response:
                         next_play = parsed_response["next_play"]
+                        # Convert to compact tuple and update context (9-element schema)
+                        play_tuple = convert_compact_play_to_tuple(next_play, optimized_context.get_context_dict())
+                        from config.settings import DEFAULT_N_TOTAL_PLAYS
+                        optimized_context.add_play_tuple(play_tuple, DEFAULT_N_TOTAL_PLAYS)
                 elif isinstance(stage2_json, list) and len(stage2_json) >= 6:
                     # Raw tuple format: [q, t, score, actor, event, ...]
                     # Wrap it and parse

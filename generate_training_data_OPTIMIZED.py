@@ -844,6 +844,10 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
         away_players.sort(key=lambda p: p[10], reverse=True)  # p[10] is MPG
         home_players.sort(key=lambda p: p[10], reverse=True)
         
+        # Diagnostics (optional)
+        _maybe_log_player_order_diagnostics(away_abbrev, away_players, current_game_date)
+        _maybe_log_player_order_diagnostics(home_abbrev, home_players, current_game_date)
+        
         # Rebuild name-to-index mappings AFTER sorting
         away_name_to_idx = {player[0]: idx for idx, player in enumerate(away_players)}
         home_name_to_idx = {player[0]: idx for idx, player in enumerate(home_players)}
@@ -1274,6 +1278,23 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
     print(f" Expected 2-4x speedup: 300-600+ plays/sec + accurate event codes")
     
     return result_df
+
+
+# DEBUG: Diagnostics for player MPG/USG ordering (guarded by ENV: DIAG_PLAYER_ORDER=1)
+import os as _os
+
+def _maybe_log_player_order_diagnostics(team_abbrev: str, players: list, game_date) -> None:
+    try:
+        if _os.getenv("DIAG_PLAYER_ORDER", "0").lower() not in ("1","true","yes","on"):
+            return
+        print(f"\n[DIAG] Player order for {team_abbrev} on {game_date} (MPG desc):")
+        for i, p in enumerate(players):
+            name = p[0]
+            mpg = p[10] if len(p) > 10 else None
+            usg = p[11] if len(p) > 11 else None
+            print(f"  {i:2d}. {name:25s} MPG={mpg} USG={usg}")
+    except Exception as _e:
+        print(f"[DIAG] Failed to print player order: {_e}")
 
 
 if __name__ == "__main__":

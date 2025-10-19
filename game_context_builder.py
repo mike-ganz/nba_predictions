@@ -25,6 +25,13 @@ except ImportError:
     print("⚠️ Data loading system not available - using sample contexts only")
     DATA_SYSTEM_AVAILABLE = False
 
+try:
+    from transform_player_stats_optimized import get_player_stats_array
+    from generate_team_stats import get_team_stats_array as _get_team_stats_array
+    _OPT_STATS_AVAILABLE = True
+except Exception:
+    _OPT_STATS_AVAILABLE = False
+
 
 class GameContextBuilder:
     """Builds realistic game contexts from historical data."""
@@ -72,13 +79,19 @@ class GameContextBuilder:
         Returns:
             Dict in compact format with 'A', 'H', 'as', 'hs', 'ap', 'hp', 'L', 'p' fields
         """
-        # First build verbose format using existing logic
+        # Prefer compact context using optimized stats if available
+        if _OPT_STATS_AVAILABLE and self.play_by_play_data is not None:
+            try:
+                return self._build_compact_with_optimized_stats(game_id, for_first_n_plays)
+            except Exception as _e:
+                print(f"⚠️ Optimized compact build failed, falling back to verbose→compact: {_e}")
+        
+        # Fallback to previous behavior
         if self.play_by_play_data is not None:
             verbose_context = self._build_from_data(game_id, start_quarter, start_time, recent_plays_count, for_first_n_plays)
         else:
             verbose_context = self._build_sample_context(game_id, for_first_n_plays)
         
-        # Convert to compact format
         try:
             from generate_training_data import convert_verbose_to_compact
             compact_context = convert_verbose_to_compact(verbose_context)
@@ -398,6 +411,82 @@ class GameContextBuilder:
         
         print(f"\n✅ Built {len(contexts)} game contexts in {output_dir}/")
         return contexts
+
+    def _build_compact_with_optimized_stats(self, game_id: str, for_first_n_plays: bool) -> Dict[str, Any]:
+        """Build compact context using optimized player/team stats with real game date."""
+        import pandas as pd
+        df = self.play_by_play_data[self.play_by_play_data['game_id'] == int(game_id)]
+        if df.empty:
+            raise ValueError(f"No data for game {game_id}")
+        # Game date
+        game_date = df['date'].iloc[0]
+        if hasattr(game_date, 'strftime'):
+            game_date_str = game_date.strftime('%Y-%m-%d')
+        else:
+            game_date_str = str(game_date)
+        # Determine teams
+        away_abbrev, home_abbrev = self._determine_away_home_teams(df)
+        # Team stats (8-value array) → reduce to the 4-field compact [OEFF, DEFF, PACE, REST]
+        away_stats_ext = _get_team_stats_array(away_abbrev, target_date=game_date_str)
+        home_stats_ext = _get_team_stats_array(home_abbrev, target_date=game_date_str)
+        def _reduce_team_stats(arr):
+            if not arr or len(arr) < 8:
+                return [110.0, 110.0, 100.0, 2]
+            oeff, deff, pace, _3par, _ftr, _orr, _astr, rest = arr
+            return [round(float(oeff),2), round(float(deff),2), round(float(pace),2), int(rest)]
+        away_stats = _reduce_team_stats(away_stats_ext)
+        home_stats = _reduce_team_stats(home_stats_ext)
+        # Roster from lineups columns (a1..a5 / h1..h5) across the game
+        def _collect_roster(df_team_cols):
+            s = set()
+            for c in df_team_cols:
+                if c in df.columns:
+                    s.update(df[c].dropna().astype(str).tolist())
+            # cap to 12
+            return list(s)[:12]
+        away_roster = _collect_roster(['a1','a2','a3','a4','a5'])
+        home_roster = _collect_roster(['h1','h2','h3','h4','h5'])
+        # Build player arrays using optimized stats with date cutoff
+        def _build_players(team_roster):
+            players = []
+            for name in team_roster:
+                try:
+                    # First get enhanced array (12) and derive MPG/USG, then convert to compact player array
+                    stats = get_player_stats_array(name, game_date_str, season=self.season_year, use_rolling=True)
+                    if not stats:
+                        continue
+                    # stats format: [name, off, def, shot_sel, eff, a2, a3, ast100, stl100, blk100, mpg, usg, cluster]
+                    off, deff, shot_sel, eff = stats[1], stats[2], stats[3], stats[4]
+                    mpg, usg = stats[10], stats[11]
+                    player_arr = [name, round(float(off),2), round(float(deff),2), round(float(shot_sel),2), round(float(eff),2), int(round(float(mpg))), int(round(float(usg))), 0]
+                    players.append(player_arr)
+                except Exception:
+                    # Minimal fallback
+                    players.append([name, 0.0, 0.0, 0.0, 0.0, 20, 15, 0])
+            # Sort by MPG desc (index 5)
+            players.sort(key=lambda p: p[5], reverse=True)
+            return players
+        away_players = _build_players(away_roster)
+        home_players = _build_players(home_roster)
+        # Build compact context
+        compact = {
+            "A": away_abbrev,
+            "H": home_abbrev,
+            "as": away_stats,
+            "hs": home_stats,
+            "ap": away_players,
+            "hp": home_players,
+            "ap_count": len(away_players),
+            "hp_count": len(home_players),
+            "L": [],
+            "pos": "N",
+            "tb": [0,0],
+            "sd": 0
+        }
+        # For Stage 1 (first_N_plays), we omit plays; otherwise, add empty p for compact
+        if not for_first_n_plays:
+            compact["p"] = []
+        return compact
 
 
 def main():

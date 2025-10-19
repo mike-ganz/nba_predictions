@@ -116,18 +116,38 @@ class NBAResponseValidator:
                 return {"error": "Invalid 'y' data structure"}
             
             # Convert play tuple to verbose format
-            # NEW FORMAT: ALWAYS 7 elements [q, t, score, actor, event, points, lineup_id]
-            # points=0 for non-scoring events
-            if len(primary_play) != 7:
-                return {"error": f"Play tuple must be exactly 7 elements, got {len(primary_play)} elements"}
-            
-            quarter = primary_play[0]
-            time_seconds = primary_play[1]
-            score_array = primary_play[2] if len(primary_play[2]) >= 2 else [0, 0]
-            actor = primary_play[3]
-            event_code = primary_play[4]
-            points = primary_play[5]  # ALWAYS present (0 for non-scoring)
-            lineup_id = primary_play[6]
+            # UPDATED FORMAT: 9 elements [q, t, score, margin, actor, actor_fouls, event, shot_zone, lineup_id]
+            # Backward compatibility: also accept legacy 7-element tuples
+            if not isinstance(primary_play, list):
+                return {"error": "Primary play must be a list"}
+
+            if len(primary_play) == 9:
+                quarter = primary_play[0]
+                time_seconds = primary_play[1]
+                score_array = primary_play[2] if len(primary_play[2]) >= 2 else [0, 0]
+                # margin = primary_play[3]  # not needed for verbose preview
+                actor = primary_play[4]
+                # actor_fouls = primary_play[5]
+                event_code = primary_play[6]
+                # shot_zone = primary_play[7]
+                lineup_id = primary_play[8]
+                # Derive points for preview only (0 for non-scoring)
+                points = 0
+                if isinstance(event_code, str) and event_code.startswith('made'):
+                    points = 3 if '3' in event_code else 2
+                elif event_code in ('mft',):
+                    points = 1
+            elif len(primary_play) == 7:
+                # Legacy support
+                quarter = primary_play[0]
+                time_seconds = primary_play[1]
+                score_array = primary_play[2] if len(primary_play[2]) >= 2 else [0, 0]
+                actor = primary_play[3]
+                event_code = primary_play[4]
+                points = primary_play[5]  # ALWAYS present (0 for non-scoring)
+                lineup_id = primary_play[6]
+            else:
+                return {"error": f"Play tuple must be 9 elements (preferred) or 7 (legacy), got {len(primary_play)} elements"}
             
             # Validate player index is within roster bounds
             if isinstance(actor, list) and len(actor) >= 2:
