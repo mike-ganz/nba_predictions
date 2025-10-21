@@ -769,11 +769,15 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                             # Fallback to default array if no PBP stats
                             player_array = [
                                 player_name,
-                                0.3, 0.05, 0.2, 0.3,  # rim%, corner3%, nonc3%, mid%
-                                0.5, 0.5,              # a2%, a3%
-                                5.0, 1.5, 0.5,         # ast/100, stl/100, blk/100
-                                mpg, usage,
-                                -1                     # cluster unknown
+                                mpg, usage / 100.0, 20.0,  # mpg, usage (normalized), pts/100
+                                15.0,                      # fga/100
+                                5.0, 1.5, 0.5,             # ast/100, stl/100, blk/100
+                                0.3, 0.62,                 # rim%, rim_fg%
+                                0.05, 0.38,                # c3%, c3_fg%
+                                0.2, 0.36,                 # nc3%, nc3_fg%
+                                0.3, 0.42,                 # mid%, mid_fg%
+                                0.5, 0.5,                  # a2%, a3%
+                                0.75                       # ft%
                             ]
                         
                         # Add fouls placeholder (will be updated per context)
@@ -784,11 +788,15 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                         # Fallback to default array on error
                         player_array = [
                             player_name,
-                            0.3, 0.05, 0.2, 0.3,  # rim%, corner3%, nonc3%, mid%
-                            0.5, 0.5,              # a2%, a3%
+                            25, 0.18, 20.0,        # mpg, usage (normalized), pts/100
+                            15.0,                  # fga/100
                             5.0, 1.5, 0.5,         # ast/100, stl/100, blk/100
-                            25, 18,                # mpg, usage
-                            -1,                    # cluster unknown
+                            0.3, 0.62,             # rim%, rim_fg%
+                            0.05, 0.38,            # c3%, c3_fg%
+                            0.2, 0.36,             # nc3%, nc3_fg%
+                            0.3, 0.42,             # mid%, mid_fg%
+                            0.5, 0.5,              # a2%, a3%
+                            0.75,                  # ft%
                             0                      # fouls
                         ]
                         away_players.append(player_array)
@@ -813,11 +821,15 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                             # Fallback to default array if no PBP stats
                             player_array = [
                                 player_name,
-                                0.3, 0.05, 0.2, 0.3,  # rim%, corner3%, nonc3%, mid%
-                                0.5, 0.5,              # a2%, a3%
-                                5.0, 1.5, 0.5,         # ast/100, stl/100, blk/100
-                                mpg, usage,
-                                -1                     # cluster unknown
+                                mpg, usage / 100.0, 20.0,  # mpg, usage (normalized), pts/100
+                                15.0,                      # fga/100
+                                5.0, 1.5, 0.5,             # ast/100, stl/100, blk/100
+                                0.3, 0.62,                 # rim%, rim_fg%
+                                0.05, 0.38,                # c3%, c3_fg%
+                                0.2, 0.36,                 # nc3%, nc3_fg%
+                                0.3, 0.42,                 # mid%, mid_fg%
+                                0.5, 0.5,                  # a2%, a3%
+                                0.75                       # ft%
                             ]
                         
                         # Add fouls placeholder (will be updated per context)
@@ -828,21 +840,26 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                         # Fallback to default array on error
                         player_array = [
                             player_name,
-                            0.3, 0.05, 0.2, 0.3,  # rim%, corner3%, nonc3%, mid%
-                            0.5, 0.5,              # a2%, a3%
+                            25, 0.18, 20.0,        # mpg, usage (normalized), pts/100
+                            15.0,                  # fga/100
                             5.0, 1.5, 0.5,         # ast/100, stl/100, blk/100
-                            25, 18,                # mpg, usage
-                            -1,                    # cluster unknown
+                            0.3, 0.62,             # rim%, rim_fg%
+                            0.05, 0.38,            # c3%, c3_fg%
+                            0.2, 0.36,             # nc3%, nc3_fg%
+                            0.3, 0.42,             # mid%, mid_fg%
+                            0.5, 0.5,              # a2%, a3%
+                            0.75,                  # ft%
                             0                      # fouls
                         ]
                         home_players.append(player_array)
         
         #  OPTIMIZATION: Sort players by MPG (descending) for better model learning
         # High-MPG players (starters) at low indices makes patterns easier to learn
-        # Player array format: [name, rim%, c3%, nc3%, mid%, a2%, a3%, ast/100, stl/100, blk/100, MPG, usage, cluster, fouls]
-        #                       [  0,    1,    2,    3,    4,   5,   6,     7,       8,       9,     10,   11,     12,     13 ]
-        away_players.sort(key=lambda p: p[10], reverse=True)  # p[10] is MPG
-        home_players.sort(key=lambda p: p[10], reverse=True)
+        # Player array format: [name, MPG, usg, pts/100, fga/100, ast/100, stl/100, blk/100, rim%, rim_fg%, c3%, c3_fg%, nc3%, nc3_fg%, mid%, mid_fg%, a2%, a3%, ft%, fouls]
+        #                       [  0,   1,   2,    3,       4,       5,       6,       7,      8,     9,      10,   11,     12,    13,     14,    15,     16,  17,   18,  19   ]
+        # Note: usg now normalized to 0.0-1.0 (e.g., 0.18 instead of 18)
+        away_players.sort(key=lambda p: p[1], reverse=True)  # p[1] is MPG
+        home_players.sort(key=lambda p: p[1], reverse=True)
         
         # Diagnostics (optional)
         _maybe_log_player_order_diagnostics(away_abbrev, away_players, current_game_date)

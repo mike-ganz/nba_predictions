@@ -6,6 +6,7 @@ import json
 import hashlib
 from concurrent.futures import ProcessPoolExecutor
 import time
+import re
 
 # Import PBP stats module
 from player_stats_from_pbp import calculate_player_pbp_stats
@@ -16,6 +17,105 @@ CACHE_DIR = 'data/cache/player_stats'
 
 # Cluster assignments cache
 _cluster_assignments = None
+
+# Player name normalization cache
+_name_normalization_cache = {}
+
+
+def normalize_player_name(name):
+    """
+    Normalize player names to handle variations between data sources.
+    
+    Common issues:
+    - Initials with/without periods: "O.G. Anunoby" <-> "OG Anunoby"
+    - Inconsistent spacing
+    
+    Args:
+        name: Player name to normalize
+    
+    Returns:
+        str: Normalized name that can match both formats
+    """
+    if not name or pd.isna(name):
+        return name
+    
+    # Check cache first
+    if name in _name_normalization_cache:
+        return _name_normalization_cache[name]
+    
+    # Basic normalization: strip and standardize spacing
+    normalized = str(name).strip()
+    normalized = re.sub(r'\s+', ' ', normalized)  # Normalize multiple spaces
+    
+    # Cache the result
+    _name_normalization_cache[name] = normalized
+    return normalized
+
+
+def find_player_with_fuzzy_match(player_name, df, name_column='PLAYER \nFULL NAME'):
+    """
+    Find a player in a DataFrame with fuzzy name matching.
+    
+    Handles common name variations:
+    - With/without periods in initials: "O.G." <-> "OG"
+    - Case differences
+    
+    Args:
+        player_name: Name to search for
+        df: DataFrame containing player data
+        name_column: Column containing player names
+    
+    Returns:
+        str: Matched name from DataFrame, or None if no match found
+    """
+    if player_name is None or df is None or name_column not in df.columns:
+        return None
+    
+    # Normalize the search name
+    search_name = normalize_player_name(player_name)
+    
+    # Try exact match first (case-insensitive)
+    exact_matches = df[df[name_column].str.lower() == search_name.lower()]
+    if len(exact_matches) > 0:
+        return exact_matches.iloc[0][name_column]
+    
+    # Try with/without periods in initials
+    # "OG Anunoby" <-> "O.G. Anunoby"
+    if '.' not in search_name:
+        # Add periods after capital letters in initials
+        # Handle patterns like "OG Anunoby" -> "O.G. Anunoby"
+        # Split into words and process each
+        words = search_name.split()
+        processed_words = []
+        for word in words:
+            # If word is all caps and 2-3 letters (likely initials), add periods
+            if len(word) <= 3 and word.isupper():
+                # Add period after each letter: "OG" -> "O.G."
+                with_periods_word = '.'.join(word) + '.'
+                processed_words.append(with_periods_word)
+            else:
+                processed_words.append(word)
+        with_periods = ' '.join(processed_words)
+        
+        matches = df[df[name_column].str.lower() == with_periods.lower()]
+        if len(matches) > 0:
+            return matches.iloc[0][name_column]
+    else:
+        # Remove periods
+        without_periods = search_name.replace('.', '').replace(' ', ' ')
+        without_periods = re.sub(r'\s+', ' ', without_periods)  # Clean up multiple spaces
+        matches = df[df[name_column].str.lower() == without_periods.lower()]
+        if len(matches) > 0:
+            return matches.iloc[0][name_column]
+    
+    # Last resort: check if last name matches (for common misspellings)
+    last_name = search_name.split()[-1] if ' ' in search_name else search_name
+    if len(last_name) > 3:  # Only for reasonably long last names
+        matches = df[df[name_column].str.lower().str.endswith(last_name.lower())]
+        if len(matches) == 1:  # Only if exactly one match
+            return matches.iloc[0][name_column]
+    
+    return None
 
 def load_player_data(season_year=None):
     """Load player boxscore data for the specified season year."""
@@ -168,9 +268,13 @@ def get_enhanced_player_stats(player_name, max_date, season=None, use_rolling=Tr
 
 def get_player_stats_array(player_name, max_date, mpg=None, usage_rate=None, season=None, use_rolling=True):
     """
-    Get player stats as a compact 12-value array for training data.
+    Get player stats as a compact 19-value array for training data.
     
-    Format: [name, rim%, c3%, nc3%, mid%, a2%, a3%, ast/100, stl/100, blk/100, mpg, usg, cluster]
+    Format: [name, mpg, usg, pts/100, fga/100, ast/100, stl/100, blk/100,
+             rim%, rim_fg%, c3%, c3_fg%, nc3%, nc3_fg%, mid%, mid_fg%, a2%, a3%, ft%]
+    
+    High-level stats first (usage, scoring, playmaking), then detailed shooting breakdown.
+    All percentages normalized to 0.0-1.0 scale for consistency.
     
     Args:
         player_name: Full player name
@@ -181,44 +285,67 @@ def get_player_stats_array(player_name, max_date, mpg=None, usage_rate=None, sea
         use_rolling: If True, use 20-game rolling window
     
     Returns:
-        list: 12-value array, or None if player stats unavailable
+        list: 19-value array, or None if player stats unavailable
     """
-    # Get enhanced stats
+    # Get enhanced stats (PBP-based) - now includes zone-specific FG%
     stats = get_enhanced_player_stats(player_name, max_date, season, use_rolling)
     
     if stats is None:
         return None
     
-    # Get MPG and usage if not provided
+    # Get MPG, usage, FT%, and pts/100 from boxscore data
+    boxscore_stats = None
     if mpg is None or usage_rate is None:
         # Try to get from boxscore data
         try:
-            boxscore_stats = get_player_stats(player_name, max_date, season)
-            if boxscore_stats:
-                mpg = mpg or boxscore_stats.get('MPG', 0)
-                usage_rate = usage_rate or boxscore_stats.get('USG%', 0)  # Already a percentage (15-35%)
+            boxscore_stats = calculate_player_stats(player_name, max_date, season)
         except:
             pass
     
-    # Use defaults if still not available
-    mpg = mpg or 0
-    usage_rate = usage_rate or 0
+    # Extract values with defaults
+    if boxscore_stats:
+        mpg = mpg or boxscore_stats.get('MPG', 0)
+        usage_rate = usage_rate or boxscore_stats.get('USAGE_RATE', 0)  # Comes as percentage (15-35%)
+        ft_pct = boxscore_stats.get('FT%', 0)
+        pts_per_100 = boxscore_stats.get('PTS_per_100', 0)
+    else:
+        mpg = mpg or 0
+        usage_rate = usage_rate or 0
+        ft_pct = 0
+        pts_per_100 = 0
     
-    # Build 12-value array
+    # Normalize usage_rate to 0.0-1.0 scale (convert from percentage)
+    # Usage comes as 18 (meaning 18%), convert to 0.18
+    usage_normalized = usage_rate / 100.0 if usage_rate else 0
+    
+    # Build 19-value array with high-level stats first, then shooting details
     return [
         player_name,
-        round(stats.get('rim_attempt_rate', 0), 3),
-        round(stats.get('corner_3_rate', 0), 3),
-        round(stats.get('non_corner_3_rate', 0), 3),
-        round(stats.get('mid_range_rate', 0), 3),
-        round(stats.get('assisted_2pt_rate', 0), 3),
-        round(stats.get('assisted_3pt_rate', 0), 3),
+        # High-level usage & production
+        round(mpg, 1),
+        round(usage_normalized, 3),  # Now 0.0-1.0 scale (0.18 instead of 18)
+        round(pts_per_100, 1) if pts_per_100 else 0,
+        round(stats.get('fga_per_100', 0), 1),  # Shot volume
         round(stats.get('assists_per_100', 0), 1),
         round(stats.get('steals_per_100', 0), 1),
         round(stats.get('blocks_per_100', 0), 1),
-        round(mpg, 1),
-        round(usage_rate, 1),
-        stats.get('cluster_id', -1)
+        # Rim shots
+        round(stats.get('rim_attempt_rate', 0), 3),
+        round(stats.get('rim_fg_pct', 0), 3),
+        # Corner 3s
+        round(stats.get('corner_3_rate', 0), 3),
+        round(stats.get('corner_3_fg_pct', 0), 3),
+        # Non-corner 3s
+        round(stats.get('non_corner_3_rate', 0), 3),
+        round(stats.get('non_corner_3_fg_pct', 0), 3),
+        # Mid-range
+        round(stats.get('mid_range_rate', 0), 3),
+        round(stats.get('mid_range_fg_pct', 0), 3),
+        # Assisted rates
+        round(stats.get('assisted_2pt_rate', 0), 3),
+        round(stats.get('assisted_3pt_rate', 0), 3),
+        # Free throw efficiency
+        round(ft_pct, 3) if ft_pct else 0
     ]
 
 def calculate_advanced_stats(stats_row):
@@ -231,7 +358,9 @@ def calculate_advanced_stats(stats_row):
     
     # Calculate advanced metrics
     result['2P'] = round(stats_row['FG'] - stats_row['3P'], 3)
+    result['2PA'] = round(stats_row['FGA'] - stats_row['3PA'], 3)
     result['MPG'] = safe_divide(stats_row['MIN'], stats_row['GP'])
+    result['2P%'] = safe_divide(stats_row['2P'], stats_row['2PA'])
     result['3P%'] = safe_divide(stats_row['3P'], stats_row['3PA'])
     result['FT%'] = safe_divide(stats_row['FT'], stats_row['FTA'])
     result['eFG%'] = safe_divide(stats_row['FG'] + 0.5 * stats_row['3P'], stats_row['FGA'])
@@ -239,6 +368,11 @@ def calculate_advanced_stats(stats_row):
     result['3PR'] = safe_divide(stats_row['3PA'], stats_row['FGA'])
     result['FTR'] = safe_divide(stats_row['FTA'], stats_row['FGA'] + stats_row['FTA'])
     result['PFFT'] = safe_divide(stats_row['FT'], stats_row['PTS'])
+    
+    # Calculate possessions for per-100 stats
+    # Possessions = FGA + 0.44 * FTA - OR + TO
+    possessions = stats_row['FGA'] + 0.44 * stats_row['FTA'] - stats_row['OR'] + stats_row['TO']
+    result['PTS_per_100'] = safe_divide(stats_row['PTS'], possessions / 100) if possessions > 0 else None
     result['PPG'] = safe_divide(stats_row['PTS'], stats_row['GP'])
     result['RPG'] = safe_divide(stats_row['OR'] + stats_row['DR'], stats_row['GP'])
     result['DRPG'] = safe_divide(stats_row['DR'], stats_row['GP'])
@@ -398,10 +532,18 @@ def calculate_player_stats(player_name, max_date=None, current_season=None):
         df = _season_data_cache[season_to_use]
         # print(f" Using cached {season_to_use} data")
     
+    # Try exact match first
     player_df = df[df['PLAYER \nFULL NAME'] == player_name]
     
+    # If no exact match, try fuzzy matching for name variations
     if len(player_df) == 0:
-        return None
+        matched_name = find_player_with_fuzzy_match(player_name, df, 'PLAYER \nFULL NAME')
+        if matched_name:
+            # print(f" Fuzzy matched '{player_name}' to '{matched_name}'")
+            player_df = df[df['PLAYER \nFULL NAME'] == matched_name]
+        
+        if len(player_df) == 0:
+            return None
         
     # Handle special full season cache key
     if max_date is not None and not str(max_date).endswith('_FULL_SEASON'):

@@ -166,8 +166,8 @@ For Each Play:
   "H": "DET",
   "as": [115.6, 117.8, 100.7, 0.35, 0.26, 0.24, 0.63, 3],
   "hs": [109.0, 115.9, 97.7, 0.33, 0.28, 0.27, 0.60, 2],
-  "ap": [["De'Andre Hunter", 0.35, 0.06, 0.22, 0.37, 0.52, 0.48, 4.2, 1.8, 0.4, 31, 18, 2, 0], ...],
-  "hp": [["Ausar Thompson", 0.40, 0.04, 0.18, 0.38, 0.55, 0.50, 3.5, 2.1, 0.8, 32, 19, 1, 1], ...],
+  "ap": [["De'Andre Hunter", 31, 0.18, 22.5, 15.2, 4.2, 1.8, 0.4, 0.35, 0.635, 0.06, 0.378, 0.22, 0.362, 0.37, 0.418, 0.52, 0.48, 0.812, 0], ...],
+  "hp": [["Ausar Thompson", 32, 0.19, 18.3, 13.8, 3.5, 2.1, 0.8, 0.40, 0.622, 0.04, 0.333, 0.18, 0.288, 0.38, 0.395, 0.55, 0.50, 0.672, 1], ...],
   "L": [{"A": [0,1,2,3,4], "H": [0,1,2,3,4]}],
   "p": [[1, 375, [18,11], 7, ["A",0], 1, "made2", "mid", 0], ...],
   "tb": [2, 1],
@@ -179,7 +179,11 @@ For Each Play:
 **Fields:**
 - `A`, `H`: Team abbreviations (away/home)
 - `as`, `hs`: Team stats arrays [OEFF, DEFF, PACE, 3PAr, FTr, ORr, ASTr, REST_DAYS]
-- `ap`, `hp`: Player arrays [name, rim%, c3%, nc3%, mid%, a2%, a3%, ast/100, stl/100, blk/100, MPG, usage, cluster, fouls]
+- `ap`, `hp`: Player arrays [name, MPG, usage, pts/100, fga/100, ast/100, stl/100, blk/100, rim%, rim_fg%, c3%, c3_fg%, nc3%, nc3_fg%, mid%, mid_fg%, a2%, a3%, ft%, fouls]
+  - High-level production stats first (usage, scoring, playmaking), then detailed shooting breakdown
+  - Shot zones paired: each zone's frequency followed by its accuracy
+  - **All percentages normalized to 0.0-1.0 scale** (usage is 0.18 instead of 18%, for consistency with all other percentage fields)
+  - **fga/100 added** for shot volume context
 - `L`: Lineup lookup (maps lineup IDs to player indices). For remaining_plays input, `L` contains only lineups observed up to the context play (no future lineups).
 - `p`: Plays array (9-value tuples):
   - `[quarter, time_seconds, [away, home], margin, actor, actor_fouls, event_code, shot_zone, lineup_id]`

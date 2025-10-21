@@ -105,17 +105,54 @@ class NBAResponseValidator:
                 return {"error": "No 'y' field in compact response"}
             
             # Handle both single play tuple and array of play tuples
+            is_multi_play = False
+            plays_to_validate = []
+            
             if isinstance(y_data, list) and len(y_data) > 0:
                 if isinstance(y_data[0], list):
-                    # Multiple plays (e.g., offensive foul + turnover)
+                    # Multiple plays - Endpoint 1 (initial predictions)
+                    is_multi_play = True
+                    plays_to_validate = y_data
                     primary_play = y_data[0]
                 else:
-                    # Single play tuple
+                    # Single play tuple - Endpoint 2 (rolling predictions)
+                    plays_to_validate = [y_data]
                     primary_play = y_data
             else:
                 return {"error": "Invalid 'y' data structure"}
             
-            # Convert play tuple to verbose format
+            # VALIDATE PLAYER INDICES FOR ALL PLAYS (Endpoint 1 & 2)
+            for play_idx, play in enumerate(plays_to_validate):
+                if not isinstance(play, list):
+                    return {"error": f"Play {play_idx} must be a list"}
+                
+                # Extract actor from play tuple (same logic for 9-element and 7-element formats)
+                actor = None
+                if len(play) == 9:
+                    actor = play[4]  # actor is at index 4 in 9-element format
+                elif len(play) == 7:
+                    actor = play[3]  # actor is at index 3 in 7-element format
+                else:
+                    return {"error": f"Play {play_idx} must be 9 elements (preferred) or 7 (legacy), got {len(play)} elements"}
+                
+                # Validate player index is within roster bounds
+                if isinstance(actor, list) and len(actor) >= 2:
+                    team_code = actor[0]
+                    player_idx = actor[1]
+                    
+                    if isinstance(player_idx, int) and player_idx >= 0:
+                        # Check against roster size metadata
+                        max_index = None
+                        if team_code == "A" and "ap_count" in context:
+                            max_index = context["ap_count"] - 1
+                        elif team_code == "H" and "hp_count" in context:
+                            max_index = context["hp_count"] - 1
+                        
+                        if max_index is not None and player_idx > max_index:
+                            play_type = "initial predictions" if is_multi_play else "rolling prediction"
+                            return {"error": f"Player index {player_idx} out of bounds for team {team_code} in play {play_idx} ({play_type}) - roster size: {max_index + 1}"}
+            
+            # Convert PRIMARY play tuple to verbose format for validation
             # UPDATED FORMAT: 9 elements [q, t, score, margin, actor, actor_fouls, event, shot_zone, lineup_id]
             # Backward compatibility: also accept legacy 7-element tuples
             if not isinstance(primary_play, list):
@@ -148,22 +185,6 @@ class NBAResponseValidator:
                 lineup_id = primary_play[6]
             else:
                 return {"error": f"Play tuple must be 9 elements (preferred) or 7 (legacy), got {len(primary_play)} elements"}
-            
-            # Validate player index is within roster bounds
-            if isinstance(actor, list) and len(actor) >= 2:
-                team_code = actor[0]
-                player_idx = actor[1]
-                
-                if isinstance(player_idx, int) and player_idx >= 0:
-                    # Check against roster size metadata
-                    max_index = None
-                    if team_code == "A" and "ap_count" in context:
-                        max_index = context["ap_count"] - 1
-                    elif team_code == "H" and "hp_count" in context:
-                        max_index = context["hp_count"] - 1
-                    
-                    if max_index is not None and player_idx > max_index:
-                        return {"error": f"Player index {player_idx} out of bounds for team {team_code} (roster size: {max_index + 1})"}
             
             # For validation, treat points=0 as None (non-scoring) for backward compatibility
             if points == 0:
@@ -1054,10 +1075,45 @@ class NBAResponseValidator:
                     print(f"Rollback point: Most recent play at time '{last_good_time}'")
             
             if self.consecutive_same_time >= consecutive_responses_limit:
-                print(f"🚨 Time rollback validation triggered! Same time '{current_time}' for {self.consecutive_same_time} consecutive responses")
-                print(f"Rolling back to snapshot with {len(self.rollback_recent_plays_snapshot or [])} plays")
-                # Don't reset state here - let the caller handle the rollback
-                return ValidationResult.ROLLBACK_TIME
+                # Check if most of these consecutive same-time plays are substitutions
+                # Substitutions naturally happen at the same timestamp, so we should allow them
+                sub_count = 0
+                non_sub_count = 0
+                
+                # Check current play
+                current_desc = next_play.get("description", "").lower()
+                current_event_code = next_play.get("event_code", "")
+                if "sub" in current_desc or current_event_code == "sub":
+                    sub_count += 1
+                else:
+                    non_sub_count += 1
+                
+                # Check recent plays at this timestamp
+                for play in current_recent_plays:
+                    if play.get("time_remaining") == current_time:
+                        play_desc = play.get("description", "").lower()
+                        play_event = play.get("event_code", "")
+                        if "sub" in play_desc or play_event == "sub":
+                            sub_count += 1
+                        else:
+                            non_sub_count += 1
+                
+                print(f"🕒 Same time analysis: {sub_count} substitutions, {non_sub_count} non-substitution plays")
+                
+                # Rule 1: Too many non-substitution plays at same time -> ROLLBACK
+                if non_sub_count >= 5:
+                    print(f"🚨 Time rollback validation triggered! {non_sub_count} non-substitution plays at same time '{current_time}'")
+                    print(f"Rolling back to snapshot with {len(self.rollback_recent_plays_snapshot or [])} plays")
+                    # Don't reset state here - let the caller handle the rollback
+                    return ValidationResult.ROLLBACK_TIME
+                
+                # Rule 2: Too many consecutive substitutions -> RETRY
+                elif sub_count >= 4:
+                    print(f"🚨 Too many consecutive substitutions! {sub_count} substitutions at same time '{current_time}'")
+                    return ValidationResult.RETRY
+                
+                else:
+                    print(f"✅ Allowing consecutive same-time plays ({sub_count} subs, {non_sub_count} non-subs)")
                 
         else:
             # Time has changed - reset all tracking
@@ -2072,9 +2128,45 @@ class NBAResponseValidator:
         ):
             self.consecutive_same_time += 1
             
-            # FIXED: More aggressive rollback for stuck time
-            if self.consecutive_same_time >= 5:  # Trigger rollback after 5 same-time plays
-                return ValidationResult.ROLLBACK_TIME, self.errors, "Time progression stuck"
+            # Check if we've hit the limit (8 same-time plays for fast mode)
+            if self.consecutive_same_time >= 8:
+                # Count subs vs non-subs at this timestamp (same logic as normal validation)
+                sub_count = 0
+                non_sub_count = 0
+                
+                # Check current play
+                current_desc = next_play.get("description", "").lower()
+                current_event = next_play.get("event_code", "")
+                if "sub" in current_desc or current_event == "sub":
+                    sub_count += 1
+                else:
+                    non_sub_count += 1
+                
+                # Check recent plays at this timestamp
+                if context and "recent_plays" in context:
+                    for play in context["recent_plays"]:
+                        if play.get("time_remaining") == time_remaining:
+                            play_desc = play.get("description", "").lower()
+                            play_event = play.get("event_code", "")
+                            if "sub" in play_desc or play_event == "sub":
+                                sub_count += 1
+                            else:
+                                non_sub_count += 1
+                
+                print(f"🕒 FAST MODE same time analysis: {sub_count} subs, {non_sub_count} non-subs at '{time_remaining}'")
+                
+                # Rule 1: Too many non-substitution plays -> ROLLBACK
+                if non_sub_count >= 5:
+                    print(f"🚨 FAST MODE rollback: {non_sub_count} non-sub plays at same time")
+                    return ValidationResult.ROLLBACK_TIME, self.errors, "Time progression stuck"
+                
+                # Rule 2: Too many consecutive substitutions -> RETRY
+                elif sub_count >= 4:
+                    print(f"🚨 FAST MODE retry: {sub_count} consecutive subs at same time")
+                    return ValidationResult.RETRY, self.errors, "Too many consecutive substitutions"
+                
+                else:
+                    print(f"✅ FAST MODE allowing same-time plays ({sub_count} subs, {non_sub_count} non-subs)")
         else:
             self.consecutive_same_time = 0
             self.last_time_remaining = time_remaining

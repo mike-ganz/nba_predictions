@@ -19,7 +19,7 @@ import json
 import pandas as pd
 from datetime import datetime
 from generate_training_data import load_play_by_play_data
-from generate_training_data_OPTIMIZED import create_llm_training_data_ULTRA_FAST as create_llm_training_data
+# NOTE: create_llm_training_data import moved after season is set (see below)
 from training.gemini_formatter import GeminiFormatter
 
 
@@ -52,6 +52,16 @@ def main():
     # python generate_2023_2024_season.py --games 2 --n-total 12 --format gemini --generation-mode remaining_plays --season 2023-2024
     
     args = parser.parse_args()
+    
+    # CRITICAL FIX: Set global season config BEFORE importing training generator
+    # This ensures SEASON_YEAR in generate_training_data_OPTIMIZED.py uses correct season
+    from config.settings import set_season_year
+    set_season_year(args.season)
+    print(f"✅ Set global season to: {args.season}")
+    
+    # NOW import training generator (after season is set)
+    from generate_training_data_OPTIMIZED import create_llm_training_data_ULTRA_FAST as create_llm_training_data
+    print(f"✅ Imported training generator with season: {args.season}")
     
     # Ensure output directory exists under repo's data/training
     script_dir = os.path.dirname(os.path.abspath(__file__))

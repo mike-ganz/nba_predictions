@@ -767,6 +767,27 @@ def calculate_shot_profile_stats(player_pbp: pd.DataFrame,
     stats['assisted_2pt_rate'] = len(assisted_2pt) / len(made_2pt) if len(made_2pt) > 0 else 0
     stats['assisted_3pt_rate'] = len(assisted_3pt) / len(made_3pt) if len(made_3pt) > 0 else 0
     
+    # 9. Zone-specific shooting percentages
+    # Rim FG%
+    rim_made = len(rim_attempts[rim_attempts['result'] == 'made'])
+    stats['rim_fg_pct'] = rim_made / len(rim_attempts) if len(rim_attempts) > 0 else 0
+    
+    # Corner 3 FG%
+    corner_3_made = len(corner_3_attempts[corner_3_attempts['result'] == 'made'])
+    stats['corner_3_fg_pct'] = corner_3_made / len(corner_3_attempts) if len(corner_3_attempts) > 0 else 0
+    
+    # Non-corner 3 FG%
+    non_corner_3_made = len(non_corner_3_attempts[non_corner_3_attempts['result'] == 'made'])
+    stats['non_corner_3_fg_pct'] = non_corner_3_made / len(non_corner_3_attempts) if len(non_corner_3_attempts) > 0 else 0
+    
+    # Mid-range FG% (combined short + long)
+    mid_attempts = len(short_mid_attempts) + len(long_mid_attempts)
+    mid_made = len(short_mid_attempts[short_mid_attempts['result'] == 'made']) + len(long_mid_attempts[long_mid_attempts['result'] == 'made'])
+    stats['mid_range_fg_pct'] = mid_made / mid_attempts if mid_attempts > 0 else 0
+    
+    # 10. Shot volume per 100 possessions
+    stats['fga_per_100'] = (total_fga / possessions * 100) if possessions > 0 else 0
+    
     return stats
 
 # ============================================================================

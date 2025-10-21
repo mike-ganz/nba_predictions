@@ -451,20 +451,20 @@ class GameContextBuilder:
             players = []
             for name in team_roster:
                 try:
-                    # First get enhanced array (12) and derive MPG/USG, then convert to compact player array
+                    # Get enhanced array (19 elements) matching training data format
                     stats = get_player_stats_array(name, game_date_str, season=self.season_year, use_rolling=True)
                     if not stats:
                         continue
-                    # stats format: [name, off, def, shot_sel, eff, a2, a3, ast100, stl100, blk100, mpg, usg, cluster]
-                    off, deff, shot_sel, eff = stats[1], stats[2], stats[3], stats[4]
-                    mpg, usg = stats[10], stats[11]
-                    player_arr = [name, round(float(off),2), round(float(deff),2), round(float(shot_sel),2), round(float(eff),2), int(round(float(mpg))), int(round(float(usg))), 0]
+                    # stats format: [name, mpg, usg, pts/100, fga/100, ast/100, stl/100, blk/100, rim%, rim_fg%, c3%, c3_fg%, nc3%, nc3_fg%, mid%, mid_fg%, a2%, a3%, ft%]
+                    # Convert to training data format (20 elements) by adding fouls
+                    player_arr = stats + [0]  # Add fouls placeholder at end
                     players.append(player_arr)
                 except Exception:
-                    # Minimal fallback
-                    players.append([name, 0.0, 0.0, 0.0, 0.0, 20, 15, 0])
-            # Sort by MPG desc (index 5)
-            players.sort(key=lambda p: p[5], reverse=True)
+                    # Minimal fallback - 20 elements matching training format
+                    # [name, mpg, usg, pts/100, fga/100, ast/100, stl/100, blk/100, rim%, rim_fg%, c3%, c3_fg%, nc3%, nc3_fg%, mid%, mid_fg%, a2%, a3%, ft%, fouls]
+                    players.append([name, 25, 0.18, 20.0, 15.0, 5.0, 1.5, 0.5, 0.3, 0.62, 0.05, 0.38, 0.2, 0.36, 0.3, 0.42, 0.5, 0.5, 0.75, 0])
+            # Sort by MPG desc (index 1 in the 20-field format)
+            players.sort(key=lambda p: p[1], reverse=True)
             return players
         away_players = _build_players(away_roster)
         home_players = _build_players(home_roster)
