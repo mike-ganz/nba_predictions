@@ -40,8 +40,9 @@ class GeminiFormatter(BaseFormatter):
         This is a simplified conversion focused on what the formatter needs.
         """
         try:
-            away_abbrev = compact_data.get('a', 'AWAY')
-            home_abbrev = compact_data.get('h', 'HOME')
+            # Support both uppercase (canonical) and lowercase keys
+            away_abbrev = compact_data.get('A', compact_data.get('a', 'AWAY'))
+            home_abbrev = compact_data.get('H', compact_data.get('h', 'HOME'))
             
             # Convert team stats
             away_stats_array = compact_data.get('as', [110.0, 110.0, 100.0, 2])
@@ -110,6 +111,16 @@ class GeminiFormatter(BaseFormatter):
                 },
                 'recent_plays': recent_plays
             }
+            # Preserve compact roster arrays when available for later actor resolution
+            try:
+                if 'ap' in compact_data:
+                    verbose_data['ap'] = compact_data.get('ap') or []
+                if 'hp' in compact_data:
+                    verbose_data['hp'] = compact_data.get('hp') or []
+                if 'L' in compact_data:
+                    verbose_data['L'] = compact_data.get('L') or []
+            except Exception:
+                pass
             
             return verbose_data
             
@@ -508,19 +519,23 @@ class GeminiFormatter(BaseFormatter):
                 # Fallback to old method if raw data not available
                 if current_index + 1 >= len(game_df):
                     return None
-            next_row = game_df.iloc[current_index + 1]
+                next_row = game_df.iloc[current_index + 1]
             
-            # Parse the current JSON context and convert if compact
+            # Parse the current JSON context
+            # Store the original format for output decision
             current_json_raw = json.loads(current_row['json_training_data'])
-            if self._is_compact_format(current_json_raw):
+            is_input_compact = self._is_compact_format(current_json_raw)
+            
+            # Convert to verbose for internal processing if needed
+            if is_input_compact:
                 # For Gemini, we need to convert compact to verbose for compatibility with existing logic
                 current_json = self._convert_compact_to_verbose_for_gemini(current_json_raw)
             else:
                 current_json = current_json_raw
             
-            # Create the next play response
+            # Create the next play response (pass the original format flag)
             assistant_response = self._create_next_play_response(
-                game_df, current_index, next_row, current_json
+                game_df, current_index, next_row, current_json, is_input_compact, current_json_raw
             )
             
             # Create Gemini training example using GenerateContent format
@@ -630,8 +645,13 @@ class GeminiFormatter(BaseFormatter):
                         if play_obj:
                             first_plays.append(play_obj)
             
-            # Return raw array for maximum efficiency  
-            assistant_response = first_plays
+            # Wrap in appropriate format based on input format
+            if self._is_compact_format(context_json):
+                # Compact format: wrap in {"y": [plays]} 
+                assistant_response = {"y": first_plays}
+            else:
+                # Verbose format: return raw array of play objects
+                assistant_response = first_plays
             
             # Create Gemini training example using GenerateContent format
             # OLD (messages format - commented out for easy revert):
@@ -763,7 +783,9 @@ class GeminiFormatter(BaseFormatter):
         }
     
     def _create_next_play_response(self, game_df: pd.DataFrame, current_index: int, 
-                                 next_row: pd.Series, current_json: Dict[str, Any]) -> List[Any]:
+                                 next_row: pd.Series, current_json: Dict[str, Any],
+                                 is_input_compact: bool = None,
+                                 raw_compact_json: Optional[Dict[str, Any]] = None) -> List[Any]:
         """
         Create the assistant response (next play prediction) for Gemini training.
         
@@ -771,10 +793,11 @@ class GeminiFormatter(BaseFormatter):
             game_df: DataFrame for the game
             current_index: Index of current play
             next_row: Next play data
-            current_json: Parsed JSON context from current play
+            current_json: Parsed JSON context from current play (may be converted to verbose)
+            is_input_compact: True if original input was compact format (overrides auto-detection)
             
         Returns:
-            list: Raw compact play tuple for maximum efficiency
+            list or dict: Compact play tuple if input was compact, verbose dict otherwise
         """
         # Get quarter and time for next play
         next_quarter, next_time = convert_to_quarter_time(
@@ -861,11 +884,19 @@ class GeminiFormatter(BaseFormatter):
         away_name_to_idx = {}
         home_name_to_idx = {}
         try:
-            if self._is_compact_format(current_json):
-                for idx, p in enumerate(current_json.get('ap', []) or []):
+            # Prefer original compact context if provided
+            src = raw_compact_json if isinstance(raw_compact_json, dict) else None
+            if src is None:
+                # Fallback: use preserved compact arrays on converted verbose context
+                if isinstance(current_json, dict) and ('ap' in current_json or 'hp' in current_json):
+                    src = current_json
+            if src is None and self._is_compact_format(current_json):
+                src = current_json
+            if isinstance(src, dict):
+                for idx, p in enumerate(src.get('ap', []) or []):
                     if isinstance(p, list) and p:
                         away_name_to_idx[str(p[0])] = idx
-                for idx, p in enumerate(current_json.get('hp', []) or []):
+                for idx, p in enumerate(src.get('hp', []) or []):
                     if isinstance(p, list) and p:
                         home_name_to_idx[str(p[0])] = idx
         except Exception:
@@ -941,14 +972,24 @@ class GeminiFormatter(BaseFormatter):
         except Exception:
             lineup_id = 0
         
-        # Check if input context is in verbose format and respond accordingly
-        if self._is_compact_format(current_json):
+        # Check if original input was compact format and respond accordingly
+        # Use passed flag if available, otherwise auto-detect from current_json
+        use_compact_output = is_input_compact if is_input_compact is not None else self._is_compact_format(current_json)
+        
+        if use_compact_output:
             # Create compact play tuple for compact input
             # Always standardize to 9 elements (assist removed)
             pts_val = int(points_scored) if points_scored and points_scored > 0 else 0
             margin = int(score_array[0]) - int(score_array[1])
             actor_fouls = 0
+            # Infer shot zone for shooting events when possible
             shot_zone = None
+            try:
+                if event_code in ['made2', 'miss2', 'made3', 'miss3']:
+                    from generate_training_data import determine_shot_zone
+                    shot_zone = determine_shot_zone(next_row)
+            except Exception:
+                shot_zone = None
             play_tuple = [
                 int(next_quarter),               # quarter
                 int(time_seconds),               # time_seconds
@@ -960,7 +1001,8 @@ class GeminiFormatter(BaseFormatter):
                 shot_zone,                       # shot_zone
                 int(lineup_id)                   # lineup_id
             ]
-            return play_tuple
+            # Wrap in {"y": ...} format for consistency with compact schema
+            return {"y": play_tuple}
         else:
             # Create verbose play object for verbose input
             import pandas as pd

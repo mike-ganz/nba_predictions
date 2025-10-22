@@ -45,6 +45,68 @@ class TeamManager:
             str: 3-letter abbreviation or original name if not found
         """
         return self._reverse_mapping.get(full_name, full_name)
+
+    def _normalize(self, name: str) -> str:
+        import re
+        s = (name or "").strip().lower()
+        # remove punctuation and collapse whitespace
+        s = re.sub(r"[\.,'\-]", " ", s)
+        s = re.sub(r"\s+", " ", s).strip()
+        return s
+
+    def resolve_abbreviation_loose(self, name: str) -> Optional[str]:
+        """
+        Resolve a possibly variant team name (city-only, nickname, short form)
+        to a 3-letter abbreviation. Returns None if ambiguous.
+        """
+        if not name:
+            return None
+
+        # Direct abbreviation
+        if name in self._team_abbreviations:
+            return name
+
+        # Direct full-name to abbrev
+        if name in self._reverse_mapping:
+            return self._reverse_mapping[name]
+
+        # Normalized alias mapping
+        n = self._normalize(name)
+
+        # Build alias map (normalized) once
+        if not hasattr(self, "_alias_map"):
+            alias: Dict[str, str] = {}
+            # From config mapping
+            for abbr, full in self._team_abbreviations.items():
+                alias[self._normalize(full)] = abbr
+            # Common city-only → abbrev
+            city_aliases = {
+                'atlanta': 'ATL', 'brooklyn': 'BKN', 'boston': 'BOS', 'charlotte': 'CHA',
+                'chicago': 'CHI', 'cleveland': 'CLE', 'dallas': 'DAL', 'denver': 'DEN',
+                'detroit': 'DET', 'golden state': 'GSW', 'houston': 'HOU', 'indiana': 'IND',
+                'memphis': 'MEM', 'miami': 'MIA', 'milwaukee': 'MIL', 'minnesota': 'MIN',
+                'new orleans': 'NOP', 'new york': 'NYK', 'oklahoma city': 'OKC', 'orlando': 'ORL',
+                'philadelphia': 'PHI', 'phoenix': 'PHX', 'portland': 'POR', 'sacramento': 'SAC',
+                'san antonio': 'SAS', 'toronto': 'TOR', 'utah': 'UTA', 'washington': 'WAS',
+                'los angeles lakers': 'LAL', 'los angeles clippers': 'LAC',
+                'la lakers': 'LAL', 'la clippers': 'LAC',
+                'lakers': 'LAL', 'clippers': 'LAC', 'warriors': 'GSW', 'suns': 'PHX',
+                'spurs': 'SAS', 'knicks': 'NYK', 'nets': 'BKN', 'heat': 'MIA', 'bucks': 'MIL',
+                'cavaliers': 'CLE', 'pacers': 'IND', 'pistons': 'DET', 'bulls': 'CHI',
+                'hawks': 'ATL', 'hornets': 'CHA', 'mavericks': 'DAL', 'nuggets': 'DEN',
+                'rockets': 'HOU', 'grizzlies': 'MEM', 'timberwolves': 'MIN', 'pelicans': 'NOP',
+                'thunder': 'OKC', 'magic': 'ORL', '76ers': 'PHI', 'trail blazers': 'POR',
+                'kings': 'SAC', 'raptors': 'TOR', 'jazz': 'UTA', 'wizards': 'WAS', 'celtics': 'BOS'
+            }
+            for k, v in city_aliases.items():
+                alias[self._normalize(k)] = v
+            self._alias_map = alias
+
+        # Ambiguous city (los angeles) without nickname → None to force fallback
+        if n == 'los angeles':
+            return None
+
+        return getattr(self, "_alias_map").get(n)
     
     def determine_home_away_teams(self, df: pd.DataFrame) -> Dict[int, Dict[str, str]]:
         """
@@ -295,6 +357,11 @@ team_stats_integrator = TeamStatsIntegrator(team_manager)
 def create_team_abbreviation_mapping() -> Dict[str, str]:
     """Create mapping from 3-letter team abbreviations to full team names."""
     return team_manager.team_abbreviations
+
+
+def resolve_team_abbreviation(name: str) -> Optional[str]:
+    """Loosely resolve a team name/alias to a 3-letter abbreviation."""
+    return team_manager.resolve_abbreviation_loose(name)
 
 
 def determine_home_away_teams(df: pd.DataFrame) -> Dict[int, Dict[str, str]]:

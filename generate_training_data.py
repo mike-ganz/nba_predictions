@@ -489,8 +489,8 @@ def build_compact_training_data_direct(
     Args:
         current_game_id: Game ID for this training example
         away_abbrev, home_abbrev: Team abbreviations 
-        away_stats, home_stats: Team stats arrays (8 values) or dictionaries (for backward compatibility)
-        away_players, home_players: Player arrays already in compact format (13 values)
+        away_stats, home_stats: Team stats arrays (10 values) or dictionaries (for backward compatibility)
+        away_players, home_players: Player arrays already in compact format (20 values)
         recent_plays_verbose: List of play dictionaries (from the verbose building process)
         away_name_to_idx, home_name_to_idx: Player name to index mappings
         
@@ -498,9 +498,9 @@ def build_compact_training_data_direct(
         dict: Compact format following the specification
     """
     
-    # Handle team stats - support both new array format (8 values) and old dict format (4 values)
+    # Handle team stats - support both new array format (10 values) and old dict format (4 values)
     if isinstance(away_stats, list):
-        # New format: already an 8-value array [OEFF, DEFF, PACE, 3PAr, FTr, ORr, ASTr, REST]
+        # New format: already a 10-value array [OEFF, DEFF, PACE, 3PAr, FTr, ORr, DRr, ASTr, TOr, REST]
         away_stats_array = away_stats
     else:
         # Old format: dictionary - extract 4 values for backward compatibility
@@ -512,7 +512,7 @@ def build_compact_training_data_direct(
         ]
     
     if isinstance(home_stats, list):
-        # New format: already an 8-value array [OEFF, DEFF, PACE, 3PAr, FTr, ORr, ASTr, REST]
+        # New format: already a 10-value array [OEFF, DEFF, PACE, 3PAr, FTr, ORr, DRr, ASTr, TOr, REST]
         home_stats_array = home_stats
     else:
         # Old format: dictionary - extract 4 values for backward compatibility

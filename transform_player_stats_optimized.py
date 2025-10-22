@@ -248,10 +248,16 @@ def get_enhanced_player_stats(player_name, max_date, season=None, use_rolling=Tr
         try:
             year_parts = season.split('-')
             prev_season = f"{int(year_parts[0])-1}-{int(year_parts[1])-1}"
-            print(f" {player_name}: Falling back to {prev_season} PBP data due to insufficient games")
+            print(f"⚠️ {player_name}: Falling back to {prev_season} PBP data (no games in {season} before {max_date})")
             pbp_stats = calculate_player_pbp_stats(player_name, None, prev_season, use_rolling=False)
+            if pbp_stats:
+                print(f"✅ {player_name}: Successfully loaded {prev_season} PBP stats ({pbp_stats.get('games_played', 0)} games)")
+            else:
+                print(f"❌ {player_name}: {prev_season} PBP stats returned None")
         except Exception as e:
-            print(f" Fallback failed for {player_name}: {e}")
+            print(f"❌ {player_name}: PBP Fallback failed with exception: {e}")
+            import traceback
+            traceback.print_exc()
             pass
     
     if pbp_stats is None:
@@ -290,16 +296,36 @@ def get_player_stats_array(player_name, max_date, mpg=None, usage_rate=None, sea
     # Get enhanced stats (PBP-based) - now includes zone-specific FG%
     stats = get_enhanced_player_stats(player_name, max_date, season, use_rolling)
     
+    # Don't return None yet - we can still get boxscore stats even if PBP fails
+    # (e.g., rookies won't have previous season PBP data)
     if stats is None:
-        return None
+        print(f"⚠️ {player_name}: No PBP stats available (will use defaults for shooting profile)")
     
     # Get MPG, usage, FT%, and pts/100 from boxscore data
+    # Always try to get boxscore stats for pts/100 and FT% (even if mpg/usage provided)
     boxscore_stats = None
-    if mpg is None or usage_rate is None:
-        # Try to get from boxscore data
+    try:
+        boxscore_stats = calculate_player_stats(player_name, max_date, season)
+    except:
+        pass
+    
+    # If no boxscore stats for current season/date, try fallback to previous season
+    if not boxscore_stats or boxscore_stats.get('GP', 0) < 10:
         try:
-            boxscore_stats = calculate_player_stats(player_name, max_date, season)
-        except:
+            if season:
+                year_parts = season.split('-')
+                prev_season = f"{int(year_parts[0])-1}-{int(year_parts[1])-1}"
+                print(f"⚠️ {player_name}: Falling back to {prev_season} boxscore data (GP={boxscore_stats.get('GP', 0) if boxscore_stats else 0})")
+                # Use full season stats from previous year (no max_date filter)
+                boxscore_stats = calculate_player_stats(player_name, None, prev_season)
+                if boxscore_stats:
+                    print(f"✅ {player_name}: Successfully loaded {prev_season} boxscore stats (GP={boxscore_stats.get('GP', 0)}, pts/poss={boxscore_stats.get('PTS_per_poss', 0):.3f})")
+                else:
+                    print(f"❌ {player_name}: {prev_season} boxscore stats returned None")
+        except Exception as e:
+            print(f"❌ {player_name}: Boxscore fallback failed with exception: {e}")
+            import traceback
+            traceback.print_exc()
             pass
     
     # Extract values with defaults
@@ -307,46 +333,53 @@ def get_player_stats_array(player_name, max_date, mpg=None, usage_rate=None, sea
         mpg = mpg or boxscore_stats.get('MPG', 0)
         usage_rate = usage_rate or boxscore_stats.get('USAGE_RATE', 0)  # Comes as percentage (15-35%)
         ft_pct = boxscore_stats.get('FT%', 0)
-        pts_per_100 = boxscore_stats.get('PTS_per_100', 0)
+        pts_per_poss = boxscore_stats.get('PTS_per_poss', 0)
     else:
+        # No boxscore stats available - use passed-in values or defaults
         mpg = mpg or 0
         usage_rate = usage_rate or 0
         ft_pct = 0
-        pts_per_100 = 0
+        pts_per_poss = 0
+        if stats is None:
+            # Neither PBP nor boxscore available (rookie/first game)
+            print(f"⚠️ {player_name}: Using passed-in/default values only (rookie or first game)")
     
     # Normalize usage_rate to 0.0-1.0 scale (convert from percentage)
     # Usage comes as 18 (meaning 18%), convert to 0.18
     usage_normalized = usage_rate / 100.0 if usage_rate else 0
     
     # Build 19-value array with high-level stats first, then shooting details
-    return [
+    # Use defaults for missing PBP fields if stats is None
+    result = [
         player_name,
-        # High-level usage & production
+        # High-level usage & production (per-possession rates for individual efficiency)
         round(mpg, 1),
-        round(usage_normalized, 3),  # Now 0.0-1.0 scale (0.18 instead of 18)
-        round(pts_per_100, 1) if pts_per_100 else 0,
-        round(stats.get('fga_per_100', 0), 1),  # Shot volume
-        round(stats.get('assists_per_100', 0), 1),
-        round(stats.get('steals_per_100', 0), 1),
-        round(stats.get('blocks_per_100', 0), 1),
+        round(usage_normalized, 2),  # Now 0.0-1.0 scale (0.18 instead of 18)
+        round(pts_per_poss, 2) if pts_per_poss else 0,  # pts per possession (not per 100)
+        round(stats.get('fga_per_poss', 0), 2) if stats else 0,  # Shot attempts per possession
+        round(stats.get('assists_per_poss', 0), 2) if stats else 0,
+        round(stats.get('steals_per_poss', 0), 2) if stats else 0,
+        round(stats.get('blocks_per_poss', 0), 2) if stats else 0,
         # Rim shots
-        round(stats.get('rim_attempt_rate', 0), 3),
-        round(stats.get('rim_fg_pct', 0), 3),
+        round(stats.get('rim_attempt_rate', 0), 2) if stats else 0,
+        round(stats.get('rim_fg_pct', 0), 2) if stats else 0,
         # Corner 3s
-        round(stats.get('corner_3_rate', 0), 3),
-        round(stats.get('corner_3_fg_pct', 0), 3),
+        round(stats.get('corner_3_rate', 0), 2) if stats else 0,
+        round(stats.get('corner_3_fg_pct', 0), 2) if stats else 0,
         # Non-corner 3s
-        round(stats.get('non_corner_3_rate', 0), 3),
-        round(stats.get('non_corner_3_fg_pct', 0), 3),
+        round(stats.get('non_corner_3_rate', 0), 2) if stats else 0,
+        round(stats.get('non_corner_3_fg_pct', 0), 2) if stats else 0,
         # Mid-range
-        round(stats.get('mid_range_rate', 0), 3),
-        round(stats.get('mid_range_fg_pct', 0), 3),
+        round(stats.get('mid_range_rate', 0), 2) if stats else 0,
+        round(stats.get('mid_range_fg_pct', 0), 2) if stats else 0,
         # Assisted rates
-        round(stats.get('assisted_2pt_rate', 0), 3),
-        round(stats.get('assisted_3pt_rate', 0), 3),
+        round(stats.get('assisted_2pt_rate', 0), 2) if stats else 0,
+        round(stats.get('assisted_3pt_rate', 0), 2) if stats else 0,
         # Free throw efficiency
-        round(ft_pct, 3) if ft_pct else 0
+        round(ft_pct, 2) if ft_pct else 0
     ]
+    
+    return result
 
 def calculate_advanced_stats(stats_row):
     """Calculate advanced stats from basic stats."""
@@ -360,7 +393,7 @@ def calculate_advanced_stats(stats_row):
     result['2P'] = round(stats_row['FG'] - stats_row['3P'], 3)
     result['2PA'] = round(stats_row['FGA'] - stats_row['3PA'], 3)
     result['MPG'] = safe_divide(stats_row['MIN'], stats_row['GP'])
-    result['2P%'] = safe_divide(stats_row['2P'], stats_row['2PA'])
+    result['2P%'] = safe_divide(result['2P'], result['2PA'])  # Use result[], not stats_row[]
     result['3P%'] = safe_divide(stats_row['3P'], stats_row['3PA'])
     result['FT%'] = safe_divide(stats_row['FT'], stats_row['FTA'])
     result['eFG%'] = safe_divide(stats_row['FG'] + 0.5 * stats_row['3P'], stats_row['FGA'])
@@ -369,10 +402,10 @@ def calculate_advanced_stats(stats_row):
     result['FTR'] = safe_divide(stats_row['FTA'], stats_row['FGA'] + stats_row['FTA'])
     result['PFFT'] = safe_divide(stats_row['FT'], stats_row['PTS'])
     
-    # Calculate possessions for per-100 stats
-    # Possessions = FGA + 0.44 * FTA - OR + TO
-    possessions = stats_row['FGA'] + 0.44 * stats_row['FTA'] - stats_row['OR'] + stats_row['TO']
-    result['PTS_per_100'] = safe_divide(stats_row['PTS'], possessions / 100) if possessions > 0 else None
+    # Calculate individual possessions for per-possession stats
+    # Individual possessions = FGA + 0.44 * FTA + TO (not team formula)
+    possessions = stats_row['FGA'] + 0.44 * stats_row['FTA'] + stats_row['TO']
+    result['PTS_per_poss'] = safe_divide(stats_row['PTS'], possessions) if possessions > 0 else None
     result['PPG'] = safe_divide(stats_row['PTS'], stats_row['GP'])
     result['RPG'] = safe_divide(stats_row['OR'] + stats_row['DR'], stats_row['GP'])
     result['DRPG'] = safe_divide(stats_row['DR'], stats_row['GP'])

@@ -110,6 +110,7 @@ class Config:
             # Running on GCP - return Cloud Storage paths
             base_path = f"gs://{bucket_name}/data/play_by_play/historical"
             return {
+                "2020-2021": f"{base_path}/[12-22-2020]-[07-20-2021]-combined-stats.csv",
                 "2021-2022": f"{base_path}/[10-19-2021]-[06-16-2022]-combined-stats.csv",
                 "2022-2023": f"{base_path}/[10-18-2022]-[06-12-2023]-combined-stats.csv",
                 "2023-2024": f"{base_path}/[10-24-2023]-[06-17-2024]-combined-stats.csv",
@@ -118,6 +119,10 @@ class Config:
         else:
             # Running locally - return local paths (unchanged)
             return {
+                "2020-2021": os.path.join(
+                    self.play_by_play_dir,
+                    "[12-22-2020]-[07-20-2021]-combined-stats.csv"
+                ),
                 "2021-2022": os.path.join(
                     self.play_by_play_dir,
                     "[10-19-2021]-[06-16-2022]-combined-stats.csv"

@@ -113,6 +113,8 @@ OFFENSIVE_FOUL_TYPES = {
 
 # Season file mapping
 SEASON_FILE_MAPPING = {
+    "2020-2021": "[12-22-2020]-[07-20-2021]-combined-stats.csv",
+    "2021-2022": "[10-19-2021]-[06-16-2022]-combined-stats.csv",
     "2022-2023": "[10-18-2022]-[06-12-2023]-combined-stats.csv",
     "2023-2024": "[10-24-2023]-[06-17-2024]-combined-stats.csv",
     "2024-2025": "[10-22-2024]-[06-22-2025]-combined-stats.csv",
@@ -785,8 +787,8 @@ def calculate_shot_profile_stats(player_pbp: pd.DataFrame,
     mid_made = len(short_mid_attempts[short_mid_attempts['result'] == 'made']) + len(long_mid_attempts[long_mid_attempts['result'] == 'made'])
     stats['mid_range_fg_pct'] = mid_made / mid_attempts if mid_attempts > 0 else 0
     
-    # 10. Shot volume per 100 possessions
-    stats['fga_per_100'] = (total_fga / possessions * 100) if possessions > 0 else 0
+    # 10. Shot volume per possession (individual efficiency)
+    stats['fga_per_poss'] = (total_fga / possessions) if possessions > 0 else 0
     
     return stats
 
@@ -801,8 +803,8 @@ def calculate_creation_stats(player_pbp: pd.DataFrame,
     Calculate on-ball creation and decision making stats.
     
     Returns dict with:
-        - assists_per_100
-        - turnovers_per_100
+        - assists_per_poss (per possession, not per 100)
+        - turnovers_per_poss
         - ast_to_ratio
     """
     stats = {}
@@ -820,8 +822,8 @@ def calculate_creation_stats(player_pbp: pd.DataFrame,
         (player_pbp['player'] == player_name)
     ])
     
-    stats['assists_per_100'] = (assists / possessions * 100) if possessions > 0 else 0
-    stats['turnovers_per_100'] = (turnovers / possessions * 100) if possessions > 0 else 0
+    stats['assists_per_poss'] = (assists / possessions) if possessions > 0 else 0
+    stats['turnovers_per_poss'] = (turnovers / possessions) if possessions > 0 else 0
     stats['ast_to_ratio'] = assists / turnovers if turnovers > 0 else assists
     
     return stats
@@ -837,11 +839,11 @@ def calculate_defensive_stats(player_pbp: pd.DataFrame,
     Calculate defensive impact statistics.
     
     Returns dict with:
-        - steals_per_100
-        - blocks_per_100
+        - steals_per_poss (per possession, not per 100)
+        - blocks_per_poss
         - def_reb_share
-        - shooting_fouls_per_100
-        - total_fouls_per_100
+        - shooting_fouls_per_poss
+        - total_fouls_per_poss
     """
     stats = {}
     
@@ -850,14 +852,14 @@ def calculate_defensive_stats(player_pbp: pd.DataFrame,
         (player_pbp['event_type'] == 'turnover') &
         (player_pbp['steal'] == player_name)
     ])
-    stats['steals_per_100'] = (steals / possessions * 100) if possessions > 0 else 0
+    stats['steals_per_poss'] = (steals / possessions) if possessions > 0 else 0
     
     # 2. Blocks
     blocks = len(player_pbp[
         (player_pbp['event_type'] == 'shot') &
         (player_pbp['block'] == player_name)
     ])
-    stats['blocks_per_100'] = (blocks / possessions * 100) if possessions > 0 else 0
+    stats['blocks_per_poss'] = (blocks / possessions) if possessions > 0 else 0
     
     # 3. Defensive rebound share
     # Player's defensive rebounds

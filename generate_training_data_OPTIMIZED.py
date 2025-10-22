@@ -694,7 +694,10 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                     )
                     if player_array:
                         player_array_memory_cache[cache_key] = player_array
-            except Exception:
+            except Exception as e:
+                import traceback
+                print(f"❌ Exception loading player array for {player_name}: {e}")
+                print(f"   Traceback: {traceback.format_exc()[:300]}")
                 pass
     
     pre_cache_time = time.time() - pre_cache_start
@@ -739,16 +742,17 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
         home_full_name = abbrev_mapping.get(home_abbrev, home_abbrev)
         current_game_date = game_df.iloc[0].get('date', None)
         
-        # Process lineups once per game
+        # Process lineups once per game (robust team matching)
+        from game.team_utils import resolve_team_abbreviation
         for team_name, player_list in lineups.items():
-            away_parts = away_full_name.split() if away_full_name else []
-            home_parts = home_full_name.split() if home_full_name else []
-            
-            is_away_team = (away_full_name in team_name or team_name in away_full_name or 
-                           any(part in team_name for part in away_parts))
-            is_home_team = (home_full_name in team_name or team_name in home_full_name or
-                           any(part in team_name for part in home_parts))
-            
+            resolved = resolve_team_abbreviation(team_name) or team_name
+            is_away_team = (resolved == away_abbrev)
+            is_home_team = (resolved == home_abbrev)
+            if not (is_away_team or is_home_team):
+                # Fallback: compare normalized full names
+                is_away_team = (team_name == away_full_name)
+                is_home_team = (team_name == home_full_name)
+
             if is_away_team:
                 for player_name in player_list:
                     #  NEW: Use enhanced player stats (12 values: shot profile, creation, defense, usage, archetype)
@@ -769,9 +773,9 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                             # Fallback to default array if no PBP stats
                             player_array = [
                                 player_name,
-                                mpg, usage / 100.0, 20.0,  # mpg, usage (normalized), pts/100
-                                15.0,                      # fga/100
-                                5.0, 1.5, 0.5,             # ast/100, stl/100, blk/100
+                                mpg, usage / 100.0, 1.0,   # mpg, usage (normalized), pts/poss
+                                0.15,                      # fga/poss (shots per possession)
+                                0.05, 0.015, 0.005,        # ast/poss, stl/poss, blk/poss
                                 0.3, 0.62,                 # rim%, rim_fg%
                                 0.05, 0.38,                # c3%, c3_fg%
                                 0.2, 0.36,                 # nc3%, nc3_fg%
@@ -779,6 +783,9 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                                 0.5, 0.5,                  # a2%, a3%
                                 0.75                       # ft%
                             ]
+                        else:
+                            # Make a COPY to avoid mutating the cached array
+                            player_array = player_array.copy()
                         
                         # Add fouls placeholder (will be updated per context)
                         player_array.append(0)
@@ -821,9 +828,9 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                             # Fallback to default array if no PBP stats
                             player_array = [
                                 player_name,
-                                mpg, usage / 100.0, 20.0,  # mpg, usage (normalized), pts/100
-                                15.0,                      # fga/100
-                                5.0, 1.5, 0.5,             # ast/100, stl/100, blk/100
+                                mpg, usage / 100.0, 1.0,   # mpg, usage (normalized), pts/poss
+                                0.15,                      # fga/poss (shots per possession)
+                                0.05, 0.015, 0.005,        # ast/poss, stl/poss, blk/poss
                                 0.3, 0.62,                 # rim%, rim_fg%
                                 0.05, 0.38,                # c3%, c3_fg%
                                 0.2, 0.36,                 # nc3%, nc3_fg%
@@ -831,6 +838,9 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                                 0.5, 0.5,                  # a2%, a3%
                                 0.75                       # ft%
                             ]
+                        else:
+                            # Make a COPY to avoid mutating the cached array
+                            player_array = player_array.copy()
                         
                         # Add fouls placeholder (will be updated per context)
                         player_array.append(0)
@@ -853,6 +863,13 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                         ]
                         home_players.append(player_array)
         
+        # Guard: if either roster failed to populate, skip this game's indices
+        if not away_players or not home_players:
+            for idx in game_indices:
+                json_training_data[idx] = "{}"
+            processed_plays += len(game_indices)
+            continue
+
         #  OPTIMIZATION: Sort players by MPG (descending) for better model learning
         # High-MPG players (starters) at low indices makes patterns easier to learn
         # Player array format: [name, MPG, usg, pts/100, fga/100, ast/100, stl/100, blk/100, rim%, rim_fg%, c3%, c3_fg%, nc3%, nc3_fg%, mid%, mid_fg%, a2%, a3%, ft%, fouls]
@@ -873,22 +890,22 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
         game_df_reset = game_df.reset_index(drop=True)
         
         #  Pre-compute shared components ONCE per game (was being done 400x per game!)
-        #  NEW: Use enhanced team stats (8 values: OEFF, DEFF, PACE, 3PAr, FTr, ORr, ASTr, REST)
+        #  NEW: Use enhanced team stats (10 values: OEFF, DEFF, PACE, 3PAr, FTr, ORr, DRr, ASTr, TOr, REST)
         try:
             away_stats_array = get_team_stats_array(away_full_name, current_game_date, fallback_season=cached_current_season)
             if away_stats_array is None:
-                # Fallback to defaults
-                away_stats_array = [110.0, 110.0, 100.0, 0.33, 0.25, 0.25, 0.65, 2]
+                # Fallback to defaults: [OEFF, DEFF, PACE, 3PAr, FTr, ORr, DRr, ASTr, TOr, REST]
+                away_stats_array = [110.0, 110.0, 100.0, 0.38, 0.22, 0.25, 0.75, 0.65, 0.13, 2]
         except Exception:
-            away_stats_array = [110.0, 110.0, 100.0, 0.33, 0.25, 0.25, 0.65, 2]
+            away_stats_array = [110.0, 110.0, 100.0, 0.38, 0.22, 0.25, 0.75, 0.65, 0.13, 2]
         
         try:
             home_stats_array = get_team_stats_array(home_full_name, current_game_date, fallback_season=cached_current_season)
             if home_stats_array is None:
-                # Fallback to defaults
-                home_stats_array = [110.0, 110.0, 100.0, 0.33, 0.25, 0.25, 0.65, 2]
+                # Fallback to defaults: [OEFF, DEFF, PACE, 3PAr, FTr, ORr, DRr, ASTr, TOr, REST]
+                home_stats_array = [110.0, 110.0, 100.0, 0.38, 0.22, 0.25, 0.75, 0.65, 0.13, 2]
         except Exception:
-            home_stats_array = [110.0, 110.0, 100.0, 0.33, 0.25, 0.25, 0.65, 2]
+            home_stats_array = [110.0, 110.0, 100.0, 0.38, 0.22, 0.25, 0.75, 0.65, 0.13, 2]
         
         #  Pre-build ALL play data for the entire game at once
         game_play_data = []
@@ -1047,14 +1064,16 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                     
                     #  OPTIMIZED: Update foul counts IN-PLACE (no copying!)
                     # Instead of copying arrays 500x per game, we update the template arrays directly
-                    # Fouls are at index 13 (last element after cluster)
+                    # Fouls are at index 19 (last element in 20-element array)
+                    # Array: [name, mpg, usg, pts/p, fga/p, ast/p, stl/p, blk/p, rim%, rim_fg%, 
+                    #         c3%, c3_fg%, nc3%, nc3_fg%, mid%, mid_fg%, a2%, a3%, ft%, fouls]
                     for player_arr in away_players_template:
                         player_name = player_arr[0]
-                        player_arr[13] = current_player_fouls.get(player_name, 0)
+                        player_arr[19] = current_player_fouls.get(player_name, 0)
                     
                     for player_arr in home_players_template:
                         player_name = player_arr[0]
-                        player_arr[13] = current_player_fouls.get(player_name, 0)
+                        player_arr[19] = current_player_fouls.get(player_name, 0)
                     
                     # Use template arrays directly (they're already updated with current fouls)
                     compact_record["ap"] = away_players_template

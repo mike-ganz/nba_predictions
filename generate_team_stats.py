@@ -94,7 +94,7 @@ def calculate_enhanced_rates(team_games_df):
         team_games_df: DataFrame with team boxscore data (sorted by date, recent last)
         
     Returns:
-        dict: Dictionary with calculated rates
+        dict: Dictionary with calculated rates including TOr and DRr
     """
     if len(team_games_df) == 0:
         return None
@@ -111,6 +111,7 @@ def calculate_enhanced_rates(team_games_df):
         off_reb = game.get('OR', 0)
         def_reb = game.get('DR', 0)
         assists = game.get('A', 0)
+        turnovers = game.get('TO', 0)
         
         # Skip if critical data is missing
         if fga == 0:
@@ -128,8 +129,17 @@ def calculate_enhanced_rates(team_games_df):
         total_reb = off_reb + def_reb
         orr = off_reb / total_reb if total_reb > 0 else 0
         
+        # Defensive rebound rate: DR / (DR + OR)
+        # Note: Similar to ORr, ideally should be DR / (DR + opponent_OR)
+        drr = def_reb / total_reb if total_reb > 0 else 0
+        
         # Assist rate: AST / FGM
         astr = assists / fgm if fgm > 0 else 0
+        
+        # Turnover rate: TO / Possessions (approximate with FGA + 0.44*FTA + TO)
+        # This is a per-possession turnover rate
+        approx_possessions = fga + 0.44 * fta + turnovers
+        tor = turnovers / approx_possessions if approx_possessions > 0 else 0
         
         rates_data.append({
             'OEFF': game.get('OEFF', 110.0),
@@ -138,7 +148,9 @@ def calculate_enhanced_rates(team_games_df):
             '3PAr': three_par,
             'FTr': ftr,
             'ORr': orr,
-            'ASTr': astr
+            'DRr': drr,
+            'ASTr': astr,
+            'TOr': tor
         })
     
     if len(rates_data) == 0:
@@ -158,13 +170,15 @@ def calculate_enhanced_rates(team_games_df):
         '3PAr': round(recent_games['3PAr'].mean(), 3),
         'FTr': round(recent_games['FTr'].mean(), 3),
         'ORr': round(recent_games['ORr'].mean(), 3),
+        'DRr': round(recent_games['DRr'].mean(), 3),
         'ASTr': round(recent_games['ASTr'].mean(), 3),
+        'TOr': round(recent_games['TOr'].mean(), 3),
         'games_in_window': len(recent_games)
     }
 
 def generate_team_stats(team_name, target_date=None, fallback_season=None, use_cache=True):
     """
-    Calculate enhanced team stats (8 values) for a given team and date using rolling averages.
+    Calculate enhanced team stats (10 values) for a given team and date using rolling averages.
     
     Args:
         team_name (str): Name of the team
@@ -180,7 +194,9 @@ def generate_team_stats(team_name, target_date=None, fallback_season=None, use_c
             - 3PAr: 3-point attempt rate (3PA / FGA)
             - FTr: Free throw rate (FTA / FGA)
             - ORr: Offensive rebound rate
+            - DRr: Defensive rebound rate
             - ASTr: Assist rate (AST / FGM)
+            - TOr: Turnover rate (TO / Possessions)
             - REST_DAYS: Days since last game
             - TEAM_NAME, SEASON, GAMES_PLAYED (metadata)
     """
@@ -228,7 +244,9 @@ def generate_team_stats(team_name, target_date=None, fallback_season=None, use_c
                     '3PAr': 0.38,  # League average
                     'FTr': 0.22,   # League average
                     'ORr': 0.25,   # League average
+                    'DRr': 0.75,   # League average (complement of ORr)
                     'ASTr': 0.65,  # League average
+                    'TOr': 0.13,   # League average (~13% of possessions)
                     'REST_DAYS': 10,
                     'USING_PRIOR_SEASON': True,
                     'FALLBACK_REASON': f'No {fallback_season} team data available'
@@ -271,7 +289,9 @@ def generate_team_stats(team_name, target_date=None, fallback_season=None, use_c
             '3PAr': 0.38,
             'FTr': 0.22,
             'ORr': 0.25,
+            'DRr': 0.75,
             'ASTr': 0.65,
+            'TOr': 0.13,
             'REST_DAYS': rest_days,
             'WARNING': f'Only {len(team_data)} games available (minimum {MIN_GAMES})'
         }
@@ -299,7 +319,9 @@ def generate_team_stats(team_name, target_date=None, fallback_season=None, use_c
         '3PAr': enhanced_rates['3PAr'],
         'FTr': enhanced_rates['FTr'],
         'ORr': enhanced_rates['ORr'],
+        'DRr': enhanced_rates['DRr'],
         'ASTr': enhanced_rates['ASTr'],
+        'TOr': enhanced_rates['TOr'],
         'REST_DAYS': rest_days,
         'ROLLING_WINDOW_SIZE': enhanced_rates['games_in_window']
     }
@@ -312,7 +334,7 @@ def generate_team_stats(team_name, target_date=None, fallback_season=None, use_c
 
 def get_team_stats_array(team_name, target_date=None, fallback_season=None, use_cache=True):
     """
-    Get team stats as a compact 8-value array for training data.
+    Get team stats as a compact 10-value array for training data.
     
     Args:
         team_name (str): Name of the team
@@ -321,7 +343,7 @@ def get_team_stats_array(team_name, target_date=None, fallback_season=None, use_
         use_cache (bool): Whether to use cached results
     
     Returns:
-        list: [OEFF, DEFF, PACE, 3PAr, FTr, ORr, ASTr, REST]
+        list: [OEFF, DEFF, PACE, 3PAr, FTr, ORr, DRr, ASTr, TOr, REST]
               Returns None if team stats cannot be calculated
     """
     stats = generate_team_stats(team_name, target_date, fallback_season, use_cache)
@@ -345,7 +367,9 @@ def get_team_stats_array(team_name, target_date=None, fallback_season=None, use_
         stats['3PAr'],
         stats['FTr'],
         stats['ORr'],
+        stats['DRr'],
         stats['ASTr'],
+        stats['TOr'],
         rest_val
     ]
 
@@ -404,12 +428,14 @@ if __name__ == "__main__":
         print(f"   3PAr: {stats['3PAr']}")
         print(f"   FTr: {stats['FTr']}")
         print(f"   ORr: {stats['ORr']}")
+        print(f"   DRr: {stats['DRr']}")
         print(f"   ASTr: {stats['ASTr']}")
+        print(f"   TOr: {stats['TOr']}")
         print(f"   REST: {stats['REST_DAYS']} days")
         print(f"   Games in window: {stats['ROLLING_WINDOW_SIZE']}")
         
         # Test compact array format
-        print("\n   Compact array format:")
+        print("\n   Compact array format (10 values):")
         array = get_team_stats_array("LA Lakers", "2024-02-15")
         print(f"   {array}")
     

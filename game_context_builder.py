@@ -426,16 +426,29 @@ class GameContextBuilder:
             game_date_str = str(game_date)
         # Determine teams
         away_abbrev, home_abbrev = self._determine_away_home_teams(df)
-        # Team stats (8-value array) → reduce to the 4-field compact [OEFF, DEFF, PACE, REST]
+        # Team stats (10-value array) → use full array for compact format
         away_stats_ext = _get_team_stats_array(away_abbrev, target_date=game_date_str)
         home_stats_ext = _get_team_stats_array(home_abbrev, target_date=game_date_str)
-        def _reduce_team_stats(arr):
-            if not arr or len(arr) < 8:
-                return [110.0, 110.0, 100.0, 2]
-            oeff, deff, pace, _3par, _ftr, _orr, _astr, rest = arr
-            return [round(float(oeff),2), round(float(deff),2), round(float(pace),2), int(rest)]
-        away_stats = _reduce_team_stats(away_stats_ext)
-        home_stats = _reduce_team_stats(home_stats_ext)
+        def _validate_team_stats(arr):
+            """Validate and format team stats array to 10 values."""
+            if not arr or len(arr) < 10:
+                # Return default values: [OEFF, DEFF, PACE, 3PAr, FTr, ORr, DRr, ASTr, TOr, REST]
+                return [110.0, 110.0, 100.0, 0.38, 0.22, 0.25, 0.75, 0.65, 0.13, 2]
+            # Ensure all values are properly formatted
+            return [
+                round(float(arr[0]), 2),  # OEFF
+                round(float(arr[1]), 2),  # DEFF
+                round(float(arr[2]), 2),  # PACE
+                round(float(arr[3]), 3),  # 3PAr
+                round(float(arr[4]), 3),  # FTr
+                round(float(arr[5]), 3),  # ORr
+                round(float(arr[6]), 3),  # DRr
+                round(float(arr[7]), 3),  # ASTr
+                round(float(arr[8]), 3),  # TOr
+                int(arr[9])               # REST
+            ]
+        away_stats = _validate_team_stats(away_stats_ext)
+        home_stats = _validate_team_stats(home_stats_ext)
         # Roster from lineups columns (a1..a5 / h1..h5) across the game
         def _collect_roster(df_team_cols):
             s = set()
@@ -461,8 +474,8 @@ class GameContextBuilder:
                     players.append(player_arr)
                 except Exception:
                     # Minimal fallback - 20 elements matching training format
-                    # [name, mpg, usg, pts/100, fga/100, ast/100, stl/100, blk/100, rim%, rim_fg%, c3%, c3_fg%, nc3%, nc3_fg%, mid%, mid_fg%, a2%, a3%, ft%, fouls]
-                    players.append([name, 25, 0.18, 20.0, 15.0, 5.0, 1.5, 0.5, 0.3, 0.62, 0.05, 0.38, 0.2, 0.36, 0.3, 0.42, 0.5, 0.5, 0.75, 0])
+                    # [name, mpg, usg, pts/poss, fga/poss, ast/poss, stl/poss, blk/poss, rim%, rim_fg%, c3%, c3_fg%, nc3%, nc3_fg%, mid%, mid_fg%, a2%, a3%, ft%, fouls]
+                    players.append([name, 25, 0.18, 1.0, 0.15, 0.05, 0.015, 0.005, 0.3, 0.62, 0.05, 0.38, 0.2, 0.36, 0.3, 0.42, 0.5, 0.5, 0.75, 0])
             # Sort by MPG desc (index 1 in the 20-field format)
             players.sort(key=lambda p: p[1], reverse=True)
             return players
