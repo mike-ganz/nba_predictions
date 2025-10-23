@@ -256,6 +256,8 @@ class SimulationDatabase:
         with self._db_lock:  # Ensure thread-safe database access
             try:
                 with sqlite3.connect(self.db_path, check_same_thread=False) as conn:
+                    # Improve resilience under concurrent access
+                    conn.execute('PRAGMA busy_timeout=30000')
                     # Use pre-compiled SQL statement for better performance
                     conn.execute(self._insert_sql, (
                         result.run_id, result.game_id, result.season_year, result.platform,

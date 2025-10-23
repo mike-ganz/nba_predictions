@@ -483,7 +483,7 @@ def predict_rolling_sequence(
                     context=stage1_json,
                     model_id=model_config["model_1_id"],
                     max_tokens=1500,
-                    temperature=float(os.getenv("PREDICTION_TEMPERATURE", "0.8")),
+                    temperature=float(os.getenv("PREDICTION_TEMPERATURE", "1")),
                     max_retries=3,
                     stage1_mode=True,
                 )
@@ -511,6 +511,14 @@ def predict_rolling_sequence(
             results["stage1_response"] = "SKIPPED"
 
     # Stage 2: rolling
+    # Cache temperature and verbosity once per call to avoid repeated env reads and reduce I/O
+    _temp = float(os.getenv("PREDICTION_TEMPERATURE", "1"))
+    _verbose_iter_logs = os.getenv("PREDICTION_VERBOSE_ITER_LOGS", "0") == "1"
+    try:
+        _iter_log_every = int(os.getenv("PREDICTION_ITER_LOG_EVERY", "10"))
+    except Exception:
+        _iter_log_every = 0
+
     for i in range(max(0, int(n_iterations))):
         iteration_json = ctx_mgr.get_json()
         try:
@@ -518,7 +526,7 @@ def predict_rolling_sequence(
                 context=iteration_json,
                 model_id=model_config["model_2_id"],
                 max_tokens=5000,
-                temperature=float(os.getenv("PREDICTION_TEMPERATURE", "0.8")),
+                temperature=_temp,
                 max_retries=3,
                 stage1_mode=False,
             )
@@ -528,68 +536,148 @@ def predict_rolling_sequence(
                 parsed = json_loads(resp_text)
             except Exception:
                 pass
+            # Defer context mutation until after handling special flags
+            pending_play = None
             if is_compact and isinstance(parsed, dict) and "y" in parsed and isinstance(parsed["y"], list):
-                # append tuple
                 play_tuple = parsed["y"][0] if parsed["y"] and isinstance(parsed["y"][0], list) else parsed["y"]
                 if isinstance(play_tuple, list):
-                    ctx_mgr.add_play(play_tuple)
+                    pending_play = ("compact", play_tuple)
                 results["iterations"].append({"iteration": i + 1, "raw_response": resp_text})
             elif not is_compact and isinstance(parsed, dict) and "next_play" in parsed:
-                ctx_mgr.add_play(parsed["next_play"])  # append verbose play
+                pending_play = ("verbose", parsed["next_play"])
                 results["iterations"].append({"iteration": i + 1, "next_play": parsed["next_play"]})
             else:
                 results["iterations"].append({"iteration": i + 1, "raw_response": resp_text})
 
-            # Human-readable iteration log: last 5 plays + game state
-            try:
-                lines = []
-                if is_compact:
-                    plays = ctx_mgr.p
-                    if plays:
-                        # Get rosters for player name lookup (minimal overhead - just pointers)
-                        away_players = ctx_mgr.base.get("ap", [])
-                        home_players = ctx_mgr.base.get("hp", [])
-                        
-                        latest = plays[-1]
-                        q = latest[0] if len(latest) > 0 else "?"
-                        t_sec = latest[1] if len(latest) > 1 else 0
-                        m, s = (t_sec // 60, t_sec % 60)
-                        score = latest[2] if len(latest) > 2 and isinstance(latest[2], list) and len(latest[2]) >= 2 else [0, 0]
-                        away_abbr = ctx_mgr.base.get("A", "AWAY")
-                        home_abbr = ctx_mgr.base.get("H", "HOME")
-                        lines.append(f"Game State: Q{q} {m:02d}:{s:02d} | {away_abbr} {score[0]} - {home_abbr} {score[1]}")
-                        recent = plays[-5:]
-                        for idx, tup in enumerate(recent, 1):
-                            tq = tup[0] if len(tup) > 0 else "?"
-                            tt = tup[1] if len(tup) > 1 else 0
-                            tm, ts = (tt // 60, tt % 60)
-                            # Format readable description with player name
-                            readable_desc = _format_readable_play(tup, away_players, home_players)
-                            lines.append(f"  {idx}. Q{tq} {tm:02d}:{ts:02d} {readable_desc}")
-                else:
-                    plays = ctx_mgr.recent
-                    if plays:
-                        latest = plays[-1]
-                        q = latest.get("quarter", "?")
-                        t = latest.get("time_remaining", "??:??")
-                        score = latest.get("score", "N/A")
-                        lines.append(f"Game State: Q{q} {t} | {score}")
-                        recent = plays[-5:]
-                        for idx, p in enumerate(recent, 1):
-                            t2 = p.get("time_remaining", "??:??")
-                            desc = p.get("description", "")
-                            lines.append(f"  {idx}. [{t2}] {desc}")
-                if lines:
-                    print("\n" + "\n".join(lines))
-            except Exception:
-                pass
+            # Human-readable iteration log: last 5 plays + game state (optional/periodic)
+            _should_log_iter = _verbose_iter_logs or (_iter_log_every > 0 and ((i + 1) % _iter_log_every == 0))
+            if _should_log_iter:
+                try:
+                    lines = []
+                    if is_compact:
+                        plays = ctx_mgr.p
+                        if plays:
+                            # Get rosters for player name lookup (minimal overhead - just pointers)
+                            away_players = ctx_mgr.base.get("ap", [])
+                            home_players = ctx_mgr.base.get("hp", [])
+                            
+                            latest = plays[-1]
+                            q = latest[0] if len(latest) > 0 else "?"
+                            t_sec = latest[1] if len(latest) > 1 else 0
+                            m, s = (t_sec // 60, t_sec % 60)
+                            score = latest[2] if len(latest) > 2 and isinstance(latest[2], list) and len(latest[2]) >= 2 else [0, 0]
+                            away_abbr = ctx_mgr.base.get("A", "AWAY")
+                            home_abbr = ctx_mgr.base.get("H", "HOME")
+                            lines.append(f"Game State: Q{q} {m:02d}:{s:02d} | {away_abbr} {score[0]} - {home_abbr} {score[1]}")
+                            recent = plays[-5:]
+                            for idx, tup in enumerate(recent, 1):
+                                tq = tup[0] if len(tup) > 0 else "?"
+                                tt = tup[1] if len(tup) > 1 else 0
+                                tm, ts = (tt // 60, tt % 60)
+                                # Format readable description with player name
+                                readable_desc = _format_readable_play(tup, away_players, home_players)
+                                lines.append(f"  {idx}. Q{tq} {tm:02d}:{ts:02d} {readable_desc}")
+                    else:
+                        plays = ctx_mgr.recent
+                        if plays:
+                            latest = plays[-1]
+                            q = latest.get("quarter", "?")
+                            t = latest.get("time_remaining", "??:??")
+                            score = latest.get("score", "N/A")
+                            lines.append(f"Game State: Q{q} {t} | {score}")
+                            recent = plays[-5:]
+                            for idx, p in enumerate(recent, 1):
+                                t2 = p.get("time_remaining", "??:??")
+                                desc = p.get("description", "")
+                                lines.append(f"  {idx}. [{t2}] {desc}")
+                    if lines:
+                        print("\n" + "\n".join(lines))
+                except Exception:
+                    pass
 
             if game_ended:
                 results["termination_reason"] = f"Game ended at iteration {i + 1}"
                 break
             if needs_rollback:
-                # Retry next iteration with current context (validator will guide)
+                # Handle quarter transition (do not apply pending_play)
+                try:
+                    # Read and clear target from validator if available
+                    _val = getattr(client, "validator", None)
+                    target_q = None
+                    if _val is not None and hasattr(_val, "get_quarter_transition_target"):
+                        target_q = _val.get_quarter_transition_target()
+                    else:
+                        target_q = getattr(_val, "quarter_transition_target", None)
+
+                    # Capture last known score and margin BEFORE trimming
+                    prev_score_compact = None
+                    prev_margin_compact = 0
+                    prev_score_verbose = None
+                    if is_compact:
+                        if getattr(ctx_mgr, "p", None):
+                            for _pl in reversed(ctx_mgr.p):
+                                if isinstance(_pl, list) and len(_pl) >= 3 and isinstance(_pl[2], list) and len(_pl[2]) >= 2:
+                                    prev_score_compact = [_pl[2][0], _pl[2][1]]
+                                    # If margin present (index 3), carry it forward
+                                    if len(_pl) >= 4 and isinstance(_pl[3], int):
+                                        prev_margin_compact = _pl[3]
+                                    break
+                    else:
+                        if getattr(ctx_mgr, "recent", None):
+                            for _pl in reversed(ctx_mgr.recent):
+                                if isinstance(_pl, dict) and _pl.get("score"):
+                                    prev_score_verbose = _pl.get("score")
+                                    break
+
+                    # Trim trailing 00:00 plays to move past end-of-period noise
+                    if is_compact:
+                        # Remove tail plays at t=0 in same quarter
+                        while getattr(ctx_mgr, "p", None) and isinstance(ctx_mgr.p[-1], list):
+                            last = ctx_mgr.p[-1]
+                            if len(last) > 1 and last[1] == 0:
+                                ctx_mgr.p = ctx_mgr.p[:-1]
+                            else:
+                                break
+                        # Inject quarter header play if validator set target
+                        if target_q is not None:
+                            score_to_use = prev_score_compact if isinstance(prev_score_compact, list) else [0, 0]
+                            # Compute margin from score if possible
+                            try:
+                                _m = prev_margin_compact
+                                if isinstance(score_to_use, list) and len(score_to_use) >= 2:
+                                    _m = int(score_to_use[0]) - int(score_to_use[1])
+                            except Exception:
+                                _m = prev_margin_compact
+                            # Use administrative 'period' event at 12:00 for quarter start (no player attribution)
+                            ctx_mgr.add_play([int(target_q), 720, score_to_use, _m, ["A", -1], 0, "period", None, 0])
+                    else:
+                        # Remove tail plays at 00:00 in same quarter
+                        while getattr(ctx_mgr, "recent", None) and isinstance(ctx_mgr.recent[-1], dict):
+                            last = ctx_mgr.recent[-1]
+                            if last.get("time_remaining") == "00:00":
+                                ctx_mgr.recent = ctx_mgr.recent[:-1]
+                            else:
+                                break
+                        # Inject a clean quarter start marker
+                        if target_q is not None:
+                            score_to_use = prev_score_verbose if isinstance(prev_score_verbose, str) else (last.get("score") if 'last' in locals() else "")
+                            ctx_mgr.add_play({
+                                "quarter": int(target_q),
+                                "time_remaining": "12:00",
+                                "description": "quarter start",
+                                "score": score_to_use
+                            })
+                except Exception:
+                    pass
+                # Retry next iteration with cleaned context
                 continue
+            # Apply pending play only if no special handling was required
+            if pending_play is not None:
+                kind, value = pending_play
+                if kind == "compact":
+                    ctx_mgr.add_play(value)
+                else:
+                    ctx_mgr.add_play(value)
         except Exception as _e:
             results["iterations"].append({"iteration": i + 1, "error": str(_e)})
             continue

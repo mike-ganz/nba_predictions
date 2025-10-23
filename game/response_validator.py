@@ -2077,9 +2077,13 @@ class NBAResponseValidator:
             
             period_detected = ("period" in current_desc or current_event == "period")
             
-            # Check recent plays for period if not found in current
+            # Check recent tail plays for period in the SAME quarter if not found in current
             if not period_detected and context and "recent_plays" in context:
-                for play in context["recent_plays"]:
+                recent_tail = context["recent_plays"][-8:]
+                for play in reversed(recent_tail):
+                    # Only consider plays from the same quarter as the candidate next play
+                    if play.get("quarter") != quarter:
+                        continue
                     if play.get("time_remaining") == "00:00":
                         play_desc = play.get("description", "").lower()
                         play_event = play.get("event_code", "")

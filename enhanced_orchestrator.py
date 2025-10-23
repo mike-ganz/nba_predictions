@@ -313,43 +313,7 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
     
     def _show_thread_status(self):
         """Display current status of all active threads (optimized)."""
-        with self._thread_info_lock:
-            active_threads = dict(self._active_threads)
-        
-        if not active_threads:
-            print("📭 No active threads")
-            return
-        
-        thread_count = len(active_threads)
-        print(f"\n🧵 Active Threads ({thread_count}):")
-        print("=" * 80)
-        print(f"{'ID':<20} {'Game':<12} {'Run':<4} {'Status':<10} {'Iter':<6} {'Game State':<25} {'Duration'}")
-        print("-" * 80)
-        
-        # Pre-calculate current time once for all duration calculations
-        current_time = datetime.now()
-        
-        # Pre-compile format strings and use list for batch printing
-        status_lines = []
-        for thread_id, info in active_threads.items():
-            duration = (current_time - info.start_time).total_seconds()
-            duration_str = f"{duration:.0f}s"
-            
-            # Optimized game state construction
-            if info.current_score:
-                game_state = f"Q{info.current_quarter} {info.current_time} | {info.current_score}"
-            elif info.status == "stage1":
-                game_state = "Initial plays generation"  
-            else:
-                game_state = ""
-            
-            # Create status line once and add to batch
-            status_line = (f"{thread_id[:18]:<20} {info.game_id:<12} {info.run_num:<4} {info.status:<10} "
-                          f"{info.current_iteration:<6} {game_state:<25} {duration_str}")
-            status_lines.append(status_line)
-        
-        # Batch print all lines (single I/O operation)
-        print('\n'.join(status_lines))
+        return
     
     def cancel_thread(self, thread_id: str) -> bool:
         """Cancel a specific thread by ID."""
@@ -393,7 +357,7 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
         self._monitor_active = True
         self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._monitor_thread.start()
-        print("👁️ Thread monitoring started. Press 'Ctrl+C' twice to show status, 'Ctrl+C' thrice to exit")
+        
     
     def _stop_monitoring(self):
         """Stop the thread monitoring process."""
@@ -408,9 +372,6 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
         while self._monitor_active and not self._shutdown_requested.is_set():
             # Show status every 30 seconds
             if time.time() - last_status_time > 30:
-                print("\n" + "="*60)
-                self._show_thread_status()
-                print("="*60)
                 last_status_time = time.time()
             
             time.sleep(1)
@@ -428,7 +389,8 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
         if thread_id in self._cancelled_threads:
             self._unregister_thread(thread_id)
             cancelled_result = self._create_cancelled_result(run_id, game_id)
-            # Result will be saved by the monitoring method, don't save twice
+            # Persist cancelled result immediately
+            self._safe_save_result(cancelled_result, thread_id)
             return cancelled_result
         
         # Update thread status
@@ -457,6 +419,9 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
                     self._update_thread_status(thread_id, "error")
                     self.logger.warning(f"Failed {run_id} ({self._failed_runs} failures)")
             
+            # Save result to database (with retry)
+            self._safe_save_result(result, thread_id)
+
             # Unregister thread
             self._unregister_thread(thread_id)
             return result
@@ -725,7 +690,6 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
         else:
             # Multithreaded execution
             self.logger.info(f"Running with {self.config.max_threads} threads")
-            self._start_monitoring()  # Start thread monitoring
             
             results = []
             
@@ -747,8 +711,7 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
                     # Register thread for monitoring
                     self._register_thread(thread_id, game_id, run_num, future)
                 
-                print(f"🚀 Submitted {len(future_to_params)} tasks to thread pool")
-                self._show_thread_status()
+                
                 
                 # Collect results as they complete
                 for future in as_completed(future_to_params):
@@ -798,8 +761,7 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
                         self.logger.error(f"Task failed for {game_id} run {run_num}: {str(e)}")
                         self._unregister_thread(thread_id)
             
-            # Stop monitoring
-            self._stop_monitoring()
+            
         
         # Calculate summary statistics
         end_time = time.time()
