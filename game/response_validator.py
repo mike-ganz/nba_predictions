@@ -933,7 +933,7 @@ class NBAResponseValidator:
         player = next_play.get("player", "")
         shot_details = next_play.get("shot_details", {})
         shot_points = shot_details.get("points") if isinstance(shot_details, dict) else None
-        description = next_play.get("description", "").upper()
+        description = str(next_play.get("description", "")).lower()
         
         # Create pattern based on key elements
         pattern_elements = []
@@ -977,7 +977,7 @@ class NBAResponseValidator:
             if current_time == "00:00":
                 # Check for "period" play in current play OR recent plays
                 current_play_desc = next_play.get("description", "").lower()
-                current_event_code = next_play.get("event_code", "")  # For compact format
+                current_event_code = str(next_play.get("event_code", "")).lower()  # For compact format
                 
                 # Check current play first
                 period_detected = ("period" in current_play_desc or current_event_code == "period")
@@ -990,7 +990,7 @@ class NBAResponseValidator:
                     for i, play in enumerate(current_recent_plays):
                         if play.get("time_remaining") == "00:00":
                             play_desc = play.get("description", "").lower()
-                            play_event = play.get("event_code", "")
+                            play_event = str(play.get("event_code", "")).lower()
                             period_in_desc = "period" in play_desc
                             period_in_event = play_event == "period"
                             period_plays_found.append(f"Play{i}: '{play_desc}' (event: '{play_event}') -> period_in_desc: {period_in_desc}, period_in_event: {period_in_event}")
@@ -1082,8 +1082,8 @@ class NBAResponseValidator:
                 
                 # Check current play
                 current_desc = next_play.get("description", "").lower()
-                current_event_code = next_play.get("event_code", "")
-                if "sub" in current_desc or current_event_code == "sub":
+                current_event_code = str(next_play.get("event_code", "")).lower()
+                if "sub" in current_desc or current_event_code == "sub" or current_event_code.startswith("sub"):
                     sub_count += 1
                 else:
                     non_sub_count += 1
@@ -1092,8 +1092,8 @@ class NBAResponseValidator:
                 for play in current_recent_plays:
                     if play.get("time_remaining") == current_time:
                         play_desc = play.get("description", "").lower()
-                        play_event = play.get("event_code", "")
-                        if "sub" in play_desc or play_event == "sub":
+                        play_event = str(play.get("event_code", "")).lower()
+                        if "sub" in play_desc or play_event == "sub" or play_event.startswith("sub"):
                             sub_count += 1
                         else:
                             non_sub_count += 1
@@ -1108,7 +1108,7 @@ class NBAResponseValidator:
                     return ValidationResult.ROLLBACK_TIME
                 
                 # Rule 2: Too many consecutive substitutions -> RETRY
-                elif sub_count >= 4:
+                elif sub_count >= 3:
                     print(f"🚨 Too many consecutive substitutions! {sub_count} substitutions at same time '{current_time}'")
                     return ValidationResult.RETRY
                 
@@ -1221,13 +1221,13 @@ class NBAResponseValidator:
         return target or 2  # Default to Q2 if somehow missing
     
     def _check_excessive_substitutions(self, next_play: Dict[str, Any]) -> bool:
-        """Check for 6 consecutive substitution plays (allowing for strategic substitution sequences)."""
+        """Check for 3 consecutive substitution plays (allowing for strategic substitution sequences)."""
         description = next_play.get("description", "").upper()
         
-        if "SUB" in description:
+        if "sub" in description:
             self.consecutive_subs += 1
-            print(f"Substitution detected: '{description[:50]}...' count: {self.consecutive_subs}/10")
-            if self.consecutive_subs >= 10:  # Much more lenient - timeouts can have many subs
+            print(f"Substitution detected: '{description[:50]}...' count: {self.consecutive_subs}/3")
+            if self.consecutive_subs >= 3:
                 print(f"🚨 Substitution validation triggered! {self.consecutive_subs} consecutive substitutions")
                 # Reset counter and return retry
                 self.consecutive_subs = 0
@@ -2073,7 +2073,7 @@ class NBAResponseValidator:
         if time_remaining == "00:00":
             # Check current play for period
             current_desc = next_play.get("description", "").lower()
-            current_event = next_play.get("event_code", "")
+            current_event = str(next_play.get("event_code", "")).lower()
             
             period_detected = ("period" in current_desc or current_event == "period")
             
@@ -2137,7 +2137,7 @@ class NBAResponseValidator:
                 # Check current play
                 current_desc = next_play.get("description", "").lower()
                 current_event = next_play.get("event_code", "")
-                if "sub" in current_desc or current_event == "sub":
+                if "sub" in current_desc or current_event == "sub" or current_event.startswith("sub"):
                     sub_count += 1
                 else:
                     non_sub_count += 1
@@ -2147,8 +2147,8 @@ class NBAResponseValidator:
                     for play in context["recent_plays"]:
                         if play.get("time_remaining") == time_remaining:
                             play_desc = play.get("description", "").lower()
-                            play_event = play.get("event_code", "")
-                            if "sub" in play_desc or play_event == "sub":
+                            play_event = str(play.get("event_code", "")).lower()
+                            if "sub" in play_desc or play_event == "sub" or play_event.startswith("sub"):
                                 sub_count += 1
                             else:
                                 non_sub_count += 1
