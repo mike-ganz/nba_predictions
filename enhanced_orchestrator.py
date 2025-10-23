@@ -7,6 +7,7 @@ and provides better validation and auto-detection capabilities.
 """
 
 import json
+import copy
 import argparse
 import threading
 import time
@@ -14,7 +15,7 @@ import signal
 import sys
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed, Future
-from typing import Dict, List, Any, Optional, Set
+from typing import Dict, List, Any, Optional, Set, Tuple
 from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime
@@ -157,7 +158,9 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
         
         # Enhance database configuration for better multithreading
         self._enhance_database_config()
-    
+        self._context_cache: Dict[Tuple[str, bool], Dict[str, Any]] = {}
+        self._context_json_cache: Dict[Tuple[str, bool], str] = {}
+
     def _setup_database_error_logging(self):
         """Set up dedicated logging for database errors."""
         # Create a separate logger for database errors
@@ -204,6 +207,28 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
         except Exception as e:
             self.logger.warning(f"Failed to enhance database configuration: {e}")
     
+    def _get_game_context(self, game_id: str, skip_stage1: bool) -> Tuple[Dict[str, Any], Optional[str]]:
+        cache_key = (game_id, skip_stage1)
+        if cache_key in self._context_cache:
+            cached_context = self._context_cache[cache_key]
+            context_copy = copy.deepcopy(cached_context)
+            context_json = self._context_json_cache.get(cache_key)
+            return context_copy, context_json
+
+        context = self.context_builder.build_game_context(
+            game_id=game_id,
+            for_first_n_plays=not skip_stage1
+        )
+        context_json = None
+        try:
+            context_json = json.dumps(context, separators=(',', ':'))
+        except Exception:
+            context_json = None
+        self._context_cache[cache_key] = copy.deepcopy(context)
+        if context_json is not None:
+            self._context_json_cache[cache_key] = context_json
+        return copy.deepcopy(context), context_json
+
     def _signal_handler(self, signum, frame):
         """Handle interrupt signals for graceful shutdown."""
         print(f"\n🛑 Received signal {signum}. Initiating graceful shutdown...")
@@ -417,9 +442,9 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
         try:
             # Update status to stage1
             self._update_thread_status(thread_id, "stage1")
-            
-            # Use the parent class's single simulation method (correct signature: run_id, game_id)
-            result = self._run_single_simulation_monitored(run_id, game_id, thread_id)
+            context, context_json = self._get_game_context(game_id, self.config.skip_stage1)
+            stage1_key = (self.config.season_year, game_id, self.config.skip_stage1)
+            result = self._run_simulation_task_internal(run_id, game_id, context, context_json, stage1_key, thread_id)
             
             # Update progress
             with self._progress_lock:
@@ -497,23 +522,21 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
             self._safe_save_result(result, thread_id)
             return result
     
+    def _run_simulation_task_internal(self, run_id: str, game_id: str, context: Dict[str, Any], context_json: Optional[str],
+                                      stage1_key: Tuple[str, str, bool], thread_id: str) -> SimulationResult:
+        result = self._run_single_simulation(run_id, game_id, context, stage1_key, context_json)
+        return result
+    
     def _run_single_simulation_monitored(self, run_id: str, game_id: str, thread_id: str) -> SimulationResult:
         """Run single simulation with thread monitoring."""
-        # Check for cancellation frequently during execution
         if thread_id in self._cancelled_threads:
             cancelled_result = self._create_cancelled_result(run_id, game_id)
-            # Save cancelled result and return
             self._safe_save_result(cancelled_result, thread_id)
             return cancelled_result
-        
-        # This would be where we'd integrate monitoring into the actual simulation
-        # For now, we use the parent method but could enhance it with periodic status updates
-        result = self._run_single_simulation(run_id, game_id)
-        
-        # 🔧 ENHANCED FIX: Save result to database with robust error handling
-        # This is the single point where all successful results are saved
+        context, context_json = self._get_game_context(game_id, self.config.skip_stage1)
+        stage1_key = (self.config.season_year, game_id, self.config.skip_stage1)
+        result = self._run_single_simulation(run_id, game_id, context, stage1_key, context_json)
         self._safe_save_result(result, thread_id)
-        
         return result
     
     def _safe_save_result(self, result: SimulationResult, thread_id: str) -> bool:

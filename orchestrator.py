@@ -419,27 +419,44 @@ class NBA_Orchestrator:
         
         return summary
     
-    def _run_single_simulation(self, run_id: str, game_id: str) -> SimulationResult:
+    def _run_single_simulation(self, run_id: str, game_id: str,
+                               prebuilt_context: Optional[Dict[str, Any]] = None,
+                               stage1_cache_key: Optional[Tuple[str, str, bool]] = None,
+                               pre_serialized_context: Optional[str] = None) -> SimulationResult:
         """Run a single simulation and return results."""
         start_time = datetime.now()
         
         try:
-            # Load game context using real data
-            game_context = self.context_builder.build_game_context(
-                game_id=game_id, 
-                for_first_n_plays=(not self.config.skip_stage1)  # Clean context for Stage 1
-            )
+            # Load or reuse game context
+            if prebuilt_context is not None:
+                game_context = prebuilt_context
+            else:
+                game_context = self.context_builder.build_game_context(
+                    game_id=game_id,
+                    for_first_n_plays=(not self.config.skip_stage1)
+                )
+            if stage1_cache_key is None and not self.config.skip_stage1:
+                stage1_cache_key = (self.config.season_year, game_id, self.config.skip_stage1)
+            stage1_key_to_use = stage1_cache_key if (stage1_cache_key and not self.config.skip_stage1) else None
+            context_json = pre_serialized_context
+            if context_json is None:
+                try:
+                    context_json = json.dumps(game_context, separators=(',', ':'))
+                except Exception:
+                    context_json = None
             
             # Run prediction
             results = predict_rolling_sequence(
                 game_context=game_context,
                 n_iterations=self.config.max_iterations_per_run,
-                skip_stage1=self.config.skip_stage1
+                skip_stage1=self.config.skip_stage1,
+                stage1_cache_key=stage1_key_to_use,
+                pre_serialized_context=context_json
             )
-            
+        
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
-            
+        
             # Extract results with optimized processing
             iterations = results.get("iterations", [])
             total_predictions = len(iterations)

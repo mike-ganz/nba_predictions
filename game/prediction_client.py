@@ -7,7 +7,7 @@ consistent interface.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, Tuple, List, Union
 import json
 import os
 import time
@@ -174,6 +174,7 @@ class BasePredictionClient(ABC):
         # Subclasses can override this for better performance
         try:
             context = json.loads(context_json)
+            # Default implementation ignores instruction; subclasses may use it
             return self.predict(context, model_id, max_tokens, temperature)
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON context: {e}")
@@ -187,42 +188,32 @@ class BasePredictionClient(ABC):
         """
         return self._get_default_models()
     
-    def predict_with_validation(self, context: Dict[str, Any], model_id: str, 
+    def predict_with_validation(self, context: Union[Dict[str, Any], str], model_id: str, 
                                max_tokens: int = 1500, temperature: float = 0.1,
                                max_retries: int = 3, stage1_mode: bool = False) -> Tuple[str, Dict[str, Any], bool, bool, Optional[Dict[str, Any]]]:
         """
         Make a prediction with validation and retry logic.
-        
-        Args:
-            context: Game context dictionary
-            model_id: Model identifier for the platform
-            max_tokens: Maximum tokens to generate
-            temperature: Temperature for generation
-            max_retries: Maximum number of retries on validation failure
-            stage1_mode: If True, validates for Stage 1 (next_plays array) instead of Stage 2 (next_play object)
-            
-        Returns:
-            tuple: (response_content, usage_stats, is_game_ended, needs_rollback, termination_info)
-                - response_content: The validated response text
-                - usage_stats: Token usage statistics  
-                - is_game_ended: True if the game has ended naturally
-                - needs_rollback: True if timestamp rollback is required
-                - termination_info: Detailed termination info dict if game ended via validation, None otherwise
-            
-        Raises:
-            ValueError: If validation fails after all retries
         """
+        context_json: Optional[str] = None
+        if isinstance(context, str):
+            context_json = context
+        else:
+            context_json = json.dumps(context, separators=(',', ':'))
+        validation_context = context if isinstance(context, dict) else json.loads(context_json)
+        
         validation_attempts = []
         current_max_tokens = max_tokens
         
         for attempt in range(max_retries + 1):
             try:
-                # Make prediction
                 limiter = getattr(self, "_rate_limiter", None)
                 if limiter is not None:
                     limiter.acquire()
                 try:
-                    response_content, usage_stats = self.predict(context, model_id, current_max_tokens, temperature)
+                    if context_json is not None and hasattr(self, "predict_from_json"):
+                        response_content, usage_stats = self.predict_from_json(context_json, model_id, current_max_tokens, temperature)
+                    else:
+                        response_content, usage_stats = self.predict(validation_context, model_id, current_max_tokens, temperature)
                 finally:
                     if limiter is not None:
                         limiter.release()
@@ -245,9 +236,9 @@ class BasePredictionClient(ABC):
                 
                 # Validate response (different logic for Stage 1 vs Stage 2)
                 if stage1_mode:
-                    validation_result, validation_errors, reason = self._validate_stage1_response(processed_content, context)
+                    validation_result, validation_errors, reason = self._validate_stage1_response(processed_content, validation_context)
                 else:
-                    validation_result, validation_errors, reason = self.validator.validate_response(processed_content, context)
+                    validation_result, validation_errors, reason = self.validator.validate_response(processed_content, validation_context)
                 
                 if validation_result == ValidationResult.VALID:
                     if attempt > 0:
@@ -763,14 +754,10 @@ class OpenAIPredictionClient(BasePredictionClient):
     def predict_from_json(self, context_json: str, model_id: str, 
                          max_tokens: int = 1500, temperature: float = 0.1) -> Tuple[str, Dict[str, Any]]:
         """Make prediction using pre-serialized JSON (optimized)."""
+        messages = [{"role": "user", "content": context_json}]
         response = self.client.chat.completions.create(
             model=model_id,
-            messages=[
-                {
-                    "role": "user",
-                    "content": context_json
-                }
-            ],
+            messages=messages,
             max_tokens=max_tokens,
             temperature=temperature
         )
@@ -829,8 +816,9 @@ class TogetherPredictionClient(BasePredictionClient):
     def predict_from_json(self, context_json: str, model_id: str, 
                          max_tokens: int = 1500, temperature: float = 0.1) -> Tuple[str, Dict[str, Any]]:
         """Make prediction using pre-serialized JSON (optimized)."""
+        # Include instruction in user/system messages alongside context
         return self._predict_with_messages(context_json, model_id, max_tokens, temperature)
-
+    
     def _predict_with_messages(self, context_json: str, model_id: str,
                                max_tokens: int, temperature: float) -> Tuple[str, Dict[str, Any]]:
         """Call Together chat.completions with optional Stage-1-only system prompt."""
@@ -995,12 +983,7 @@ class GeminiPredictionClient(BasePredictionClient):
             )
             
             # Prepare contents for the model
-            contents = [
-                types.Content(
-                    role="user",
-                    parts=[types.Part(text=context_json)]
-                )
-            ]
+            contents = [types.Content(role="user", parts=[types.Part(text=context_json)])]
             
             # Configure generation with thinking disabled
             generate_content_config = types.GenerateContentConfig(

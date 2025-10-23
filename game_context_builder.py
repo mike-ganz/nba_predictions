@@ -11,6 +11,7 @@ import json
 import random
 from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
+import copy
 
 # Import your existing data loading system
 try:
@@ -40,6 +41,7 @@ class GameContextBuilder:
         self.season_year = season_year
         self.play_by_play_data = None
         self.team_stats_cache = {}
+        self._context_cache: Dict[Tuple[str, bool], Dict[str, Any]] = {}
         
         if DATA_SYSTEM_AVAILABLE:
             self._load_play_by_play_data()
@@ -79,10 +81,18 @@ class GameContextBuilder:
         Returns:
             Dict in compact format with 'A', 'H', 'as', 'hs', 'ap', 'hp', 'L', 'p' fields
         """
+        cache_key = (game_id, for_first_n_plays)
+        if cache_key in self._context_cache:
+            cached_context = self._context_cache[cache_key]
+            if isinstance(cached_context, dict):
+                return copy.deepcopy(cached_context)
+            return cached_context
         # Prefer compact context using optimized stats if available
         if _OPT_STATS_AVAILABLE and self.play_by_play_data is not None:
             try:
-                return self._build_compact_with_optimized_stats(game_id, for_first_n_plays)
+                compact_context = self._build_compact_with_optimized_stats(game_id, for_first_n_plays)
+                self._context_cache[cache_key] = copy.deepcopy(compact_context)
+                return copy.deepcopy(compact_context)
             except Exception as _e:
                 print(f"⚠️ Optimized compact build failed, falling back to verbose→compact: {_e}")
         
@@ -95,11 +105,13 @@ class GameContextBuilder:
         try:
             from generate_training_data import convert_verbose_to_compact
             compact_context = convert_verbose_to_compact(verbose_context)
-            return compact_context
+            self._context_cache[cache_key] = copy.deepcopy(compact_context)
+            return copy.deepcopy(compact_context)
         except Exception as e:
             print(f"⚠️ Warning: Failed to convert to compact format: {e}")
             print("Falling back to verbose format")
-            return verbose_context
+            self._context_cache[cache_key] = copy.deepcopy(verbose_context)
+            return copy.deepcopy(verbose_context)
     
     def _build_from_data(self, game_id: str, start_quarter: int, 
                         start_time: str, recent_plays_count: int, for_first_n_plays: bool = False) -> Dict[str, Any]:
