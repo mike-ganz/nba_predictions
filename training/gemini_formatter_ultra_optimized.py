@@ -410,9 +410,20 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
             if all(key in next_row for key in ['type', 'event_type']):
                 event_code, mapped_points = map_structured_to_event_code(next_row)
             else:
+                description = next_row.get('description', '')
+                shot_details = {'team': team_name, 'points': next_row.get('points')}
+                # Compute score delta from context's last play when available
+                score_delta = 0
+                try:
+                    plays = context_json.get('p') or []
+                    if isinstance(plays, list) and len(plays) > 0 and isinstance(plays[-1], list) and len(plays[-1]) >= 3:
+                        prev_score = plays[-1][2]
+                        if isinstance(prev_score, list) and len(prev_score) == 2:
+                            score_delta = max(0, max(away_score - int(prev_score[0]), home_score - int(prev_score[1])))
+                except Exception:
+                    score_delta = 0
                 event_code, mapped_points = map_description_to_event_code(
-                    next_row.get('description', ''), next_row.get('player', ''),
-                    away_abbrev, home_abbrev
+                    description, shot_details, score_delta
                 )
             
             # Determine lineup id using resolve_lineup_from_row if possible
@@ -436,7 +447,14 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
             # Create standardized 9-element compact play tuple
             margin = int(current_score[0]) - int(current_score[1])
             actor_fouls = 0
+            # Infer shot zone for shooting events
             shot_zone = None
+            try:
+                if event_code in ('made2','miss2','made3','miss3'):
+                    from generate_training_data import determine_shot_zone
+                    shot_zone = determine_shot_zone(next_row)
+            except Exception:
+                shot_zone = None
             play_tuple = [
                 int(quarter),
                 int(time_seconds),
@@ -449,8 +467,8 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
                 int(lineup_id)
             ]
             
-            # Return raw tuple for maximum efficiency
-            return json.dumps(play_tuple, separators=(',', ':'))
+            # Wrap under {"y": ...} to align with compact convention
+            return json.dumps({"y": play_tuple}, separators=(',', ':'))
             
         except Exception as e:
             return None
@@ -612,8 +630,8 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
             if len(first_plays) == 0:
                 return None
             
-            # Return raw array for maximum efficiency
-            assistant_response = first_plays
+            # Wrap under {"y": [...]} to match compact convention
+            assistant_response = {"y": first_plays}
             
             # Create Gemini training example
             return {
@@ -701,15 +719,33 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
                 # Use description-based mapping
                 description = row.get('description', '')
                 shot_details = {'team': team_name, 'points': row.get('points')}
+                # Compute score delta for mapping parity
+                try:
+                    idx_in_raw = raw_game_df.index.get_loc(row.name)
+                    if idx_in_raw > 0:
+                        prev = raw_game_df.iloc[idx_in_raw - 1]
+                        score_delta = max(0, max(int(away_score) - int(prev.get('away_score', 0) or 0),
+                                                  int(home_score) - int(prev.get('home_score', 0) or 0)))
+                    else:
+                        score_delta = 0
+                except Exception:
+                    score_delta = 0
                 event_code, mapped_points = map_description_to_event_code(
-                    description, shot_details, away_team_name, home_team_name
+                    description, shot_details, score_delta
                 )
             
             # Build compact play tuple
             points = int(mapped_points) if mapped_points is not None else 0
             margin = int(score_array[0]) - int(score_array[1])
             actor_fouls = 0
+            # Infer shot zone for shooting events
             shot_zone = None
+            try:
+                if event_code in ('made2','miss2','made3','miss3'):
+                    from generate_training_data import determine_shot_zone
+                    shot_zone = determine_shot_zone(row)
+            except Exception:
+                shot_zone = None
             play_tuple = [
                 int(quarter),
                 int(time_seconds),

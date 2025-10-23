@@ -95,6 +95,11 @@ class Counts:
     actor_team_events: int = 0  # count of actor index == -1
     shot_events: int = 0
     shot_zone_missing: int = 0
+    # breakdowns
+    shot_events_input: int = 0
+    shot_zone_missing_input: int = 0
+    shot_events_output: int = 0
+    shot_zone_missing_output: int = 0
     details: List[str] = field(default_factory=list)
     # thresholds evaluation
     threshold_failures: List[str] = field(default_factory=list)
@@ -232,9 +237,11 @@ def validate_compact_input(doc: Dict[str, Any], counts: Counts, line_no: int) ->
                     counts.details.append(f"L{line_no}: p[{i}].event_code '{ev}' invalid")
                 if ev in ('made2','miss2','made3','miss3'):
                     counts.shot_events += 1
+                    counts.shot_events_input += 1
                     # shot_zone should be one of rim/mid/c3/nc3
                     if shot_zone not in ('rim','mid','c3','nc3'):
                         counts.shot_zone_missing += 1
+                        counts.shot_zone_missing_input += 1
                 else:
                     if shot_zone is not None:
                         counts.warnings += 1
@@ -318,8 +325,10 @@ def validate_output(model: Any, counts: Counts, line_no: int) -> None:
             counts.details.append(f"L{line_no}: output.event_code '{ev}' invalid")
         if ev in ('made2','miss2','made3','miss3'):
             counts.shot_events += 1
+            counts.shot_events_output += 1
             if shot_zone not in ('rim','mid','c3','nc3'):
                 counts.shot_zone_missing += 1
+                counts.shot_zone_missing_output += 1
         else:
             if shot_zone is not None:
                 counts.warnings += 1
@@ -403,7 +412,13 @@ def print_summary(path_list: List[str], total: Counts) -> None:
     print(f"Warnings: {total.warnings}")
     if total.shot_events > 0:
         pct = 100.0 * (total.shot_zone_missing / max(1, total.shot_events))
-        print(f"Shot events: {total.shot_events} | Shot-zone missing: {total.shot_zone_missing} ({pct:.1f}%)")
+        print(f"Shot events (all): {total.shot_events} | Missing: {total.shot_zone_missing} ({pct:.1f}%)")
+        if total.shot_events_input > 0:
+            pct_in = 100.0 * (total.shot_zone_missing_input / max(1, total.shot_events_input))
+            print(f"  - Input shots: {total.shot_events_input} | Missing: {total.shot_zone_missing_input} ({pct_in:.1f}%)")
+        if total.shot_events_output > 0:
+            pct_out = 100.0 * (total.shot_zone_missing_output / max(1, total.shot_events_output))
+            print(f"  - Output shots: {total.shot_events_output} | Missing: {total.shot_zone_missing_output} ({pct_out:.1f}%)")
     if total.ok > 0:
         print(f"Actor team-events (-1 index) rate: {100.0 * total.actor_team_events / total.ok:.1f}%")
     if total.threshold_failures:

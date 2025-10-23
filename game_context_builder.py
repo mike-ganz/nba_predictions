@@ -481,6 +481,56 @@ class GameContextBuilder:
             return players
         away_players = _build_players(away_roster)
         home_players = _build_players(home_roster)
+        # Build lineup lookup using same logic as training pipeline
+        # Create name → index mappings (after MPG-sort)
+        away_name_to_idx = {player[0]: idx for idx, player in enumerate(away_players)}
+        home_name_to_idx = {player[0]: idx for idx, player in enumerate(home_players)}
+        lineup_cache: Dict[Tuple[Tuple[int, ...], Tuple[int, ...]], int] = {}
+        lineup_lookup: List[Dict[str, List[int]]] = []
+
+        # Iterate through game rows and collect a1..a5 / h1..h5 as players_on_court
+        # Then map to roster indices to form lineup keys consistent with training
+        def _extract_lineup_indices(row) -> Tuple[Tuple[int, ...], Tuple[int, ...]]:
+            away_indices: List[int] = []
+            home_indices: List[int] = []
+            # Away team lineup (a1..a5)
+            for k in range(1, 6):
+                col = f'a{k}'
+                if col in df.columns:
+                    val = row.get(col)
+                    if pd.notna(val):
+                        name = str(val)
+                        away_indices.append(away_name_to_idx.get(name, 0))
+            # Home team lineup (h1..h5)
+            for k in range(1, 6):
+                col = f'h{k}'
+                if col in df.columns:
+                    val = row.get(col)
+                    if pd.notna(val):
+                        name = str(val)
+                        home_indices.append(home_name_to_idx.get(name, 0))
+            # Pad to 5 if needed
+            while len(away_indices) < 5:
+                away_indices.append(0)
+            while len(home_indices) < 5:
+                home_indices.append(0)
+            return (tuple(away_indices[:5]), tuple(home_indices[:5]))
+
+        # Build unique lineup entries in chronological order
+        for _, row in df.iterrows():
+            try:
+                lineup_key = _extract_lineup_indices(row)
+                if lineup_key not in lineup_cache:
+                    lineup_id = len(lineup_lookup)
+                    lineup_cache[lineup_key] = lineup_id
+                    lineup_lookup.append({
+                        "A": list(lineup_key[0]),
+                        "H": list(lineup_key[1])
+                    })
+            except Exception:
+                # Skip rows with missing/invalid lineup data
+                continue
+
         # Build compact context
         compact = {
             "A": away_abbrev,
@@ -491,14 +541,16 @@ class GameContextBuilder:
             "hp": home_players,
             "ap_count": len(away_players),
             "hp_count": len(home_players),
-            "L": [],
-            "pos": "N",
-            "tb": [0,0],
-            "sd": 0
+            "L": lineup_lookup
         }
-        # For Stage 1 (first_N_plays), we omit plays; otherwise, add empty p for compact
+
+        # For Stage 1 (first_N_plays), we omit plays and auxiliary fields to match training
         if not for_first_n_plays:
             compact["p"] = []
+            compact["pos"] = "N"
+            compact["tb"] = [0, 0]
+            compact["sd"] = 0
+
         return compact
 
 
