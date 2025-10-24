@@ -1082,8 +1082,7 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                     compact_record["hp_count"] = len(home_players_template)  # Roster size metadata
                     
                     # Process recent plays into compact format efficiently
-                    lineup_cache = {}
-                    lineup_lookup = []
+                    # DIRECT LINEUP PREDICTION: No lookup tables, embed player indices directly
                     plays_array = []
                     prev_score = [0, 0]
                     
@@ -1094,18 +1093,15 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                         current_score = parse_score_string(play['score'])
                         score_delta = max(0, max(current_score[0] - prev_score[0], current_score[1] - prev_score[1]))
                         
-                        # Lineup processing
+                        # Extract lineup player indices directly (no lookup table needed)
                         lineup_key = create_lineup_key(
                             play.get('players_on_court', []), away_abbrev, home_abbrev,
                             away_name_to_idx, home_name_to_idx
                         )
                         
-                        if lineup_key not in lineup_cache:
-                            lineup_id = len(lineup_lookup)
-                            lineup_cache[lineup_key] = lineup_id
-                            lineup_lookup.append({"A": list(lineup_key[0]), "H": list(lineup_key[1])})
-                        else:
-                            lineup_id = lineup_cache[lineup_key]
+                        # Get direct player indices (5 per team)
+                        away_lineup_players = list(lineup_key[0])  # [a1, a2, a3, a4, a5]
+                        home_lineup_players = list(lineup_key[1])  # [h1, h2, h3, h4, h5]
                         
                         # Calculate score margin (away - home)
                         margin = current_score[0] - current_score[1]
@@ -1157,102 +1153,18 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                             from generate_training_data import determine_shot_zone
                             shot_zone = determine_shot_zone(play)
                         
-                        # Build play tuple(s) (9-value format: [quarter, time, score, margin, actor, actor_fouls, event, shot_zone, lineup_id])
+                        # Build play tuple(s) (10-value format with nested lineup arrays)
+                        # Format: [quarter, time, score, margin, actor, actor_fouls, event, shot_zone, 
+                        #          [a1, a2, a3, a4, a5], [h1, h2, h3, h4, h5]]
                         if event_code == "o_foul":
                             # Emit offensive foul and paired turnover at same timestamp
-                            plays_array.append([quarter, time_seconds, current_score, margin, actor, actor_fouls, "o_foul", None, lineup_id])
-                            plays_array.append([quarter, time_seconds, current_score, margin, actor, actor_fouls, "tov", None, lineup_id])
+                            plays_array.append([quarter, time_seconds, current_score, margin, actor, actor_fouls, "o_foul", None, away_lineup_players, home_lineup_players])
+                            plays_array.append([quarter, time_seconds, current_score, margin, actor, actor_fouls, "tov", None, away_lineup_players, home_lineup_players])
                         else:
-                            plays_array.append([quarter, time_seconds, current_score, margin, actor, actor_fouls, event_code, shot_zone, lineup_id])
+                            plays_array.append([quarter, time_seconds, current_score, margin, actor, actor_fouls, event_code, shot_zone, away_lineup_players, home_lineup_players])
                         prev_score = current_score
                     
-                    # Complete the compact record
-                    compact_record["L"] = lineup_lookup
-                    
-                    # CRITICAL FIX: Augment L with all prior lineups seen up to this play
-                    # This matches prediction pipeline where L contains ALL lineups seen in game so far
-                    if generation_mode != "first_N_plays":
-                        # Build comprehensive prior lineup lookup from ALL plays up to current play
-                        prior_lineup_cache = {}
-                        prior_lineup_lookup = []
-                        
-                        # Iterate through all plays up to current play (local_i) to capture prior lineups
-                        for prior_j in range(0, local_i + 1):
-                            if prior_j >= len(game_df_reset):
-                                break
-                            
-                            try:
-                                prior_play = game_df_reset.iloc[prior_j]
-                                
-                                # Extract lineup from play (a1-a5, h1-h5)
-                                away_lineup_indices = []
-                                home_lineup_indices = []
-                                
-                                for k in range(1, 6):
-                                    # Away team
-                                    col_a = f'a{k}'
-                                    if col_a in game_df_reset.columns:
-                                        player_name = prior_play.get(col_a)
-                                        if pd.notna(player_name):
-                                            player_name = str(player_name)
-                                            idx = away_name_to_idx.get(player_name, 0)
-                                            away_lineup_indices.append(idx)
-                                    
-                                    # Home team
-                                    col_h = f'h{k}'
-                                    if col_h in game_df_reset.columns:
-                                        player_name = prior_play.get(col_h)
-                                        if pd.notna(player_name):
-                                            player_name = str(player_name)
-                                            idx = home_name_to_idx.get(player_name, 0)
-                                            home_lineup_indices.append(idx)
-                                
-                                # Pad to 5 if needed
-                                while len(away_lineup_indices) < 5:
-                                    away_lineup_indices.append(0)
-                                while len(home_lineup_indices) < 5:
-                                    home_lineup_indices.append(0)
-                                
-                                # Create lineup key
-                                prior_lineup_key = (tuple(away_lineup_indices[:5]), tuple(home_lineup_indices[:5]))
-                                
-                                # Add to lookup if new
-                                if prior_lineup_key not in prior_lineup_cache:
-                                    prior_lineup_id = len(prior_lineup_lookup)
-                                    prior_lineup_cache[prior_lineup_key] = prior_lineup_id
-                                    prior_lineup_lookup.append({
-                                        "A": list(prior_lineup_key[0]),
-                                        "H": list(prior_lineup_key[1])
-                                    })
-                            
-                            except Exception:
-                                # Skip plays with invalid lineup data
-                                continue
-                        
-                        # MERGE: Combine prior_lineup_lookup with recent_plays lineup_lookup
-                        # This ensures L contains ALL lineups seen so far, not just from recent plays
-                        merged_lineup_cache = {}
-                        merged_lineup_lookup = []
-                        
-                        # Add all prior lineups first
-                        for lineup_dict in prior_lineup_lookup:
-                            lineup_key = (tuple(lineup_dict["A"]), tuple(lineup_dict["H"]))
-                            if lineup_key not in merged_lineup_cache:
-                                merged_lineup_id = len(merged_lineup_lookup)
-                                merged_lineup_cache[lineup_key] = merged_lineup_id
-                                merged_lineup_lookup.append(lineup_dict)
-                        
-                        # Add any lineups from recent_plays that weren't in prior (should be rare)
-                        for lineup_dict in lineup_lookup:
-                            lineup_key = (tuple(lineup_dict["A"]), tuple(lineup_dict["H"]))
-                            if lineup_key not in merged_lineup_cache:
-                                merged_lineup_id = len(merged_lineup_lookup)
-                                merged_lineup_cache[lineup_key] = merged_lineup_id
-                                merged_lineup_lookup.append(lineup_dict)
-                        
-                        # Replace lineup_lookup with merged version
-                        lineup_lookup = merged_lineup_lookup
-                        compact_record["L"] = lineup_lookup
+                    # NO LINEUP LOOKUP TABLES - lineups embedded directly in play arrays
                     
                     # For first_N_plays mode, exclude the "p" field to create clean contexts
                     # For regular mode, include recent plays
@@ -1267,14 +1179,14 @@ def create_llm_training_data_ULTRA_FAST(df, n_total=5, filter_nan=True,
                             compact_record["sd"] = int(last_score[0]) - int(last_score[1])
                         except Exception:
                             compact_record["sd"] = 0
-                        # pos: infer from plays (9-value format)
+                        # pos: infer from plays (10-value format with nested lineups)
                         def _infer_pos_from_plays(pa: list) -> str:
                             curr = None
                             for tup in pa:
                                 try:
-                                    # 9-value format: [quarter, time, score, margin, actor, actor_fouls, event, shot_zone, lineup_id]
+                                    # 10-value format: [quarter, time, score, margin, actor, actor_fouls, event, shot_zone, [away_lineup], [home_lineup]]
                                     actor_side = tup[4][0] if isinstance(tup[4], list) and len(tup[4]) > 0 else None
-                                    ev = str(tup[6])  # Event is at index 6 now
+                                    ev = str(tup[6])  # Event is at index 6
                                     # Scoring made shots and made FT -> change possession
                                     if ev in ('made2', 'made3', 'mft'):  # Standardized event codes
                                         curr = 'H' if actor_side == 'A' else ('A' if actor_side == 'H' else curr)

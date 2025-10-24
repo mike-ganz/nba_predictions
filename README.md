@@ -37,6 +37,14 @@ This project implements two main pipelines:
 - Support for OpenAI, Gemini, and Together.ai fine-tuned models
 - **Together.ai integration**: Fast, cost-effective LoRA fine-tuning with auto-hyperparameters
 
+### Recent Improvements
+
+- **Direct Lineup Prediction**: Model now predicts lineups as arrays of player indices, enabling prediction of ANY lineup combination (not constrained to previously seen lineups)
+- **Optimized Context Size**: Removed lineup lookup tables, reducing context size by ~36% while increasing model flexibility
+- **Train-Test Alignment**: Comprehensive alignment of training and prediction pipelines for consistent team/player statistics and roster handling
+- **Enhanced Team Statistics**: Full team names and fallback season parameters ensure accurate historical stats
+- **13-Player Rosters**: Standardized roster size matching NBA active roster regulations
+
 ## 🏗️ Architecture
 
 ```
@@ -168,8 +176,9 @@ For Each Play:
   "hs": [109.0, 115.9, 97.7, 0.33, 0.28, 0.27, 0.71, 0.60, 0.14, 2],
   "ap": [["De'Andre Hunter", 31, 0.18, 22.5, 15.2, 4.2, 1.8, 0.4, 0.35, 0.635, 0.06, 0.378, 0.22, 0.362, 0.37, 0.418, 0.52, 0.48, 0.812, 0], ...],
   "hp": [["Ausar Thompson", 32, 0.19, 18.3, 13.8, 3.5, 2.1, 0.8, 0.40, 0.622, 0.04, 0.333, 0.18, 0.288, 0.38, 0.395, 0.55, 0.50, 0.672, 1], ...],
-  "L": [{"A": [0,1,2,3,4], "H": [0,1,2,3,4]}],
-  "p": [[1, 375, [18,11], 7, ["A",0], 1, "made2", "mid", 0], ...],
+  "ap_count": 13,
+  "hp_count": 12,
+  "p": [[1, 375, [18,11], 7, ["A",0], 1, "made2", "mid", [0,1,2,3,4], [0,1,2,3,4]], ...],
   "tb": [2, 1],
   "sd": 7,
   "pos": "H"
@@ -179,20 +188,23 @@ For Each Play:
 **Fields:**
 - `A`, `H`: Team abbreviations (away/home)
 - `as`, `hs`: Team stats arrays [OEFF, DEFF, PACE, 3PAr, FTr, ORr, DRr, ASTr, TOr, REST_DAYS]
-- `ap`, `hp`: Player arrays [name, MPG, usage, pts/poss, fga/poss, ast/poss, stl/poss, blk/poss, rim%, rim_fg%, c3%, c3_fg%, nc3%, nc3_fg%, mid%, mid_fg%, a2%, a3%, ft%, fouls]
+- `ap`, `hp`: Player arrays (up to 13 players per team) - [name, MPG, usage, pts/poss, fga/poss, ast/poss, stl/poss, blk/poss, rim%, rim_fg%, c3%, c3_fg%, nc3%, nc3_fg%, mid%, mid_fg%, a2%, a3%, ft%, fouls]
   - High-level production stats first (usage, scoring, playmaking), then detailed shooting breakdown
   - Per-possession rates for individual efficiency (pts/poss ~1.0-1.2 for elite scorers)
   - Shot zones paired: each zone's frequency followed by its accuracy
   - **All percentages normalized to 0.0-1.0 scale** (usage is 0.18 instead of 18%, for consistency with all other percentage fields)
   - **fga/poss added** for shot volume context (~0.15-0.30 for most players)
-- `L`: Lineup lookup (maps lineup IDs to player indices). For remaining_plays input, `L` contains only lineups observed up to the context play (no future lineups).
-- `p`: Plays array (9-value tuples):
-  - `[quarter, time_seconds, [away, home], margin, actor, actor_fouls, event_code, shot_zone, lineup_id]`
-  - `actor` = `["A"|"H", playerIndex]` with `playerIndex >= 0` when actor is known; `-1` if unknown.
-  - `actor_fouls` = live, cumulative personal fouls for the acting player at that moment (counts `p_foul`, `s_foul`, `o_foul` where `event_type == 'foul'`).
-  - `event_code` = one of: made2, made3, miss2, miss3, mft, xft, d_reb, o_reb, tov, s_foul, p_foul, o_foul, sub, timeout, period, jumpball, viol, tech, unknown.
-  - `shot_zone` = one of: rim, mid, nc3, c3, or `null` for non-shots/unknown.
-  - `lineup_id` = index into `L` (0-based).
+  - **Roster limited to 13 players** (standard NBA active roster size)
+- `ap_count`, `hp_count`: Roster size metadata (number of players per team)
+- `p`: Plays array (10-value tuples with direct lineup embedding):
+  - `[quarter, time_seconds, [away, home], margin, actor, actor_fouls, event_code, shot_zone, away_lineup, home_lineup]`
+  - `actor` = `["A"|"H", playerIndex]` with `playerIndex >= 0` when actor is known; `-1` if unknown
+  - `actor_fouls` = live, cumulative personal fouls for the acting player at that moment (counts `p_foul`, `s_foul`, `o_foul` where `event_type == 'foul'`)
+  - `event_code` = one of: made2, made3, miss2, miss3, mft, xft, d_reb, o_reb, tov, s_foul, p_foul, o_foul, sub, timeout, period, jumpball, viol, tech, unknown
+  - `shot_zone` = one of: rim, mid, nc3, c3, or `null` for non-shots/unknown
+  - `away_lineup` = `[a1, a2, a3, a4, a5]` - array of 5 player indices from `ap` (0-12)
+  - `home_lineup` = `[h1, h2, h3, h4, h5]` - array of 5 player indices from `hp` (0-12)
+  - **Direct lineup prediction**: Model can predict ANY combination of 5 players from roster, not constrained to previously seen lineups
 - `tb`: Team bonus (quarter fouls: [away, home])
 - `sd`: Score difference (away - home)
 - `pos`: Possession ("A", "H", or "N")
@@ -238,42 +250,45 @@ For Each Play:
 - **Purpose**: Next-play prediction training
 - **Volume**: High (~400 examples per game)
 - **Usage**: Standard supervised learning for play-by-play prediction
-- **Output**: Each training example predicts the next play given context.
-- **Lineup handling (no leakage)**:
-  - Input `L`: only lineups observed up to the context (no future).
-  - Label `y.lineup_id`:
-    - If next lineup exists in `L`: emit its index (0..len(L)-1).
-    - If next lineup is new: emit `lineup_id == len(L)` as an explicit “new lineup” signal (we do not mutate `L` in the input).
-  - Inference: if `y.lineup_id < len(L)` use that lineup; if `y.lineup_id == len(L)`, append the new lineup to `L` downstream and proceed.
+- **Output**: Each training example predicts the next play given context
+- **Lineup handling**: 
+  - Model predicts lineups directly as arrays of player indices
+  - Can predict ANY combination of 5 players from the 13-player roster
+  - Not constrained to previously seen lineups (enables novel rotations)
+  - Recent plays window: typically 15 plays for context
 
 #### 2. `first_N_plays` Mode (Sequence)
 - **Purpose**: Game opening sequence generation
 - **Volume**: Low (1 example per game)
 - **Usage**: Teaching model to generate realistic game openings
-- **Output**: Clean context → first N plays of the game
-- **Starting lineup seeding**: `L[0]` is seeded from prior game starters per team (replace DNPs with highest-MPG non-starters; for season opener, use last season’s final starting lineup).
-- **Lineup progression**:
-  - When raw on-court data (a1–a5/h1–h5) is available (Gemini path), lineup changes are tracked via `resolve_lineup_from_row` and `lineup_id` advances across the first-N sequence.
-  - Input contexts remain clean (no `p`).
+- **Output**: Clean context (no recent plays) → first N plays of the game
+- **Lineup handling**:
+  - Model learns to predict starting lineups and early rotations
+  - Input contexts remain clean (no `p` field)
+  - First play predictions include starting lineups
 
-### Event Codes
-### Actor Resolution
+### Technical Details
+
+#### Actor Resolution
 - We resolve actor indices using roster indices from `ap`/`hp` when the player name is present. We fall back to `-1` only when the player is truly unavailable/unmappable.
 
-### Actor Fouls (Live)
+#### Actor Fouls (Live)
 - `actor_fouls` is a live, in-game cumulative count at the moment of the play (counts personal/shooting/offensive fouls where `event_type == 'foul'`; excludes technicals and avoids double-counting o_foul turnovers).
 
-### Shot Zone
-- For shots (made2, miss2, made3, miss3) we attempt to classify as `rim`, `mid`, `nc3` or `c3`; otherwise `null`.
+#### Shot Zone Classification
+- For shots (made2, miss2, made3, miss3) we classify into zones: `rim`, `mid`, `nc3`, or `c3`; otherwise `null`.
 
-### New Lineup Signal in Labels
-- To avoid leaking future information into inputs, labels signal lineup changes without mutating the input `L`:
-  - If the next lineup is not in `L`, we set `y.lineup_id = len(L)`.
-  - Consumers should treat `lineup_id == len(L)` as “append new lineup” at inference time.
+#### Lineup Prediction
+- Model predicts lineups as direct arrays of player indices: `[a1, a2, a3, a4, a5]` and `[h1, h2, h3, h4, h5]`
+- Each index references a player in the `ap` or `hp` roster arrays (0-12)
+- Model can predict ANY valid combination of 5 players, not just previously seen lineups
+- This enables prediction of novel rotations, injury substitutions, and experimental lineups
 
-### Validation
-- Use `analysis/validate_tuple_distributions.py` to validate tuple lengths and distributions for all fields.
-- The validator treats `y.lineup_id == len(L)` as a valid “new lineup” signal and does not count it as invalid.
+#### Validation
+- Use `analysis/validate_tuple_distributions.py` to validate tuple lengths and distributions for all fields
+- Play tuples should be 10 values with nested 5-element lineup arrays at indices 8 and 9
+
+### Event Codes
 
 The system uses standardized event codes for play classification:
 
