@@ -77,7 +77,7 @@ MAX_ITERATIONS_THRESHOLD = st.sidebar.number_input(
     "Max Iterations Threshold",
     min_value=100,
     max_value=1000,
-    value=550,
+    value=650,
     step=10,
     help="Maximum iterations to consider realistic (filters out runaway simulations)"
 )
@@ -86,7 +86,7 @@ MIN_ITERATIONS_THRESHOLD = st.sidebar.number_input(
     "Min Iterations Threshold",
     min_value=100,
     max_value=1000,
-    value=325,
+    value=300,
     step=10,
     help="Minimum iterations to consider complete (filters out stuck/incomplete games)"
 )
@@ -115,7 +115,7 @@ with col1:
         "Spread Confidence %",
         min_value=50,
         max_value=95,
-        value=60,
+        value=51,
         step=5,
         help="% of simulations must support the spread bet"
     ) / 100.0
@@ -125,7 +125,7 @@ with col2:
         "ML Confidence %",
         min_value=50,
         max_value=95,
-        value=60,
+        value=51,
         step=5,
         help="% of simulations must support the ML bet (used for 'Best Bet' display)"
     ) / 100.0
@@ -144,8 +144,8 @@ with col3:
     ML_EDGE_THRESHOLD = st.number_input(
         "ML Edge %",
         min_value=0,
-        max_value=30,
-        value=10,
+        max_value=50,
+        value=0,
         step=1,
         help="Minimum edge over implied odds for ML bets"
     ) / 100.0
@@ -154,7 +154,7 @@ with col4:
     SPREAD_EDGE_THRESHOLD = st.number_input(
         "Spread Edge (pts)",
         min_value=0.0,
-        max_value=10.0,
+        max_value=25.0,
         value=0.0,
         step=0.5,
         help="Buffer on actual spread (e.g., 3 = need 3 extra points of coverage)"
@@ -176,8 +176,8 @@ MAX_SPREAD_LIMIT = st.sidebar.number_input(
 MAX_FAVORITE_ML_ODDS = st.sidebar.number_input(
     "Max Favorite ML Odds",
     min_value=0,
-    max_value=1000,
-    value=600,
+    # max_value=1000,
+    value=1500,
     step=10,
     help="Don't bet favorites with odds worse than -N (0 = no limit)"
 )
@@ -185,8 +185,8 @@ MAX_FAVORITE_ML_ODDS = st.sidebar.number_input(
 MAX_UNDERDOG_ML_ODDS = st.sidebar.number_input(
     "Max Underdog ML Odds",
     min_value=0,
-    max_value=1000,
-    value=600,
+    # max_value=1000,
+    value=1500,
     step=10,
     help="Don't bet underdogs with odds worse than +N (0 = no limit)"
 )
@@ -649,8 +649,9 @@ def get_simulation_betting_recommendations(actual_results_df, use_combined_data=
         away_kelly_pct, away_bet_size, away_profit = calculate_kelly_bet_size(away_win_pct, away_ml)
         home_kelly_pct, home_bet_size, home_profit = calculate_kelly_bet_size(home_win_pct, home_ml)
         
-        if (away_implied_prob is not None and 
-            away_win_pct > (away_implied_prob + ML_EDGE_THRESHOLD) and 
+        if (away_implied_prob is not None and
+            away_win_pct >= ML_CONFIDENCE_THRESHOLD and  # new check
+            away_win_pct > (away_implied_prob + ML_EDGE_THRESHOLD) and
             away_kelly_pct >= 0.01 and
             is_moneyline_within_limits(away_ml)):
             ml_recommendation = 'away'
@@ -658,7 +659,8 @@ def get_simulation_betting_recommendations(actual_results_df, use_combined_data=
             ml_kelly_pct = away_kelly_pct
             ml_bet_size = away_bet_size
             ml_potential_profit = away_profit
-        elif (home_implied_prob is not None and 
+        elif (home_implied_prob is not None and
+              home_win_pct >= ML_CONFIDENCE_THRESHOLD and  # new check
               home_win_pct > (home_implied_prob + ML_EDGE_THRESHOLD) and
               home_kelly_pct >= 0.01 and
               is_moneyline_within_limits(home_ml)):

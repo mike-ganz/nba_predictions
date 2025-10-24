@@ -438,31 +438,14 @@ class GameContextBuilder:
             game_date_str = str(game_date)
         # Determine teams
         away_abbrev, home_abbrev = self._determine_away_home_teams(df)
-        
-        # CRITICAL: Convert abbreviations to full team names (training pipeline requirement)
-        # Training pipeline passes full names like "Cleveland Cavaliers", not "CLE"
-        # See generate_training_data_OPTIMIZED.py line 895
-        from generate_training_data import create_team_abbreviation_mapping
-        abbrev_to_full_name = create_team_abbreviation_mapping()
-        away_full_name = abbrev_to_full_name.get(away_abbrev, away_abbrev)
-        home_full_name = abbrev_to_full_name.get(home_abbrev, home_abbrev)
-        
         # Team stats (10-value array) → use full array for compact format
-        # CRITICAL: Must pass fallback_season AND full team names to match training pipeline
-        # See generate_training_data_OPTIMIZED.py lines 895, 903
-        away_stats_ext = _get_team_stats_array(away_full_name, target_date=game_date_str, fallback_season=self.season_year)
-        home_stats_ext = _get_team_stats_array(home_full_name, target_date=game_date_str, fallback_season=self.season_year)
-        def _validate_team_stats(arr, team_name="Unknown"):
+        away_stats_ext = _get_team_stats_array(away_abbrev, target_date=game_date_str)
+        home_stats_ext = _get_team_stats_array(home_abbrev, target_date=game_date_str)
+        def _validate_team_stats(arr):
             """Validate and format team stats array to 10 values."""
             if not arr or len(arr) < 10:
                 # Return default values: [OEFF, DEFF, PACE, 3PAr, FTr, ORr, DRr, ASTr, TOr, REST]
-                print(f"⚠️ WARNING: {team_name} team stats using DEFAULTS (no real stats found!)")
                 return [110.0, 110.0, 100.0, 0.38, 0.22, 0.25, 0.75, 0.65, 0.13, 2]
-            
-            # Check if array looks like defaults (telltale 110.0, 110.0, 100.0 pattern)
-            if len(arr) >= 3 and arr[0] == 110.0 and arr[1] == 110.0 and arr[2] == 100.0:
-                print(f"⚠️ WARNING: {team_name} team stats appear to be DEFAULTS!")
-            
             # Ensure all values are properly formatted
             return [
                 round(float(arr[0]), 2),  # OEFF
@@ -476,48 +459,25 @@ class GameContextBuilder:
                 round(float(arr[8]), 3),  # TOr
                 int(arr[9])               # REST
             ]
-        away_stats = _validate_team_stats(away_stats_ext, away_abbrev)
-        home_stats = _validate_team_stats(home_stats_ext, home_abbrev)
+        away_stats = _validate_team_stats(away_stats_ext)
+        home_stats = _validate_team_stats(home_stats_ext)
         # Roster from lineups columns (a1..a5 / h1..h5) across the game
         def _collect_roster(df_team_cols):
             s = set()
             for c in df_team_cols:
                 if c in df.columns:
                     s.update(df[c].dropna().astype(str).tolist())
-            # cap to 13 (match training pipeline)
-            return list(s)[:13]
+            # cap to 12
+            return list(s)[:12]
         away_roster = _collect_roster(['a1','a2','a3','a4','a5'])
         home_roster = _collect_roster(['h1','h2','h3','h4','h5'])
         # Build player arrays using optimized stats with date cutoff
         def _build_players(team_roster):
-            # CRITICAL: Must match training pipeline's approach
-            # See generate_training_data_OPTIMIZED.py lines 684-696
-            from transform_player_stats_optimized import calculate_player_stats
-            
             players = []
             for name in team_roster:
                 try:
-                    # STEP 1: Calculate base stats to get MPG and usage (like training pipeline)
-                    base_stats = calculate_player_stats(name, game_date_str, self.season_year)
-                    
-                    # STEP 2: Extract MPG and usage with fallbacks
-                    if base_stats:
-                        mpg = base_stats.get('MPG', 25)
-                        usage = base_stats.get('USAGE_RATE', 0.18)
-                    else:
-                        mpg = 25
-                        usage = 0.18
-                    
-                    # STEP 3: Get enhanced array WITH mpg and usage_rate parameters
-                    # This matches training pipeline exactly (lines 691-693)
-                    stats = get_player_stats_array(
-                        name, game_date_str, 
-                        mpg=mpg,              # ← Training pipeline passes this
-                        usage_rate=usage,     # ← Training pipeline passes this
-                        season=self.season_year, 
-                        use_rolling=True
-                    )
-                    
+                    # Get enhanced array (19 elements) matching training data format
+                    stats = get_player_stats_array(name, game_date_str, season=self.season_year, use_rolling=True)
                     if not stats:
                         continue
                     # stats format: [name, mpg, usg, pts/100, fga/100, ast/100, stl/100, blk/100, rim%, rim_fg%, c3%, c3_fg%, nc3%, nc3_fg%, mid%, mid_fg%, a2%, a3%, ft%]
@@ -529,7 +489,6 @@ class GameContextBuilder:
                     # [name, mpg, usg, pts/poss, fga/poss, ast/poss, stl/poss, blk/poss, rim%, rim_fg%, c3%, c3_fg%, nc3%, nc3_fg%, mid%, mid_fg%, a2%, a3%, ft%, fouls]
                     players.append([name, 25, 0.18, 1.0, 0.15, 0.05, 0.015, 0.005, 0.3, 0.62, 0.05, 0.38, 0.2, 0.36, 0.3, 0.42, 0.5, 0.5, 0.75, 0])
             # Sort by MPG desc (index 1 in the 20-field format)
-            # Training pipeline does this at lines 878-879
             players.sort(key=lambda p: p[1], reverse=True)
             return players
         away_players = _build_players(away_roster)
