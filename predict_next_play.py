@@ -631,10 +631,15 @@ def predict_rolling_sequence(
 
                     # Trim trailing 00:00 plays to move past end-of-period noise
                     if is_compact:
-                        # Remove tail plays at t=0 in same quarter
+                        # Remove tail plays at t=0 or near-zero (<=2s) in same quarter that are administrative
                         while getattr(ctx_mgr, "p", None) and isinstance(ctx_mgr.p[-1], list):
                             last = ctx_mgr.p[-1]
-                            if len(last) > 1 and last[1] == 0:
+                            t_ok = len(last) > 1 and isinstance(last[1], int) and last[1] <= 2
+                            is_admin = False
+                            if len(last) >= 7:
+                                ev = str(last[6]).lower()
+                                is_admin = ("period" in ev) or (ev in ("timeout", "jumpball", "unknown")) or ev.startswith("sub")
+                            if t_ok and is_admin:
                                 ctx_mgr.p = ctx_mgr.p[:-1]
                             else:
                                 break
@@ -651,10 +656,22 @@ def predict_rolling_sequence(
                             # Use administrative 'period' event at 12:00 for quarter start (no player attribution)
                             ctx_mgr.add_play([int(target_q), 720, score_to_use, _m, ["A", -1], 0, "period", None, 0])
                     else:
-                        # Remove tail plays at 00:00 in same quarter
+                        # Remove tail plays at 00:00 or near-zero (<=2s) in same quarter that are administrative
                         while getattr(ctx_mgr, "recent", None) and isinstance(ctx_mgr.recent[-1], dict):
                             last = ctx_mgr.recent[-1]
-                            if last.get("time_remaining") == "00:00":
+                            # parse time
+                            tm = str(last.get("time_remaining", ""))
+                            try:
+                                parts = tm.split(":")
+                                mm = int(parts[0]) if len(parts) > 0 else 0
+                                ss = int(parts[1]) if len(parts) > 1 else 0
+                                total = max(0, mm * 60 + ss)
+                            except Exception:
+                                total = 0
+                            desc_l = str(last.get("description", "")).lower()
+                            ev_l = str(last.get("event_code", "")).lower()
+                            is_admin = ("period" in desc_l) or (ev_l == "period") or ("sub" in desc_l) or (ev_l.startswith("sub")) or ("timeout" in desc_l) or (ev_l == "timeout") or ("jump" in desc_l) or (ev_l.startswith("jump")) or ("unknown" in desc_l) or (ev_l == "unknown")
+                            if total <= 2 and is_admin:
                                 ctx_mgr.recent = ctx_mgr.recent[:-1]
                             else:
                                 break
@@ -674,10 +691,65 @@ def predict_rolling_sequence(
             # Apply pending play only if no special handling was required
             if pending_play is not None:
                 kind, value = pending_play
-                if kind == "compact":
-                    ctx_mgr.add_play(value)
-                else:
-                    ctx_mgr.add_play(value)
+                # If validator requested a time adjustment (fast_plus mode), apply it to this pending play
+                try:
+                    _val = getattr(client, "validator", None)
+                    adj = getattr(_val, "pending_time_adjustment", None)
+                    if isinstance(adj, dict) and isinstance(adj.get("subtract_seconds"), int):
+                        sub_s = max(0, int(adj["subtract_seconds"]))
+                        if kind == "compact" and isinstance(value, list) and len(value) >= 2:
+                            # value = [q, t_sec, score, margin, actor, fouls, event, zone, lineup]
+                            q = int(value[0]) if isinstance(value[0], int) else value[0]
+                            t = int(value[1]) if isinstance(value[1], int) else 0
+                            new_t = max(0, t - sub_s)
+                            if t > 0 and new_t == 0:
+                                # Crossing to 00:00: inject a period end marker instead
+                                # Keep score and margin as-is to maintain continuity
+                                score = value[2] if len(value) >= 3 else [0, 0]
+                                margin = value[3] if len(value) >= 4 else 0
+                                ctx_mgr.add_play([q, 0, score, margin, ["A", -1], 0, "period", None, 0])
+                            else:
+                                value[1] = new_t
+                                ctx_mgr.add_play(value)
+                        elif kind == "verbose" and isinstance(value, dict):
+                            tm = str(value.get("time_remaining", ""))
+                            # Parse MM:SS
+                            try:
+                                parts = tm.split(":")
+                                mm = int(parts[0]) if len(parts) > 0 else 0
+                                ss = int(parts[1]) if len(parts) > 1 else 0
+                                total = max(0, mm * 60 + ss)
+                            except Exception:
+                                total = 0
+                            new_total = max(0, total - sub_s)
+                            if total > 0 and new_total == 0:
+                                # Crossing to 00:00: inject "period end" play instead of applying the pending play
+                                q = int(value.get("quarter", 1))
+                                score = value.get("score", "")
+                                ctx_mgr.add_play({
+                                    "quarter": q,
+                                    "time_remaining": "00:00",
+                                    "description": "period end",
+                                    "score": score
+                                })
+                            else:
+                                mm2, ss2 = (new_total // 60, new_total % 60)
+                                value["time_remaining"] = f"{mm2:02d}:{ss2:02d}"
+                                ctx_mgr.add_play(value)
+                        # Clear the adjustment after applying once
+                        setattr(_val, "pending_time_adjustment", None)
+                    else:
+                        # No adjustment requested; apply normally
+                        if kind == "compact":
+                            ctx_mgr.add_play(value)
+                        else:
+                            ctx_mgr.add_play(value)
+                except Exception:
+                    # On any error, fall back to normal add
+                    if kind == "compact":
+                        ctx_mgr.add_play(value)
+                    else:
+                        ctx_mgr.add_play(value)
         except Exception as _e:
             results["iterations"].append({"iteration": i + 1, "error": str(_e)})
             continue

@@ -473,7 +473,9 @@ class NBA_Orchestrator:
             
             # Process all iterations in a single loop
             for i, iteration_result in enumerate(iterations):
+                # Handle both verbose format (next_play) and compact format (raw_response with y)
                 if "next_play" in iteration_result:
+                    # Verbose format
                     successful_predictions += 1
                     next_play = iteration_result["next_play"]
                     
@@ -492,6 +494,52 @@ class NBA_Orchestrator:
                     final_score = next_play.get("score")
                     final_quarter = next_play.get("quarter")
                     final_time = next_play.get("time_remaining")
+                
+                elif "raw_response" in iteration_result:
+                    # Compact format - parse the raw_response
+                    try:
+                        raw_resp = iteration_result["raw_response"]
+                        parsed = json.loads(raw_resp) if isinstance(raw_resp, str) else raw_resp
+                        
+                        if isinstance(parsed, dict) and "y" in parsed:
+                            play_data = parsed["y"]
+                            
+                            # Handle both single play tuple and array of play tuples
+                            play_tuple = play_data[0] if isinstance(play_data, list) and len(play_data) > 0 and isinstance(play_data[0], list) else play_data
+                            
+                            if isinstance(play_tuple, list) and len(play_tuple) >= 3:
+                                successful_predictions += 1
+                                
+                                # Extract from compact format: [q, t, [away, home], margin, actor, fouls, event, zone, lineup]
+                                quarter = play_tuple[0]
+                                time_seconds = play_tuple[1]
+                                score_tuple = play_tuple[2] if len(play_tuple) > 2 else [0, 0]
+                                event = play_tuple[6] if len(play_tuple) > 6 else ""
+                                
+                                # Check if it's a scoring play
+                                if isinstance(event, str) and ("made" in event.lower() or "mft" in event.lower()):
+                                    scoring_plays += 1
+                                else:
+                                    non_scoring_plays += 1
+                                
+                                # Update final state
+                                final_quarter = quarter
+                                
+                                # Convert seconds to MM:SS format
+                                minutes = time_seconds // 60
+                                seconds = time_seconds % 60
+                                final_time = f"{minutes:02d}:{seconds:02d}"
+                                
+                                # Format score as "AWAY score - HOME score"
+                                if isinstance(score_tuple, list) and len(score_tuple) >= 2:
+                                    # Get team abbreviations from context if available
+                                    away_abbrev = game_context.get("A", "AWAY")
+                                    home_abbrev = game_context.get("H", "HOME")
+                                    final_score = f"{away_abbrev} {score_tuple[0]} - {home_abbrev} {score_tuple[1]}"
+                    except Exception as e:
+                        # If parsing fails, log but continue
+                        self.logger.debug(f"Failed to parse compact format in iteration {i}: {e}")
+                        pass
             
             # Calculate scoring rate once
             total_plays = scoring_plays + non_scoring_plays

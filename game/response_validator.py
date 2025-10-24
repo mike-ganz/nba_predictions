@@ -78,13 +78,15 @@ class NBAResponseValidator:
         self.last_termination: Optional[ValidationTermination] = None
         
         # Initialize advanced state tracking only for normal/strict modes
-        if validation_mode in ["normal", "strict"]:
+        if validation_mode in ["normal", "strict", "fast_plus"]:
             self._init_advanced_tracking()
         else:
             self._init_minimal_tracking()
         
         # Performance optimization caches
         self._init_performance_caches()
+        # Pending adjustment signal for fast_plus mode
+        self.pending_time_adjustment: Optional[Dict[str, Any]] = None
         
         # NBAResponseValidator initialized
     
@@ -401,6 +403,30 @@ class NBAResponseValidator:
         # Fast mode: Skip expensive validations and only do essential checks
         if self.validation_mode == "fast":
             return self._validate_fast_path(response_text, next_play, context)
+        # Fast+ mode: fast path plus a couple of stronger guards
+        if self.validation_mode == "fast_plus":
+            result, errors, reason = self._validate_fast_path(response_text, next_play, context)
+            if result != ValidationResult.VALID:
+                return result, errors, reason
+            # Apply additional lightweight guards without full advanced pipeline
+            desc = str(next_play.get("description", "")).lower()
+            event = str(next_play.get("event_code", "")).lower()
+            if "sub" in desc or event == "sub" or event.startswith("sub"):
+                self.consecutive_subs = getattr(self, "consecutive_subs", 0) + 1
+                if self.consecutive_subs >= 4:
+                    return ValidationResult.RETRY, self.errors, "Too many consecutive substitutions (fast_plus)"
+            else:
+                self.consecutive_subs = 0
+
+            # Same-time counter already maintained by fast path for time_remaining
+            # On the 5th consecutive same-time play, request a small time adjustment (-5s)
+            if getattr(self, "consecutive_same_time", 0) == 5:
+                self.pending_time_adjustment = {
+                    "subtract_seconds": 5,
+                    "time_remaining": next_play.get("time_remaining", ""),
+                    "quarter": next_play.get("quarter")
+                }
+            return ValidationResult.VALID, self.errors, "Fast+ validation passed"
         
         # Normal/Strict modes: Continue with full validation
         # Step 4: Validate content against context
@@ -2095,6 +2121,24 @@ class NBAResponseValidator:
             if period_detected and quarter and quarter < 4:
                 self._prepare_quarter_transition(quarter + 1)
                 return ValidationResult.QUARTER_TRANSITION, self.errors, f"Period detected - transitioning Q{quarter} → Q{quarter + 1}"
+
+        # 2b. Near-zero period detection: if model says 'period' but time is within 2 seconds of 00:00
+        # Normalize and treat as end-of-period to avoid repeated 'period end' at 00:01
+        try:
+            if quarter and isinstance(time_remaining, str) and ":" in time_remaining:
+                mm, ss = time_remaining.split(":", 1)
+                total_secs = int(mm) * 60 + int(ss)
+                if total_secs <= 2:
+                    current_desc_nz = next_play.get("description", "").lower()
+                    current_event_nz = str(next_play.get("event_code", "")).lower()
+                    if "period" in current_desc_nz or current_event_nz == "period":
+                        if quarter < 4:
+                            self._prepare_quarter_transition(quarter + 1)
+                            return ValidationResult.QUARTER_TRANSITION, self.errors, f"Period near-zero ({time_remaining}) - transitioning Q{quarter} → Q{quarter + 1}"
+                        else:
+                            return ValidationResult.END_GAME, self.errors, "Game ended (near-zero period in Q4)"
+        except Exception:
+            pass
             
             # NEW: Administrative/stall fallback at 00:00 without explicit 'period'
             # Works for both verbose (recent_plays) and compact (p) contexts.
