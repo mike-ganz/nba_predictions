@@ -624,6 +624,13 @@ class Enhanced_NBA_Orchestrator(BaseOrchestrator):
     def run_all_simulations(self) -> Dict[str, Any]:
         """Run simulations with enhanced season handling and multithreading support."""
         
+        # Print temperature configuration for verification
+        import os
+        from dotenv import load_dotenv
+        load_dotenv()
+        temp = os.getenv("PREDICTION_TEMPERATURE", "1")
+        print(f"\n🌡️  Prediction Temperature: {temp}")
+        
         # Check if we have games from multiple seasons
         season_groups = self.validator.auto_detect_seasons(self.config.games)
         

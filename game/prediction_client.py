@@ -270,6 +270,14 @@ class BasePredictionClient(ABC):
                         test_json = json.dumps(ctx, separators=(',', ':'))
                         print(f"✓ Context is valid JSON ({len(test_json)} chars)")
                         
+                        # Raw input payload as sent to the model
+                        print("\n--- RAW REQUEST INPUT (context_json) ---")
+                        try:
+                            print(context_json)
+                        except Exception:
+                            print("<non-printable context_json>")
+                        print("--- END RAW REQUEST INPUT ---\n")
+                        
                     except Exception as e:
                         print(f"⚠️ Error analyzing context: {e}")
                         print(f"Raw context (first 500 chars): {context_json[:500]}")
