@@ -128,14 +128,35 @@ class NBAResponseValidator:
                 if not isinstance(play, list):
                     return {"error": f"Play {play_idx} must be a list"}
                 
-                # Extract actor from play tuple (same logic for 9-element and 7-element formats)
+                # Extract actor from play tuple (supports 10, 9, and 7 element formats)
                 actor = None
-                if len(play) == 9:
-                    actor = play[4]  # actor is at index 4 in 9-element format
+                if len(play) == 10:
+                    actor = play[4]  # actor is at index 4 in 10-element format
+                    # Validate lineup arrays
+                    away_lineup = play[8]
+                    home_lineup = play[9]
+                    if not isinstance(away_lineup, list) or len(away_lineup) != 5:
+                        return {"error": f"Play {play_idx}: away_lineup must be array of 5 player indices, got {type(away_lineup).__name__} with length {len(away_lineup) if isinstance(away_lineup, list) else 'N/A'}"}
+                    if not isinstance(home_lineup, list) or len(home_lineup) != 5:
+                        return {"error": f"Play {play_idx}: home_lineup must be array of 5 player indices, got {type(home_lineup).__name__} with length {len(home_lineup) if isinstance(home_lineup, list) else 'N/A'}"}
+                    
+                    # Validate lineup player indices are within roster bounds
+                    if "ap_count" in context:
+                        max_away_idx = context["ap_count"] - 1
+                        for i, pidx in enumerate(away_lineup):
+                            if not isinstance(pidx, int) or pidx < 0 or pidx > max_away_idx:
+                                return {"error": f"Play {play_idx}: away_lineup[{i}] = {pidx} out of bounds (roster size: {max_away_idx + 1})"}
+                    if "hp_count" in context:
+                        max_home_idx = context["hp_count"] - 1
+                        for i, pidx in enumerate(home_lineup):
+                            if not isinstance(pidx, int) or pidx < 0 or pidx > max_home_idx:
+                                return {"error": f"Play {play_idx}: home_lineup[{i}] = {pidx} out of bounds (roster size: {max_home_idx + 1})"}
+                elif len(play) == 9:
+                    actor = play[4]  # actor is at index 4 in 9-element format (legacy)
                 elif len(play) == 7:
-                    actor = play[3]  # actor is at index 3 in 7-element format
+                    actor = play[3]  # actor is at index 3 in 7-element format (legacy)
                 else:
-                    return {"error": f"Play {play_idx} must be 9 elements (preferred) or 7 (legacy), got {len(play)} elements"}
+                    return {"error": f"Play {play_idx} must be 10 elements (current), 9 (legacy with lineup_id), or 7 (legacy), got {len(play)} elements"}
                 
                 # Validate player index is within roster bounds
                 if isinstance(actor, list) and len(actor) >= 2:
@@ -155,12 +176,12 @@ class NBAResponseValidator:
                             return {"error": f"Player index {player_idx} out of bounds for team {team_code} in play {play_idx} ({play_type}) - roster size: {max_index + 1}"}
             
             # Convert PRIMARY play tuple to verbose format for validation
-            # UPDATED FORMAT: 9 elements [q, t, score, margin, actor, actor_fouls, event, shot_zone, lineup_id]
-            # Backward compatibility: also accept legacy 7-element tuples
+            # CURRENT FORMAT: 10 elements [q, t, score, margin, actor, actor_fouls, event, shot_zone, away_lineup, home_lineup]
+            # Backward compatibility: 9 elements (with lineup_id) or 7 elements (legacy)
             if not isinstance(primary_play, list):
                 return {"error": "Primary play must be a list"}
 
-            if len(primary_play) == 9:
+            if len(primary_play) == 10:
                 quarter = primary_play[0]
                 time_seconds = primary_play[1]
                 score_array = primary_play[2] if len(primary_play[2]) >= 2 else [0, 0]
@@ -169,7 +190,25 @@ class NBAResponseValidator:
                 # actor_fouls = primary_play[5]
                 event_code = primary_play[6]
                 # shot_zone = primary_play[7]
-                lineup_id = primary_play[8]
+                # away_lineup = primary_play[8]  # direct lineup arrays (not needed for verbose preview)
+                # home_lineup = primary_play[9]
+                # Derive points for preview only (0 for non-scoring)
+                points = 0
+                if isinstance(event_code, str) and event_code.startswith('made'):
+                    points = 3 if '3' in event_code else 2
+                elif event_code in ('mft',):
+                    points = 1
+            elif len(primary_play) == 9:
+                # Legacy: 9-element format with lineup_id
+                quarter = primary_play[0]
+                time_seconds = primary_play[1]
+                score_array = primary_play[2] if len(primary_play[2]) >= 2 else [0, 0]
+                # margin = primary_play[3]  # not needed for verbose preview
+                actor = primary_play[4]
+                # actor_fouls = primary_play[5]
+                event_code = primary_play[6]
+                # shot_zone = primary_play[7]
+                # lineup_id = primary_play[8]  # legacy lineup_id (not used)
                 # Derive points for preview only (0 for non-scoring)
                 points = 0
                 if isinstance(event_code, str) and event_code.startswith('made'):
@@ -177,16 +216,16 @@ class NBAResponseValidator:
                 elif event_code in ('mft',):
                     points = 1
             elif len(primary_play) == 7:
-                # Legacy support
+                # Legacy: 7-element format
                 quarter = primary_play[0]
                 time_seconds = primary_play[1]
                 score_array = primary_play[2] if len(primary_play[2]) >= 2 else [0, 0]
                 actor = primary_play[3]
                 event_code = primary_play[4]
                 points = primary_play[5]  # ALWAYS present (0 for non-scoring)
-                lineup_id = primary_play[6]
+                # lineup_id = primary_play[6]  # legacy lineup_id (not used)
             else:
-                return {"error": f"Play tuple must be 9 elements (preferred) or 7 (legacy), got {len(primary_play)} elements"}
+                return {"error": f"Play tuple must be 10 elements (current), 9 (legacy with lineup_id), or 7 (legacy), got {len(primary_play)} elements"}
             
             # For validation, treat points=0 as None (non-scoring) for backward compatibility
             if points == 0:

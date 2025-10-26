@@ -5,9 +5,15 @@ Training data QA validator.
 Validates JSONL training files produced for Gemini and OpenAI formats.
 Checks both input (user content) and output (model/assistant content), for:
 - Structure and required fields
-- Field counts and tuple lengths
+- Field counts and tuple lengths (NEW: 10-element tuples with direct lineup prediction)
 - Value ranges/types and presence/absence rules
 - Consistency across compact and verbose schemas
+- Lineup validation (nested 5-player arrays in each play tuple)
+
+NEW FORMAT (v2.0 - Direct Lineup Prediction):
+- Play tuples are now 10 elements: [q, ts, score, margin, actor, actor_fouls, event, shot_zone, away_lineup, home_lineup]
+- away_lineup and home_lineup are arrays of 5 player indices (0-based roster positions)
+- Removed 'L' field (lineup lookup table)
 
 Usage:
   python -m training.qa_validator --path data/training/*.jsonl
@@ -191,63 +197,84 @@ def validate_compact_input(doc: Dict[str, Any], counts: Counts, line_no: int) ->
                 counts.warnings += 1
                 counts.details.append(f"L{line_no}: {meta_key} != len({team_key})")
 
-    # Optional: lineup list L
-    if 'L' in doc:
-        L = doc.get('L')
-        if not isinstance(L, list):
-            counts.input_errors += 1
-            counts.details.append(f"L{line_no}: 'L' must be list of lineups")
-        else:
-            for i, lu in enumerate(L):
-                if not (isinstance(lu, dict) and 'A' in lu and 'H' in lu):
-                    counts.input_errors += 1
-                    counts.details.append(f"L{line_no}: L[{i}] invalid lineup format")
-                else:
-                    if not (isinstance(lu['A'], list) and isinstance(lu['H'], list) and len(lu['A']) == 5 and len(lu['H']) == 5):
-                        counts.input_errors += 1
-                        counts.details.append(f"L{line_no}: L[{i}] must have 5 A + 5 H indices")
-
     # Plays array p (when present in remaining_plays mode)
+    # NEW FORMAT: 10-element tuples with direct lineup prediction
+    # [q, ts, score, margin, actor, actor_fouls, event, shot_zone, away_lineup, home_lineup]
     if 'p' in doc and doc['p'] is not None:
         p_arr = doc.get('p')
         if not isinstance(p_arr, list):
             counts.input_errors += 1
             counts.details.append(f"L{line_no}: 'p' must be list of play tuples")
         else:
+            away_roster_size = len(doc.get('ap', []))
+            home_roster_size = len(doc.get('hp', []))
+            
             for i, t in enumerate(p_arr):
-                if not (isinstance(t, list) and len(t) == 9):
+                if not (isinstance(t, list) and len(t) == 10):
                     counts.input_errors += 1
-                    counts.details.append(f"L{line_no}: p[{i}] must be 9-element tuple list")
+                    counts.details.append(f"L{line_no}: p[{i}] must be 10-element tuple list (got {len(t) if isinstance(t, list) else 'not a list'})")
                     continue
-                q, ts, score, margin, actor, actor_fouls, ev, shot_zone, lineup_id = t
+                q, ts, score, margin, actor, actor_fouls, ev, shot_zone, away_lineup, home_lineup = t
+                
+                # Quarter validation
                 if not (_is_number(q) and 1 <= int(q) <= 10):
                     counts.warnings += 1
+                
+                # Time validation
                 if not (_is_number(ts) and 0 <= int(ts) <= 720):
                     counts.warnings += 1
+                
+                # Score validation
                 if not (isinstance(score, list) and len(score) == 2 and all(_is_number(s) for s in score)):
                     counts.input_errors += 1
                     counts.details.append(f"L{line_no}: p[{i}].score invalid")
+                
+                # Actor validation
                 if not isinstance(actor, list) or len(actor) != 2 or actor[0] not in ('A','H') or not isinstance(actor[1], int):
                     counts.input_errors += 1
                     counts.details.append(f"L{line_no}: p[{i}].actor invalid")
+                
+                # Actor fouls validation
                 if not isinstance(actor_fouls, int) or actor_fouls < 0:
                     counts.warnings += 1
+                
+                # Event validation
                 if not isinstance(ev, str) or ev not in ALLOWED_EVENTS:
                     counts.input_errors += 1
                     counts.details.append(f"L{line_no}: p[{i}].event_code '{ev}' invalid")
+                
+                # Shot zone validation
                 if ev in ('made2','miss2','made3','miss3'):
                     counts.shot_events += 1
                     counts.shot_events_input += 1
-                    # shot_zone should be one of rim/mid/c3/nc3
                     if shot_zone not in ('rim','mid','c3','nc3'):
                         counts.shot_zone_missing += 1
                         counts.shot_zone_missing_input += 1
                 else:
                     if shot_zone is not None:
                         counts.warnings += 1
-                if not isinstance(lineup_id, int) or lineup_id < 0:
-                    counts.warnings += 1
-                # margin consistency
+                
+                # Away lineup validation (must be list of 5 player indices)
+                if not isinstance(away_lineup, list) or len(away_lineup) != 5:
+                    counts.input_errors += 1
+                    counts.details.append(f"L{line_no}: p[{i}].away_lineup must be list of 5 player indices")
+                else:
+                    for j, idx in enumerate(away_lineup):
+                        if not isinstance(idx, int) or idx < 0 or idx >= away_roster_size:
+                            counts.input_errors += 1
+                            counts.details.append(f"L{line_no}: p[{i}].away_lineup[{j}]={idx} out of bounds [0,{away_roster_size-1}]")
+                
+                # Home lineup validation (must be list of 5 player indices)
+                if not isinstance(home_lineup, list) or len(home_lineup) != 5:
+                    counts.input_errors += 1
+                    counts.details.append(f"L{line_no}: p[{i}].home_lineup must be list of 5 player indices")
+                else:
+                    for j, idx in enumerate(home_lineup):
+                        if not isinstance(idx, int) or idx < 0 or idx >= home_roster_size:
+                            counts.input_errors += 1
+                            counts.details.append(f"L{line_no}: p[{i}].home_lineup[{j}]={idx} out of bounds [0,{home_roster_size-1}]")
+                
+                # Margin consistency
                 try:
                     if isinstance(score, list) and len(score) == 2 and _is_number(margin):
                         if int(margin) != int(score[0]) - int(score[1]):
@@ -255,15 +282,6 @@ def validate_compact_input(doc: Dict[str, Any], counts: Counts, line_no: int) ->
                             counts.details.append(f"L{line_no}: p[{i}].margin != away-home")
                 except Exception:
                     pass
-            # lineup_id bounds when L present
-            if isinstance(doc.get('L'), list):
-                L_len = len(doc.get('L'))
-                for i, t in enumerate(p_arr):
-                    if isinstance(t, list) and len(t) == 9:
-                        lid = t[8]
-                        if isinstance(lid, int) and (lid < 0 or lid >= L_len):
-                            counts.warnings += 1
-                            counts.details.append(f"L{line_no}: p[{i}].lineup_id out of bounds (0..{L_len-1})")
 
 
 def validate_verbose_input(doc: Dict[str, Any], counts: Counts, line_no: int) -> None:
@@ -278,51 +296,83 @@ def validate_verbose_input(doc: Dict[str, Any], counts: Counts, line_no: int) ->
 def validate_output(model: Any, counts: Counts, line_no: int) -> None:
     if model is None:
         return
-    # first_N_plays (compact): {"y": [ [9-element], ... ]}
+    
+    # first_N_plays (compact): {"y": [ [10-element], ... ]}
+    # NEW FORMAT: [q, ts, score, margin, actor, actor_fouls, event, shot_zone, away_lineup, home_lineup]
     if isinstance(model, dict) and 'y' in model and isinstance(model['y'], list) and model['y'] and isinstance(model['y'][0], list):
         for i, t in enumerate(model['y']):
-            if not (isinstance(t, list) and len(t) == 9):
+            if not (isinstance(t, list) and len(t) == 10):
                 counts.output_errors += 1
-                counts.details.append(f"L{line_no}: output.y[{i}] must be 9-element tuple list")
+                counts.details.append(f"L{line_no}: output.y[{i}] must be 10-element tuple list (got {len(t) if isinstance(t, list) else 'not a list'})")
                 continue
-            _, _, _, _, actor, _, ev, shot_zone, _ = t
+            
+            q, ts, score, margin, actor, actor_fouls, ev, shot_zone, away_lineup, home_lineup = t
+            
+            # Actor validation
             if isinstance(actor, list) and len(actor) == 2 and actor[1] == -1:
                 counts.actor_team_events += 1
+            
+            # Shot zone validation
             if ev in ('made2','miss2','made3','miss3'):
                 counts.shot_events += 1
+                counts.shot_events_output += 1
                 if shot_zone not in ('rim','mid','c3','nc3'):
                     counts.shot_zone_missing += 1
+                    counts.shot_zone_missing_output += 1
+            
+            # Lineup validation
+            if not isinstance(away_lineup, list) or len(away_lineup) != 5:
+                counts.output_errors += 1
+                counts.details.append(f"L{line_no}: output.y[{i}].away_lineup must be list of 5 player indices")
+            if not isinstance(home_lineup, list) or len(home_lineup) != 5:
+                counts.output_errors += 1
+                counts.details.append(f"L{line_no}: output.y[{i}].home_lineup must be list of 5 player indices")
         return
 
-    # Compact remaining_plays: {"y": [q, ts, [a,h], margin, actor, actor_fouls, event, shot_zone, lineup_id]}
+    # Compact remaining_plays: {"y": [q, ts, [a,h], margin, actor, actor_fouls, event, shot_zone, away_lineup, home_lineup]}
+    # NEW FORMAT: 10-element tuple
     if isinstance(model, dict) and 'y' in model:
         t = model['y']
-        if not (isinstance(t, list) and len(t) == 9):
+        if not (isinstance(t, list) and len(t) == 10):
             counts.output_errors += 1
-            counts.details.append(f"L{line_no}: output 'y' must be 9-element tuple list")
+            counts.details.append(f"L{line_no}: output 'y' must be 10-element tuple list (got {len(t) if isinstance(t, list) else 'not a list'})")
             return
-        q, ts, score, margin, actor, actor_fouls, ev, shot_zone, lineup_id = t
+        
+        q, ts, score, margin, actor, actor_fouls, ev, shot_zone, away_lineup, home_lineup = t
+        
+        # Quarter validation
         if not (_is_number(q) and 1 <= int(q) <= 10):
             counts.output_errors += 1
             counts.details.append(f"L{line_no}: output.q invalid")
+        
+        # Time validation
         if not (_is_number(ts) and 0 <= int(ts) <= 720):
             counts.output_errors += 1
             counts.details.append(f"L{line_no}: output.ts invalid")
+        
+        # Score validation
         if not (isinstance(score, list) and len(score) == 2 and all(_is_number(s) for s in score)):
             counts.output_errors += 1
             counts.details.append(f"L{line_no}: output.score invalid")
+        
+        # Actor validation
         if not (isinstance(actor, list) and len(actor) == 2 and actor[0] in ('A','H') and isinstance(actor[1], int)):
             counts.output_errors += 1
             counts.details.append(f"L{line_no}: output.actor invalid")
         else:
             if actor[1] == -1:
                 counts.actor_team_events += 1
+        
+        # Actor fouls validation
         if not isinstance(actor_fouls, int) or actor_fouls < 0:
             counts.warnings += 1
-        # Shot-zone presence logic
+        
+        # Event validation
         if not isinstance(ev, str) or ev not in ALLOWED_EVENTS:
             counts.output_errors += 1
             counts.details.append(f"L{line_no}: output.event_code '{ev}' invalid")
+        
+        # Shot zone validation
         if ev in ('made2','miss2','made3','miss3'):
             counts.shot_events += 1
             counts.shot_events_output += 1
@@ -332,8 +382,15 @@ def validate_output(model: Any, counts: Counts, line_no: int) -> None:
         else:
             if shot_zone is not None:
                 counts.warnings += 1
-        if not isinstance(lineup_id, int) or lineup_id < 0:
-            counts.warnings += 1
+        
+        # Lineup validation (must be list of 5 player indices)
+        if not isinstance(away_lineup, list) or len(away_lineup) != 5:
+            counts.output_errors += 1
+            counts.details.append(f"L{line_no}: output.away_lineup must be list of 5 player indices")
+        if not isinstance(home_lineup, list) or len(home_lineup) != 5:
+            counts.output_errors += 1
+            counts.details.append(f"L{line_no}: output.home_lineup must be list of 5 player indices")
+        
         return
 
     # Verbose output: simple sanity check (array of plays or single play dict)

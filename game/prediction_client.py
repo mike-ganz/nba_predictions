@@ -206,6 +206,76 @@ class BasePredictionClient(ABC):
         
         for attempt in range(max_retries + 1):
             try:
+                # Debug logging: Show input context being sent to model
+                if self._debug_log or self._log_stage_responses:
+                    stage_label = "Stage 1" if stage1_mode else "Stage 2"
+                    print(f"\n{'='*80}")
+                    print(f"🔵 DEBUG {stage_label} INPUT CONTEXT (attempt {attempt + 1})")
+                    print(f"{'='*80}")
+                    print(f"Model: {model_id}")
+                    print(f"Max tokens: {current_max_tokens}, Temperature: {temperature}")
+                    print(f"Context size: {len(context_json)} characters")
+                    
+                    # Show condensed context structure
+                    try:
+                        ctx = validation_context
+                        is_compact = 'A' in ctx and 'H' in ctx
+                        
+                        if is_compact:
+                            print(f"Format: COMPACT")
+                            print(f"Teams: {ctx.get('A', 'N/A')} vs {ctx.get('H', 'N/A')}")
+                            print(f"Away players: {ctx.get('ap_count', len(ctx.get('ap', [])))} players")
+                            print(f"Home players: {ctx.get('hp_count', len(ctx.get('hp', [])))} players")
+                            
+                            # Show if recent plays exist
+                            if 'p' in ctx:
+                                p_len = len(ctx['p']) if isinstance(ctx['p'], list) else 'N/A'
+                                print(f"Recent plays: {p_len} plays")
+                                # Show first play structure to verify format
+                                if isinstance(ctx['p'], list) and len(ctx['p']) > 0:
+                                    first_play = ctx['p'][0]
+                                    print(f"  First play structure: {len(first_play)} elements")
+                                    if len(first_play) >= 10:
+                                        print(f"    Away lineup: {first_play[8]}")
+                                        print(f"    Home lineup: {first_play[9]}")
+                            else:
+                                print(f"Recent plays: None (first_N_plays mode)")
+                            
+                            # Show team stats snippet
+                            if 'as' in ctx:
+                                as_arr = ctx['as']
+                                print(f"Away team stats: [{as_arr[0]:.2f}, {as_arr[1]:.2f}, {as_arr[2]:.2f}, ... {len(as_arr)} values]")
+                            if 'hs' in ctx:
+                                hs_arr = ctx['hs']
+                                print(f"Home team stats: [{hs_arr[0]:.2f}, {hs_arr[1]:.2f}, {hs_arr[2]:.2f}, ... {len(hs_arr)} values]")
+                            
+                            # Show first player from each team
+                            if 'ap' in ctx and len(ctx['ap']) > 0:
+                                first_player = ctx['ap'][0]
+                                if isinstance(first_player, list):
+                                    print(f"Away P0: {first_player[0]} (MPG: {first_player[1]}, Usage: {first_player[2]:.3f})")
+                            if 'hp' in ctx and len(ctx['hp']) > 0:
+                                first_player = ctx['hp'][0]
+                                if isinstance(first_player, list):
+                                    print(f"Home P0: {first_player[0]} (MPG: {first_player[1]}, Usage: {first_player[2]:.3f})")
+                        else:
+                            print(f"Format: VERBOSE")
+                            print(f"Away team: {ctx.get('away_team', {}).get('name', 'N/A')}")
+                            print(f"Home team: {ctx.get('home_team', {}).get('name', 'N/A')}")
+                            if 'recent_plays' in ctx:
+                                rp_len = len(ctx['recent_plays']) if isinstance(ctx['recent_plays'], list) else 'N/A'
+                                print(f"Recent plays: {rp_len} plays")
+                        
+                        # Validate JSON structure
+                        test_json = json.dumps(ctx, separators=(',', ':'))
+                        print(f"✓ Context is valid JSON ({len(test_json)} chars)")
+                        
+                    except Exception as e:
+                        print(f"⚠️ Error analyzing context: {e}")
+                        print(f"Raw context (first 500 chars): {context_json[:500]}")
+                    
+                    print(f"{'='*80}\n")
+                
                 limiter = getattr(self, "_rate_limiter", None)
                 if limiter is not None:
                     limiter.acquire()
@@ -218,17 +288,18 @@ class BasePredictionClient(ABC):
                     if limiter is not None:
                         limiter.release()
                 
-                # Stage 1 response logging disabled for cleaner output
-                # Optional full raw response logging for debugging
+                # Debug logging: Show output response from model
                 if self._debug_log or self._log_stage_responses:
                     stage_label = "Stage 1" if stage1_mode else "Stage 2"
-                    print(f"\n=== DEBUG {stage_label} RAW RESPONSE (attempt {attempt + 1}) ===")
+                    print(f"\n{'='*80}")
+                    print(f"🟢 DEBUG {stage_label} RAW RESPONSE (attempt {attempt + 1})")
+                    print(f"{'='*80}")
                     try:
                         print(response_content)
                     except Exception:
                         # Ensure logging never breaks the run
                         print("<non-printable response content>")
-                    print("=== END RAW RESPONSE ===\n")
+                    print(f"{'='*80}\n")
                 
                 # Sanitize and normalize JSON before validation
                 processed_content = self._sanitize_json_like_text(response_content)
@@ -507,17 +578,26 @@ class BasePredictionClient(ABC):
             
             next_plays = []
             for i, play_tuple in enumerate(play_tuples):
-                if not isinstance(play_tuple, list) or len(play_tuple) not in (9, 7):
-                    return ValidationResult.RETRY, [], f"Play tuple {i+1} must have 9 elements (preferred) or 7 (legacy), got {len(play_tuple) if isinstance(play_tuple, list) else 'non-list'}"
+                if not isinstance(play_tuple, list) or len(play_tuple) not in (10, 9, 7):
+                    return ValidationResult.RETRY, [], f"Play tuple {i+1} must have 10 elements (current), 9 (legacy with lineup_id), or 7 (legacy), got {len(play_tuple) if isinstance(play_tuple, list) else 'non-list'}"
                 
                 # Convert tuple to minimal play object for validation
-                if len(play_tuple) == 9:
+                if len(play_tuple) == 10:
+                    # Current format: [q, t, score, margin, actor, actor_fouls, event, shot_zone, away_lineup, home_lineup]
+                    quarter = play_tuple[0]
+                    time_seconds = play_tuple[1]
+                    score_array = play_tuple[2] if len(play_tuple[2]) >= 2 else [0, 0]
+                    actor = play_tuple[4]
+                    event_code = play_tuple[6]
+                elif len(play_tuple) == 9:
+                    # Legacy format with lineup_id
                     quarter = play_tuple[0]
                     time_seconds = play_tuple[1]
                     score_array = play_tuple[2] if len(play_tuple[2]) >= 2 else [0, 0]
                     actor = play_tuple[4]
                     event_code = play_tuple[6]
                 else:
+                    # Legacy 7-element format
                     quarter = play_tuple[0]
                     time_seconds = play_tuple[1]
                     score_array = play_tuple[2] if len(play_tuple[2]) >= 2 else [0, 0]
@@ -547,17 +627,26 @@ class BasePredictionClient(ABC):
             
             next_plays = []
             for i, play_tuple in enumerate(play_tuples):
-                if not isinstance(play_tuple, list) or len(play_tuple) not in (9, 7):
-                    return ValidationResult.RETRY, [], f"Play tuple {i+1} must have 9 elements (preferred) or 7 (legacy), got {len(play_tuple) if isinstance(play_tuple, list) else 'non-list'}"
+                if not isinstance(play_tuple, list) or len(play_tuple) not in (10, 9, 7):
+                    return ValidationResult.RETRY, [], f"Play tuple {i+1} must have 10 elements (current), 9 (legacy with lineup_id), or 7 (legacy), got {len(play_tuple) if isinstance(play_tuple, list) else 'non-list'}"
                 
                 # Convert tuple to minimal play object for validation
-                if len(play_tuple) == 9:
+                if len(play_tuple) == 10:
+                    # Current format: [q, t, score, margin, actor, actor_fouls, event, shot_zone, away_lineup, home_lineup]
+                    quarter = play_tuple[0]
+                    time_seconds = play_tuple[1]
+                    score_array = play_tuple[2] if len(play_tuple[2]) >= 2 else [0, 0]
+                    actor = play_tuple[4]
+                    event_code = play_tuple[6]
+                elif len(play_tuple) == 9:
+                    # Legacy format with lineup_id
                     quarter = play_tuple[0]
                     time_seconds = play_tuple[1]
                     score_array = play_tuple[2] if len(play_tuple[2]) >= 2 else [0, 0]
                     actor = play_tuple[4]
                     event_code = play_tuple[6]
                 else:
+                    # Legacy 7-element format
                     quarter = play_tuple[0]
                     time_seconds = play_tuple[1]
                     score_array = play_tuple[2] if len(play_tuple[2]) >= 2 else [0, 0]

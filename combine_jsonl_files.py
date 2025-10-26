@@ -1,10 +1,10 @@
 import os
 
 # ---- EDIT THESE VARIABLES DIRECTLY ----
-file1_path = r"C:\Users\micha\nba_predictions\data\training\nba_2021_2022_gemini_compact_first_N_plays_ULTRA_FAST.jsonl"     # Path to the first .jsonl file
-file2_path = r"C:\Users\micha\nba_predictions\data\training\nba_2022_2023_gemini_compact_first_N_plays_ULTRA_FAST.jsonl"     # Path to the second .jsonl file
-file3_path = r"C:\Users\micha\nba_predictions\data\training\nba_2023_2024_gemini_compact_first_N_plays_ULTRA_FAST.jsonl"  # Optionally set a third file path, or leave as None if not used
-output_filename = r"nba_2021_2022_2023_gemini_compact_first_N_plays_ULTRA_FAST.jsonl"
+file1_path = r"C:\Users\micha\nba_predictions\data\training\nba_2021_2022_gemini_compact_first_N_plays_ULTRA_FAST_20251025_133027.jsonl"     # Path to the first .jsonl file
+file2_path = r"C:\Users\micha\nba_predictions\data\training\nba_2022_2023_gemini_compact_first_N_plays_ULTRA_FAST_20251025_130720.jsonl"     # Path to the second .jsonl file
+file3_path = r"C:\Users\micha\nba_predictions\data\training\nba_2023_2024_gemini_compact_first_N_plays_ULTRA_FAST_20251025_124718.jsonl"  # Optionally set a third file path, or leave as None if not used
+output_filename = r"nba_2021_2022_2023_gemini_compact_first_N_plays_ULTRA_FAST_20251025_124718.jsonl"
 output_dir = r"C:\Users\micha\nba_predictions\data\training"           # Directory to save the appended file
 # ---------------------------------------
 

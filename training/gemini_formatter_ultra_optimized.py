@@ -426,25 +426,26 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
                     description, shot_details, score_delta
                 )
             
-            # Determine lineup id using resolve_lineup_from_row if possible
-            lineup_id = 0
+            # Extract direct lineup arrays from the row (NEW: direct player prediction)
+            away_lineup_indices = []
+            home_lineup_indices = []
             try:
                 from generate_training_data import resolve_lineup_from_row
                 lineup_data = resolve_lineup_from_row(next_row, context_json)
                 if lineup_data:
-                    existing_lineups = context_json.get('L') or []
-                    cache = {tuple(ld.get('A', []) + ld.get('H', [])): idx for idx, ld in enumerate(existing_lineups) if isinstance(ld, dict)}
-                    key = tuple(lineup_data['A'] + lineup_data['H'])
-                    if key in cache:
-                        lineup_id = cache[key]
-                    else:
-                        existing_lineups.append(lineup_data)
-                        context_json['L'] = existing_lineups
-                        lineup_id = len(existing_lineups) - 1
+                    # Extract player indices from lineup data
+                    away_lineup_indices = lineup_data.get('A', [])[:5]  # Ensure exactly 5 players
+                    home_lineup_indices = lineup_data.get('H', [])[:5]
             except Exception:
-                lineup_id = 0
+                pass
+            
+            # Fallback: ensure we have 5 players (use 0-4 if resolution failed)
+            if len(away_lineup_indices) != 5:
+                away_lineup_indices = [0, 1, 2, 3, 4]
+            if len(home_lineup_indices) != 5:
+                home_lineup_indices = [0, 1, 2, 3, 4]
 
-            # Create standardized 9-element compact play tuple
+            # Create standardized 10-element compact play tuple with direct lineup arrays
             margin = int(current_score[0]) - int(current_score[1])
             actor_fouls = 0
             # Infer shot zone for shooting events
@@ -464,7 +465,8 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
                 int(actor_fouls),
                 event_code,
                 shot_zone,
-                int(lineup_id)
+                away_lineup_indices,  # NEW: direct lineup array
+                home_lineup_indices   # NEW: direct lineup array
             ]
             
             # Wrap under {"y": ...} to align with compact convention
@@ -600,14 +602,9 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
                 if isinstance(player_data, list) and len(player_data) > 0:
                     home_name_to_idx[player_data[0]] = idx
             
-            # Create first N play tuples
+            # Create first N play tuples with direct lineup arrays
             # Iterate until we collect n_total plays (not just n_total iterations)
             first_plays = []
-            # Prepare lineup tracking helpers
-            current_lineups = context_json.get('L', []) if isinstance(context_json, dict) else []
-            lineup_cache = {tuple(lineup['A'] + lineup['H']): idx for idx, lineup in enumerate(current_lineups)
-                            if isinstance(lineup, dict) and 'A' in lineup and 'H' in lineup}
-            current_lineup_id = 0
 
             for i in range(len(raw_game_df)):
                 if len(first_plays) >= n_total:
@@ -616,15 +613,12 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
                 row = raw_game_df.iloc[i]
                 
                 if pd.notna(row.get('description')):
-                    play_tuple, current_lineup_id = self._create_compact_play_tuple_ultra_fast(
+                    play_tuple = self._create_compact_play_tuple_ultra_fast(
                         row, context_json, raw_game_df, away_team_name, home_team_name,
                         away_name_to_idx, home_name_to_idx,
-                        map_structured_to_event_code, map_description_to_event_code,
-                        current_lineups, lineup_cache, current_lineup_id
+                        map_structured_to_event_code, map_description_to_event_code
                     )
                     if play_tuple:
-                        # ensure lineup id uses tracked value
-                        play_tuple[-1] = current_lineup_id
                         first_plays.append(play_tuple)
             
             if len(first_plays) == 0:
@@ -653,11 +647,9 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
     def _create_compact_play_tuple_ultra_fast(self, row: pd.Series, context_json: Dict[str, Any], 
                                             raw_game_df: pd.DataFrame, away_team_name: str, home_team_name: str,
                                             away_name_to_idx: Dict[str, int], home_name_to_idx: Dict[str, int],
-                                            map_structured_to_event_code, map_description_to_event_code,
-                                            current_lineups: List[Dict[str, List[int]]], lineup_cache: Dict[tuple, int],
-                                            current_lineup_id: int) -> tuple[Optional[List], int]:
+                                            map_structured_to_event_code, map_description_to_event_code) -> Optional[List]:
         """
-        Create a compact play tuple from a raw DataFrame row (ultra-fast version).
+        Create a compact play tuple from a raw DataFrame row (ultra-fast version with direct lineups).
         """
         try:
             import pandas as pd
@@ -701,16 +693,38 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
                 away_name_to_idx, home_name_to_idx
             )
             
-            # Update lineup tracking using helper from generate_training_data
-            from generate_training_data import resolve_lineup_from_row
-            lineup_data = resolve_lineup_from_row(row, context_json)
-            if lineup_data:
-                lineup_key = tuple(lineup_data['A'] + lineup_data['H'])
-                if lineup_key not in lineup_cache:
-                    current_lineups.append(lineup_data)
-                    lineup_cache[lineup_key] = len(current_lineups) - 1
-                current_lineup_id = lineup_cache[lineup_key]
-            lineup_cache['latest'] = current_lineup_id
+            # Extract lineup player indices directly from row (a1-a5, h1-h5 columns)
+            away_lineup_indices = []
+            home_lineup_indices = []
+            
+            # Extract away lineup
+            for i in range(1, 6):
+                col_name = f'a{i}'
+                if col_name in row.index and pd.notna(row.get(col_name)):
+                    player_name_col = str(row[col_name])
+                    player_idx = away_name_to_idx.get(player_name_col, 0)
+                    away_lineup_indices.append(player_idx)
+                else:
+                    away_lineup_indices.append(0)
+            
+            # Extract home lineup
+            for i in range(1, 6):
+                col_name = f'h{i}'
+                if col_name in row.index and pd.notna(row.get(col_name)):
+                    player_name_col = str(row[col_name])
+                    player_idx = home_name_to_idx.get(player_name_col, 0)
+                    home_lineup_indices.append(player_idx)
+                else:
+                    home_lineup_indices.append(0)
+            
+            # Ensure exactly 5 players per team (pad with 0 if needed)
+            while len(away_lineup_indices) < 5:
+                away_lineup_indices.append(0)
+            while len(home_lineup_indices) < 5:
+                home_lineup_indices.append(0)
+            
+            away_lineup_indices = away_lineup_indices[:5]
+            home_lineup_indices = home_lineup_indices[:5]
 
             # Map event code using structured data if available
             if all(key in row for key in ['type', 'event_type']):
@@ -734,7 +748,7 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
                     description, shot_details, score_delta
                 )
             
-            # Build compact play tuple
+            # Build compact play tuple with direct lineup arrays (10 values)
             points = int(mapped_points) if mapped_points is not None else 0
             margin = int(score_array[0]) - int(score_array[1])
             actor_fouls = 0
@@ -755,13 +769,14 @@ class UltraOptimizedGeminiFormatter(BaseFormatter):
                 int(actor_fouls),
                 event_code,
                 shot_zone,
-                int(current_lineup_id)
+                away_lineup_indices,  # Direct lineup array [a1, a2, a3, a4, a5]
+                home_lineup_indices   # Direct lineup array [h1, h2, h3, h4, h5]
             ]
             
-            return play_tuple, current_lineup_id
+            return play_tuple
             
         except Exception as e:
-            return None, lineup_cache.get('latest', current_lineup_id)
+            return None
 
 # 🚀 PHASE 3: STREAMING SUPPORT FOR ULTRA-FAST MODE
 def iter_ultra_fast_gemini_training_data(df: pd.DataFrame, generation_mode: str = "remaining_plays",

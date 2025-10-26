@@ -503,19 +503,7 @@ class OpenAIFormatter(BaseFormatter):
                     if isinstance(player_data, list) and player_data:
                         home_name_to_idx[str(player_data[0])] = idx
 
-            # Initialize lineup tracking for first_N_plays from compact context L, if present
-            current_lineups: List[Dict[str, List[int]]] = []
-            lineup_cache: Dict[tuple, int] = {}
-            current_lineup_id = 0
-            try:
-                seed_lineups = current_json_raw.get('L') if isinstance(current_json_raw, dict) else []
-                if isinstance(seed_lineups, list):
-                    current_lineups = [ld for ld in seed_lineups if isinstance(ld, dict) and 'A' in ld and 'H' in ld]
-                    lineup_cache = {tuple(ld['A'] + ld['H']): idx for idx, ld in enumerate(current_lineups)}
-                    if len(current_lineups) > 0:
-                        current_lineup_id = len(current_lineups) - 1
-            except Exception:
-                pass
+            # No lineup tracking needed - using direct lineup arrays in play tuples
 
             # Live player foul accumulation from raw_game_df
             foul_cumulative = []
@@ -620,14 +608,38 @@ class OpenAIFormatter(BaseFormatter):
                 except Exception:
                     actor_fouls = 0
 
-                # Resolve lineup from this row if possible
-                lineup_data = resolve_lineup_from_row(row, current_json_raw)
-                if lineup_data:
-                    lineup_key = tuple(lineup_data['A'] + lineup_data['H'])
-                    if lineup_key not in lineup_cache:
-                        current_lineups.append(lineup_data)
-                        lineup_cache[lineup_key] = len(current_lineups) - 1
-                    current_lineup_id = lineup_cache[lineup_key]
+                # Extract lineup player indices directly from row (a1-a5, h1-h5 columns)
+                away_lineup_indices = []
+                home_lineup_indices = []
+                
+                # Extract away lineup
+                for k in range(1, 6):
+                    col_name = f'a{k}'
+                    if col_name in row.index and pd.notna(row.get(col_name)):
+                        player_name_col = str(row[col_name])
+                        player_idx = away_name_to_idx.get(player_name_col, 0)
+                        away_lineup_indices.append(player_idx)
+                    else:
+                        away_lineup_indices.append(0)
+                
+                # Extract home lineup
+                for k in range(1, 6):
+                    col_name = f'h{k}'
+                    if col_name in row.index and pd.notna(row.get(col_name)):
+                        player_name_col = str(row[col_name])
+                        player_idx = home_name_to_idx.get(player_name_col, 0)
+                        home_lineup_indices.append(player_idx)
+                    else:
+                        home_lineup_indices.append(0)
+                
+                # Ensure exactly 5 players per team (pad with 0 if needed)
+                while len(away_lineup_indices) < 5:
+                    away_lineup_indices.append(0)
+                while len(home_lineup_indices) < 5:
+                    home_lineup_indices.append(0)
+                
+                away_lineup_indices = away_lineup_indices[:5]
+                home_lineup_indices = home_lineup_indices[:5]
 
                 # Determine shot zone when possible (shots only)
                 shot_zone = None
@@ -637,8 +649,7 @@ class OpenAIFormatter(BaseFormatter):
                 except Exception:
                     shot_zone = None
 
-                # Build compact play tuple - ALWAYS 9 elements; non-scoring uses points=0
-                lineup_id = current_lineup_id
+                # Build compact play tuple - ALWAYS 10 elements with direct lineup arrays
                 pts_val = int(points_scored) if points_scored and points_scored > 0 else 0
                 margin = int(score_arr[0]) - int(score_arr[1])
                 play_tuple = [
@@ -650,7 +661,8 @@ class OpenAIFormatter(BaseFormatter):
                     int(actor_fouls),              # actor_fouls (live cumulative)
                     event_code,                    # event_code
                     shot_zone,                     # shot_zone (None if unknown)
-                    int(lineup_id)                 # lineup_id
+                    away_lineup_indices,           # away lineup [a1, a2, a3, a4, a5]
+                    home_lineup_indices            # home lineup [h1, h2, h3, h4, h5]
                 ]
 
                 compact_plays.append(play_tuple)

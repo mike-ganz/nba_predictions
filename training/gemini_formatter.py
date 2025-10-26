@@ -524,7 +524,7 @@ class GeminiFormatter(BaseFormatter):
             game_df: Full game DataFrame for scoring calculations
             
         Returns:
-            list: Compact play tuple [q, t, [a,h], margin, actor, actor_fouls, event, shot_zone, lineup_id]
+            list: Compact play tuple [q, t, [a,h], margin, actor, actor_fouls, event, shot_zone, [away_lineup], [home_lineup]]
         """
         try:
             # Get quarter and time
@@ -589,6 +589,39 @@ class GeminiFormatter(BaseFormatter):
                 else:
                     actor = ["A", -1]
             
+            # Extract lineup player indices directly from row (a1-a5, h1-h5 columns)
+            away_lineup_indices = []
+            home_lineup_indices = []
+            
+            # Extract away lineup
+            for i in range(1, 6):
+                col_name = f'a{i}'
+                if col_name in row.index and pd.notna(row.get(col_name)):
+                    player_name_col = str(row[col_name])
+                    player_idx = away_name_to_idx.get(player_name_col, 0)
+                    away_lineup_indices.append(player_idx)
+                else:
+                    away_lineup_indices.append(0)
+            
+            # Extract home lineup
+            for i in range(1, 6):
+                col_name = f'h{i}'
+                if col_name in row.index and pd.notna(row.get(col_name)):
+                    player_name_col = str(row[col_name])
+                    player_idx = home_name_to_idx.get(player_name_col, 0)
+                    home_lineup_indices.append(player_idx)
+                else:
+                    home_lineup_indices.append(0)
+            
+            # Ensure exactly 5 players per team (pad with 0 if needed)
+            while len(away_lineup_indices) < 5:
+                away_lineup_indices.append(0)
+            while len(home_lineup_indices) < 5:
+                home_lineup_indices.append(0)
+            
+            away_lineup_indices = away_lineup_indices[:5]
+            home_lineup_indices = home_lineup_indices[:5]
+            
             # Use structured event code mapping for better accuracy
             from generate_training_data import map_structured_to_event_code, map_description_to_event_code, determine_shot_zone
             
@@ -631,7 +664,7 @@ class GeminiFormatter(BaseFormatter):
                     description, shot_details, score_delta
                 )
             
-            # Build the compact 9-element play tuple
+            # Build the compact 10-element play tuple with direct lineup arrays
             actor_fouls = 0
             shot_zone = None
             if event_code in ['made2','miss2','made3','miss3']:
@@ -648,7 +681,8 @@ class GeminiFormatter(BaseFormatter):
                 int(actor_fouls),
                 event_code,
                 shot_zone,
-                0  # lineup_id (will be replaced by caller if tracking is active)
+                away_lineup_indices,  # Direct lineup array [a1, a2, a3, a4, a5]
+                home_lineup_indices   # Direct lineup array [h1, h2, h3, h4, h5]
             ]
             
             return play_tuple
@@ -760,29 +794,6 @@ class GeminiFormatter(BaseFormatter):
             # Parse the context JSON
             context_json = json.loads(context_row['json_training_data'])
             
-            # Initialize lineup tracking if compact format includes lineups
-            current_lineups = context_json.get('L', []) if isinstance(context_json, dict) else []
-            current_lineup_id = 0
-            lineup_cache = {}
-            if current_lineups:
-                lineup_cache = {tuple(lineup['A'] + lineup['H']): idx for idx, lineup in enumerate(current_lineups)
-                                if isinstance(lineup, dict) and 'A' in lineup and 'H' in lineup}
-            
-            # Helper to update lineup tracking when event includes substitutions
-            def _update_lineup_tracking(row_data, fallback_lineup=None):
-                nonlocal current_lineups, current_lineup_id, lineup_cache
-                from generate_training_data import resolve_lineup_from_row
-                lineup_data = resolve_lineup_from_row(row_data, context_json)
-                if not lineup_data and fallback_lineup is not None:
-                    lineup_data = fallback_lineup
-                if not lineup_data:
-                    return
-                lineup_key = tuple(lineup_data['A'] + lineup_data['H'])
-                if lineup_key not in lineup_cache:
-                    current_lineups.append(lineup_data)
-                    lineup_cache[lineup_key] = len(current_lineups) - 1
-                current_lineup_id = lineup_cache[lineup_key]
-            
             # Get first N non-null plays from the raw DataFrame data
             first_plays = []
             if n_total is None:
@@ -794,22 +805,11 @@ class GeminiFormatter(BaseFormatter):
                     
                 row = game_df.iloc[i]
                 if pd.notna(row.get('description')):
-                    # Update lineup tracking if data available
-                    _update_lineup_tracking(row)
-                    
                     # Check if input is verbose format - if so, create verbose response
                     if self._is_compact_format(context_json):
-                        # Create compact play tuple for compact input
-                        fallback_lineup = None
-                        if current_lineups:
-                            latest_key = next((key for key, idx in lineup_cache.items() if isinstance(key, tuple) and idx == current_lineup_id), None)
-                            if latest_key:
-                                fallback_lineup = {'A': list(latest_key[:5]), 'H': list(latest_key[5:])}
+                        # Create compact play tuple for compact input (with direct lineup arrays)
                         play_tuple = self._create_compact_play_tuple(row, context_json, game_df)
                         if play_tuple:
-                            # Replace lineup id (last element) with tracked value when available
-                            if isinstance(play_tuple, list) and len(play_tuple) >= 7:
-                                play_tuple[-1] = current_lineup_id
                             first_plays.append(play_tuple)
                     else:
                         # Create verbose play object for verbose input

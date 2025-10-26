@@ -59,6 +59,7 @@ except ImportError:
 _STATIC_STAGE1_CACHE: Dict[str, Any] = {}
 _CLIENT_CACHE: Optional[Tuple[BasePredictionClient, Dict[str, str]]] = None
 _STAGE1_CACHE: Dict[Tuple[str, str, bool], Dict[str, Any]] = {}
+_STAGE1_CONTEXT_PRINT_COUNT = 0  # Track how many times we've printed Stage 1 context
 
 # Event code to human-readable mapping (static - zero overhead)
 _EVENT_DESCRIPTIONS = {
@@ -89,7 +90,9 @@ def _format_readable_play(play_tuple: list, away_players: list, home_players: li
     Format a compact play tuple into human-readable description.
     
     Args:
-        play_tuple: 9-element play tuple [q, t, score, margin, actor, fouls, event, zone, lineup]
+        play_tuple: 10-element play tuple [q, t, score, margin, actor, fouls, event, zone, away_lineup, home_lineup]
+                    Legacy: 9-element [q, t, score, margin, actor, fouls, event, zone, lineup_id]
+                    Legacy: 7-element [q, t, score, actor, event, points, lineup_id]
         away_players: Away team roster (ap) - list of [name, stats...]
         home_players: Home team roster (hp) - list of [name, stats...]
     
@@ -479,6 +482,91 @@ def predict_rolling_sequence(
             else:
                 stage1_ctx = ctx_mgr.get_base_for_stage1()
                 stage1_json = json_dumps(stage1_ctx, separators=(",", ":"))
+                
+                # Debug: Print Stage 1 context if requested (limited to first N runs)
+                global _STAGE1_CONTEXT_PRINT_COUNT
+                print_stage1 = os.getenv("PRINT_STAGE1_CONTEXT", "0") == "1"
+                max_prints = int(os.getenv("STAGE1_CONTEXT_PRINT_LIMIT", "2"))  # Default: print first 2 runs
+                
+                if print_stage1 and _STAGE1_CONTEXT_PRINT_COUNT < max_prints:
+                    _STAGE1_CONTEXT_PRINT_COUNT += 1
+                    print("\n" + "="*80)
+                    print(f"🔍 STAGE 1 (Endpoint 1) - INITIAL CONTEXT [Run {_STAGE1_CONTEXT_PRINT_COUNT}/{max_prints}]")
+                    print("="*80)
+                    print(f"Format: {'COMPACT' if is_compact else 'VERBOSE'}")
+                    print(f"Context Length: {len(stage1_json)} characters")
+                    if is_compact:
+                        print(f"Teams: {stage1_ctx.get('A', 'N/A')} vs {stage1_ctx.get('H', 'N/A')}")
+                        print(f"Away Players: {stage1_ctx.get('ap_count', len(stage1_ctx.get('ap', [])))} players")
+                        print(f"Home Players: {stage1_ctx.get('hp_count', len(stage1_ctx.get('hp', [])))} players")
+                        print(f"Has 'p' field: {'p' in stage1_ctx}")
+                    else:
+                        print(f"Teams: {stage1_ctx.get('away_team', {}).get('name', 'N/A')} vs {stage1_ctx.get('home_team', {}).get('name', 'N/A')}")
+                        print(f"Has 'recent_plays': {'recent_plays' in stage1_ctx}")
+                    
+                    # Show condensed context summary
+                    try:
+                        print("\n📄 Context Structure:")
+                        print(f"  {{")
+                        print(f"    \"A\": \"{stage1_ctx.get('A', 'N/A')}\",")
+                        print(f"    \"H\": \"{stage1_ctx.get('H', 'N/A')}\",")
+                        
+                        # Show team stats (compact arrays)
+                        if 'as' in stage1_ctx:
+                            as_arr = stage1_ctx['as']
+                            print(f"    \"as\": [{as_arr[0]:.2f}, {as_arr[1]:.2f}, {as_arr[2]:.2f}, ... 10 values],")
+                        if 'hs' in stage1_ctx:
+                            hs_arr = stage1_ctx['hs']
+                            print(f"    \"hs\": [{hs_arr[0]:.2f}, {hs_arr[1]:.2f}, {hs_arr[2]:.2f}, ... 10 values],")
+                        
+                        # Show player array summaries
+                        if 'ap' in stage1_ctx:
+                            ap = stage1_ctx['ap']
+                            print(f"    \"ap\": [  // {len(ap)} players")
+                            for i, player in enumerate(ap[:2]):  # Show first 2 players
+                                if isinstance(player, list) and len(player) > 0:
+                                    print(f"      [\"{player[0]}\", {player[1]}, {player[2]:.2f}, ... {len(player)} values],")
+                            if len(ap) > 2:
+                                print(f"      ... {len(ap) - 2} more players")
+                            print(f"    ],")
+                        
+                        if 'hp' in stage1_ctx:
+                            hp = stage1_ctx['hp']
+                            print(f"    \"hp\": [  // {len(hp)} players")
+                            for i, player in enumerate(hp[:2]):  # Show first 2 players
+                                if isinstance(player, list) and len(player) > 0:
+                                    print(f"      [\"{player[0]}\", {player[1]}, {player[2]:.2f}, ... {len(player)} values],")
+                            if len(hp) > 2:
+                                print(f"      ... {len(hp) - 2} more players")
+                            print(f"    ],")
+                        
+                        # Show metadata
+                        if 'ap_count' in stage1_ctx:
+                            print(f"    \"ap_count\": {stage1_ctx['ap_count']},")
+                        if 'hp_count' in stage1_ctx:
+                            print(f"    \"hp_count\": {stage1_ctx['hp_count']},")
+                        
+                        # Show if 'p' field exists (should be absent for Stage 1)
+                        if 'p' in stage1_ctx:
+                            p_len = len(stage1_ctx['p']) if isinstance(stage1_ctx['p'], list) else 'N/A'
+                            print(f"    \"p\": [ {p_len} plays ],")
+                        
+                        print(f"  }}")
+                        
+                        # Show full JSON length for reference
+                        full_json = json.dumps(stage1_ctx, separators=(',', ':'), ensure_ascii=False)
+                        print(f"\n  Total JSON size: {len(full_json)} characters")
+                        
+                    except Exception as e:
+                        print(f"\n📄 Error formatting context summary: {e}")
+                        print("Raw context (first 1000 chars):")
+                        print(stage1_json[:1000] + ("..." if len(stage1_json) > 1000 else ""))
+                    
+                    print("="*80 + "\n")
+                elif print_stage1 and _STAGE1_CONTEXT_PRINT_COUNT == max_prints:
+                    _STAGE1_CONTEXT_PRINT_COUNT += 1  # Increment to avoid repeated messages
+                    print(f"\n💡 Stage 1 context printing disabled after {max_prints} runs (set STAGE1_CONTEXT_PRINT_LIMIT to show more)\n")
+                
                 content, _usage, game_ended, _rollback, _term = client.predict_with_validation(
                     context=stage1_json,
                     model_id=model_config["model_1_id"],
