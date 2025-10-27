@@ -15,10 +15,13 @@ class TemperatureCalibrator:
 
         def loss(temp: float) -> float:
             scaled = self._apply_temperature(probs, temp)
+            scaled = np.clip(scaled, 1e-12, 1.0)
             loss = 0.0
             for col in range(scaled.shape[1]):
-                indices = np.clip(outcomes[:, col], 0, scaled.shape[2] - 1)
-                loss += -np.log(scaled[:, col])[np.arange(len(scaled)), indices].mean()
+                values = np.asarray(outcomes[:, col])
+                indices = np.clip(np.rint(values).astype(int), 0, scaled.shape[2] - 1)
+                column = scaled[:, col]
+                loss += -np.log(column)[np.arange(len(column)), indices].mean()
             return loss / scaled.shape[1]
 
         result = minimize_scalar(loss, bounds=(0.25, 4.0), method="bounded")
@@ -26,7 +29,8 @@ class TemperatureCalibrator:
 
     def transform(self, predicted_probs: np.ndarray) -> np.ndarray:
         probs = np.clip(predicted_probs, 1e-12, 1.0)
-        return self._apply_temperature(probs, self.temperature)
+        scaled = self._apply_temperature(probs, self.temperature)
+        return np.clip(scaled, 1e-12, 1.0)
 
     @staticmethod
     def _apply_temperature(probs: np.ndarray, temp: float) -> np.ndarray:

@@ -56,6 +56,8 @@ def main() -> None:
         margin_outcomes=validation_payload["margin_outcomes"],
         score_outcomes_home=validation_payload["score_outcomes_home"],
         score_outcomes_away=validation_payload["score_outcomes_away"],
+        market_home=validation_payload["market_home"],
+        market_away=validation_payload["market_away"],
         sigma_home=validation_payload.get("sigma_home"),
         sigma_away=validation_payload.get("sigma_away"),
     )

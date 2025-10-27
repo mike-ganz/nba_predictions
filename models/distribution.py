@@ -30,7 +30,6 @@ def bivariate_poisson_pmf(
     lam_h = max(lambda_home, 1e-9)
     lam_a = max(lambda_away, 1e-9)
     lam_k = max(kappa, 1e-9)
-    lam_h, lam_a, lam_k = stabilize_rates(lam_h, lam_a, lam_k, max_points)
     size = max_points + 1
     pmf = np.zeros((size, size), dtype=np.float64)
     base = -(lam_h + lam_a + lam_k)
@@ -87,8 +86,9 @@ def bivariate_poisson_log_normal_pmf(
         for j in range(n_samples):
             adj_lambda_home = lambda_home * np.exp(np.sqrt(2) * sigma_home * gh_x[i] - sigma_home ** 2)
             adj_lambda_away = lambda_away * np.exp(np.sqrt(2) * sigma_away * gh_x[j] - sigma_away ** 2)
-            adj_lambda_home, adj_lambda_away, adj_kappa = stabilize_rates(adj_lambda_home, adj_lambda_away, kappa, max_points)
-            base_pmf = bivariate_poisson_pmf(adj_lambda_home, adj_lambda_away, adj_kappa, max_points)
+            adj_lambda_home = max(adj_lambda_home, 1e-9)
+            adj_lambda_away = max(adj_lambda_away, 1e-9)
+            base_pmf = bivariate_poisson_pmf(adj_lambda_home, adj_lambda_away, kappa, max_points)
             pmf += gh_w[i] * gh_w[j] * base_pmf
 
     pmf /= np.pi
@@ -165,5 +165,4 @@ __all__ = [
     "compute_win_probabilities",
     "expected_scores",
     "expected_margin",
-    "stabilize_rates",
 ]

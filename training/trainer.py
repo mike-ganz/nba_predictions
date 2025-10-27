@@ -37,36 +37,21 @@ class Trainer:
     def fit(self) -> Tuple[BivariatePoissonModel, dict[str, np.ndarray]]:
         batch = self.dataset.build()
 
-        (
-            x_home_train,
-            x_home_val,
-            y_home_train,
-            y_home_val,
-        ) = train_test_split(
+        x_home_train, x_home_val, y_home_train, y_home_val = train_test_split(
             batch.x_home,
             batch.y_home,
             test_size=self.config.test_size,
             random_state=self.config.random_state,
         )
-        (
-            x_away_train,
-            x_away_val,
-            y_away_train,
-            y_away_val,
-        ) = train_test_split(
+        x_away_train, x_away_val, y_away_train, y_away_val = train_test_split(
             batch.x_away,
             batch.y_away,
             test_size=self.config.test_size,
             random_state=self.config.random_state,
         )
-        (
-            x_shared_train,
-            x_shared_val,
-            _,
-            _,
-        ) = train_test_split(
+        x_shared_train, x_shared_val, y_shared_train, y_shared_val = train_test_split(
             batch.x_shared,
-            batch.y_home,
+            batch.y_shared,
             test_size=self.config.test_size,
             random_state=self.config.random_state,
         )
@@ -87,6 +72,7 @@ class Trainer:
             x_shared_train,
             y_home_train,
             y_away_train,
+            y_shared_train,
         )
 
         lambda_home_val, lambda_away_val, kappa_val, sigma_home_val, sigma_away_val = self.model.predict_rates(
@@ -111,12 +97,14 @@ class Trainer:
             ]
         )
 
+        margin_outcomes = np.exp(y_home_val) * baseline_home_val - np.exp(y_away_val) * baseline_away_val
+
         validation_payload = {
             "joint_pmfs": joint_pmfs,
             "margin_cdf": margin_cdfs,
-            "margin_outcomes": y_home_val - y_away_val,
-            "score_outcomes_home": y_home_val,
-            "score_outcomes_away": y_away_val,
+            "margin_outcomes": margin_outcomes,
+            "score_outcomes_home": np.exp(y_home_val) * baseline_home_val,
+            "score_outcomes_away": np.exp(y_away_val) * baseline_away_val,
             "market_home": baseline_home_val,
             "market_away": baseline_away_val,
             "sigma_home": sigma_home_val,

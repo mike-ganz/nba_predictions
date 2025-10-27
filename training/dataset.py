@@ -25,6 +25,7 @@ class TrainingBatch:
     baseline_away: np.ndarray
     y_home: np.ndarray
     y_away: np.ndarray
+    y_shared: np.ndarray
 
 
 class TrainingDataset:
@@ -38,8 +39,8 @@ class TrainingDataset:
         x_shared_list = []
         baseline_home = []
         baseline_away = []
-        y_home = []
-        y_away = []
+        y_home_raw = []
+        y_away_raw = []
 
         for record in self.records:
             features = self.builder.build(record)
@@ -50,17 +51,26 @@ class TrainingDataset:
             baseline_away.append(features.baseline_away)
             if not record.outcome:
                 raise ValueError("GameRecord missing outcome data for training")
-            y_home.append(record.outcome.home_final)
-            y_away.append(record.outcome.away_final)
+            y_home_raw.append(record.outcome.home_final)
+            y_away_raw.append(record.outcome.away_final)
+
+        y_home_raw = np.array(y_home_raw)
+        y_away_raw = np.array(y_away_raw)
+        baseline_home = np.array(baseline_home)
+        baseline_away = np.array(baseline_away)
+        y_home_resid = np.log(np.maximum(y_home_raw, 1)) - np.log(np.maximum(baseline_home, 1))
+        y_away_resid = np.log(np.maximum(y_away_raw, 1)) - np.log(np.maximum(baseline_away, 1))
+        shared_target = np.log(np.maximum(np.minimum(y_home_raw, y_away_raw), 1))
 
         return TrainingBatch(
             x_home=np.array(x_home_list),
             x_away=np.array(x_away_list),
             x_shared=np.array(x_shared_list),
-            baseline_home=np.array(baseline_home),
-            baseline_away=np.array(baseline_away),
-            y_home=np.array(y_home),
-            y_away=np.array(y_away),
+            baseline_home=baseline_home,
+            baseline_away=baseline_away,
+            y_home=y_home_resid,
+            y_away=y_away_resid,
+            y_shared=shared_target,
         )
 
 

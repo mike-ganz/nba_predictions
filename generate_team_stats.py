@@ -11,12 +11,87 @@ SEASON_YEAR = "2023-2024"  # Default, overridden by global config
 ROLLING_WINDOW = 10  # Number of games for rolling averages
 MIN_GAMES = 3  # Minimum games required for stats
 
+SEASON_FALLBACK = {
+    "2024-2025": "2023-2024",
+    "2023-2024": "2022-2023",
+    "2022-2023": "2021-2022",
+    "2021-2022": "2020-2021",
+}
+
 # Cache for loaded team data to avoid repeated file loading
 _team_data_cache = {}
 
 # Cache for calculated team stats (to avoid recalculating)
 CACHE_DIR = 'data/cache/team_stats'
 _stats_cache = {}
+
+
+def _load_season_frame(season_year: str) -> pd.DataFrame:
+    """Return the team boxscore dataframe for the requested season."""
+
+    global df
+
+    if season_year in _team_data_cache:
+        return _team_data_cache[season_year]
+
+    frame = load_team_data(season_year)
+    _team_data_cache[season_year] = frame
+
+    # Maintain the legacy global reference for the default season
+    if df is None and season_year == SEASON_YEAR:
+        df = frame
+
+    return frame
+
+
+def _compute_rest_days(team_games_df: pd.DataFrame, target_date: pd.Timestamp | None) -> float | None:
+    """Compute rest days using the current-season schedule prior to target_date."""
+
+    if target_date is None or team_games_df.empty:
+        return None
+
+    last_game_date = team_games_df['DATE'].max()
+    if pd.isna(last_game_date):
+        return None
+
+    return float((target_date - last_game_date).days)
+
+
+def _assemble_stats(
+    team_name: str,
+    rate_payload: dict,
+    *,
+    season_used: str,
+    source: str,
+    rest_days: float | None,
+    games_played: int,
+    current_games: int,
+    primary_season: str,
+) -> dict:
+    """Normalize the stats dictionary returned to callers."""
+
+    stats = {
+        'TEAM_NAME': team_name,
+        'SEASON': season_used,
+        'PRIMARY_SEASON': primary_season,
+        'SEASON_USED': season_used,
+        'STAT_SOURCE': source,
+        'GAMES_PLAYED': games_played,
+        'GAMES_CURRENT_SEASON': current_games,
+        'REST_DAYS': rest_days,
+        'ROLLING_WINDOW_SIZE': rate_payload.get('games_in_window', 0),
+        'OEFF': rate_payload['OEFF'],
+        'DEFF': rate_payload['DEFF'],
+        'PACE': rate_payload['PACE'],
+        '3PAr': rate_payload['3PAr'],
+        'FTr': rate_payload['FTr'],
+        'ORr': rate_payload['ORr'],
+        'DRr': rate_payload['DRr'],
+        'ASTr': rate_payload['ASTr'],
+        'TOr': rate_payload['TOr'],
+    }
+
+    return stats
 
 def load_team_data(season_year=None):
     """Load team boxscore data for the specified season year."""
@@ -49,8 +124,7 @@ def load_team_data(season_year=None):
     return df
 
 # Data will be loaded dynamically when needed based on global config
-df = None
-_team_data_cache = {}
+df: pd.DataFrame | None = None
 
 def ensure_cache_dir():
     """Ensure the cache directory exists."""
@@ -202,134 +276,103 @@ def generate_team_stats(team_name, target_date=None, fallback_season=None, use_c
     """
     global df
     
-    # Load data if not already loaded
-    if df is None:
-        from config.settings import config
-        season_to_use = fallback_season or config.season_year
-        df = load_team_data(season_to_use)
-        _team_data_cache[season_to_use] = df
-    
-    # Check cache first
-    season_to_use = fallback_season or SEASON_YEAR
+    primary_season = fallback_season or SEASON_YEAR
+
+    # Pull the current-season frame first
+    current_frame = _load_season_frame(primary_season)
+    team_city = get_team_city(team_name)
+    target_timestamp = pd.to_datetime(target_date) if target_date else None
+
+    cache_key = get_cache_key(team_name, target_date or "all", primary_season)
     if use_cache:
-        cache_key = get_cache_key(team_name, target_date or "all", season_to_use)
         cached_stats = load_from_cache(cache_key)
         if cached_stats is not None:
             return cached_stats
-    
-    team_city = get_team_city(team_name)
 
-    # Determine which dataset to use
-    if fallback_season and fallback_season != SEASON_YEAR:
-        # Try to get fallback season data from cache first
-        if fallback_season in _team_data_cache:
-            data_source = _team_data_cache[fallback_season]
-            season_label = fallback_season
-        else:
-            # Load fallback season data and cache it
-            try:
-                fallback_df = load_team_data(fallback_season)
-                _team_data_cache[fallback_season] = fallback_df
-                data_source = fallback_df
-                season_label = fallback_season
-            except (ValueError, FileNotFoundError):
-                # If fallback season not available, create reasonable default stats
-                default_stats = {
-                    'TEAM_NAME': team_name,
-                    'SEASON': fallback_season, 
-                    'GAMES_PLAYED': 0,
-                    'OEFF': 110.0,
-                    'DEFF': 110.0,
-                    'PACE': 100.0,
-                    '3PAr': 0.38,  # League average
-                    'FTr': 0.22,   # League average
-                    'ORr': 0.25,   # League average
-                    'DRr': 0.75,   # League average (complement of ORr)
-                    'ASTr': 0.65,  # League average
-                    'TOr': 0.13,   # League average (~13% of possessions)
-                    'REST_DAYS': 10,
-                    'USING_PRIOR_SEASON': True,
-                    'FALLBACK_REASON': f'No {fallback_season} team data available'
-                }
-                if use_cache:
-                    save_to_cache(cache_key, default_stats)
-                return default_stats
+    # Subset to games prior to target_date (or entire season if None)
+    if target_timestamp is None:
+        current_mask = current_frame['TEAM'] == team_city
     else:
-        data_source = df
-        season_label = SEASON_YEAR
+        current_mask = (current_frame['TEAM'] == team_city) & (current_frame['DATE'] < target_timestamp)
 
-    # If target_date is empty or None, use all games from the data source
-    if not target_date:
-        mask = (data_source['TEAM'] == team_city)
-        team_data = data_source[mask]
-        last_game_date = team_data['DATE'].max() if len(team_data) > 0 else None
-        rest_days = None
-    else:
-        # Convert target_date to datetime
-        target_date_dt = pd.to_datetime(target_date)
-        mask = (data_source['TEAM'] == team_city) & (data_source['DATE'] < target_date_dt)
-        team_data = data_source[mask]
-        last_game_date = team_data['DATE'].max() if len(team_data) > 0 else None
-        rest_days = (target_date_dt - last_game_date).days if last_game_date is not None else None
+    current_games = current_frame[current_mask].sort_values('DATE')
+    current_count = len(current_games)
 
-    # Return None if no games found
-    if len(team_data) == 0:
-        return None
+    rest_days = _compute_rest_days(current_games, target_timestamp)
 
-    # Check if we have minimum games required
-    if len(team_data) < MIN_GAMES:
-        # Not enough games - return league averages
-        default_stats = {
-            'TEAM_NAME': team_name,
-            'SEASON': season_label,
-            'GAMES_PLAYED': len(team_data),
-            'OEFF': 110.0,
-            'DEFF': 110.0,
-            'PACE': 100.0,
-            '3PAr': 0.38,
-            'FTr': 0.22,
-            'ORr': 0.25,
-            'DRr': 0.75,
-            'ASTr': 0.65,
-            'TOr': 0.13,
-            'REST_DAYS': rest_days,
-            'WARNING': f'Only {len(team_data)} games available (minimum {MIN_GAMES})'
-        }
-        if use_cache:
-            save_to_cache(cache_key, default_stats)
-        return default_stats
+    if current_count >= MIN_GAMES:
+        rates = calculate_enhanced_rates(current_games)
+        if rates is not None:
+            stats = _assemble_stats(
+                team_name,
+                rates,
+                season_used=primary_season,
+                source="current",
+                rest_days=rest_days,
+                games_played=current_count,
+                current_games=current_count,
+                primary_season=primary_season,
+            )
+            if use_cache:
+                save_to_cache(cache_key, stats)
+            return stats
 
-    # Sort by date to ensure proper rolling window
-    team_data = team_data.sort_values('DATE')
+    # Not enough games – attempt prior-season fallback
+    prior_season = SEASON_YEAR
+    if primary_season in SEASON_FALLBACK:
+        prior_season = SEASON_FALLBACK[primary_season]
+    elif primary_season != SEASON_YEAR:
+        prior_season = primary_season
 
-    # Calculate enhanced rates using rolling window
-    enhanced_rates = calculate_enhanced_rates(team_data)
-    
-    if enhanced_rates is None:
-        return None
+    fallback_frame = _load_season_frame(prior_season)
+    fallback_games = fallback_frame[fallback_frame['TEAM'] == team_city].sort_values('DATE')
+    fallback_count = len(fallback_games)
 
-    # Build final stats dictionary
-    stats = {
-        'TEAM_NAME': team_name,
-        'SEASON': season_label,
-        'GAMES_PLAYED': len(team_data),
-        'OEFF': enhanced_rates['OEFF'],
-        'DEFF': enhanced_rates['DEFF'],
-        'PACE': enhanced_rates['PACE'],
-        '3PAr': enhanced_rates['3PAr'],
-        'FTr': enhanced_rates['FTr'],
-        'ORr': enhanced_rates['ORr'],
-        'DRr': enhanced_rates['DRr'],
-        'ASTr': enhanced_rates['ASTr'],
-        'TOr': enhanced_rates['TOr'],
-        'REST_DAYS': rest_days,
-        'ROLLING_WINDOW_SIZE': enhanced_rates['games_in_window']
+    if fallback_count >= MIN_GAMES:
+        fallback_rates = calculate_enhanced_rates(fallback_games)
+        if fallback_rates is not None:
+            stats = _assemble_stats(
+                team_name,
+                fallback_rates,
+                season_used=prior_season,
+                source="prior_season",
+                rest_days=rest_days,
+                games_played=fallback_count,
+                current_games=current_count,
+                primary_season=primary_season,
+            )
+            if use_cache:
+                save_to_cache(cache_key, stats)
+            return stats
+
+    # Final fallback – use league averages but keep metadata useful
+    league_rates = {
+        'OEFF': 110.0,
+        'DEFF': 110.0,
+        'PACE': 100.0,
+        '3PAr': 0.38,
+        'FTr': 0.22,
+        'ORr': 0.25,
+        'DRr': 0.75,
+        'ASTr': 0.65,
+        'TOr': 0.13,
+        'games_in_window': 0,
     }
-    
-    # Cache the result
+
+    stats = _assemble_stats(
+        team_name,
+        league_rates,
+        season_used=prior_season,
+        source="league_average",
+        rest_days=rest_days,
+        games_played=fallback_count,
+        current_games=current_count,
+        primary_season=primary_season,
+    )
+
     if use_cache:
         save_to_cache(cache_key, stats)
-    
+
     return stats
 
 def get_team_stats_array(team_name, target_date=None, fallback_season=None, use_cache=True):

@@ -10,6 +10,7 @@ import numpy as np
 from .isotonic import IsotonicCalibrator
 from .market_blend import MarketBlendConfig, MarketBlender
 from .temperature import TemperatureCalibrator
+from models.distribution import expected_scores
 
 
 @dataclass
@@ -24,6 +25,8 @@ class CalibrationConfig:
     apply_isotonic: bool = True
     apply_temperature: bool = True
     market_weight: float = 0.5
+    market_weight_bounds: Tuple[float, float] = (0.0, 1.0)
+    market_weight_reg: float = 0.0
     margin_low: int = -60
     margin_high: int = 60
 
@@ -37,7 +40,13 @@ class Calibrator:
         self.temperature: Optional[TemperatureCalibrator] = (
             TemperatureCalibrator() if self.config.apply_temperature else None
         )
-        self.blender = MarketBlender(MarketBlendConfig(weight=self.config.market_weight))
+        self.blender = MarketBlender(
+            MarketBlendConfig(
+                weight=self.config.market_weight,
+                weight_bounds=self.config.market_weight_bounds,
+                regularization=self.config.market_weight_reg,
+            )
+        )
         self.margin_range: Tuple[int, int] = (self.config.margin_low, self.config.margin_high)
         self.sigma_home: Optional[np.ndarray] = None
         self.sigma_away: Optional[np.ndarray] = None
@@ -49,6 +58,8 @@ class Calibrator:
         margin_outcomes: np.ndarray,
         score_outcomes_home: np.ndarray,
         score_outcomes_away: np.ndarray,
+        market_home: Optional[np.ndarray] = None,
+        market_away: Optional[np.ndarray] = None,
         sigma_home: Optional[np.ndarray] = None,
         sigma_away: Optional[np.ndarray] = None,
     ) -> CalibrationResult:
@@ -59,7 +70,7 @@ class Calibrator:
         if self.isotonic:
             indicators = np.zeros_like(margin_cdf)
             for i, outcome in enumerate(margin_outcomes):
-                idx = np.clip(outcome - self.margin_range[0], 0, margin_cdf.shape[1] - 1)
+                idx = int(np.clip(outcome - self.margin_range[0], 0, margin_cdf.shape[1] - 1))
                 indicators[i, idx:] = 1.0
             self.isotonic.fit(margin_cdf, indicators)
         if self.temperature:
@@ -68,6 +79,27 @@ class Calibrator:
             stacked_pmfs = np.stack([home_pmfs, away_pmfs], axis=1)
             stacked_outcomes = np.stack([score_outcomes_home, score_outcomes_away], axis=1)
             self.temperature.fit(stacked_pmfs, stacked_outcomes)
+
+        if market_home is not None and market_away is not None:
+            model_exp_home = []
+            model_exp_away = []
+            for joint in joint_probs:
+                exp_home, exp_away = expected_scores(joint)
+                model_exp_home.append(exp_home)
+                model_exp_away.append(exp_away)
+            model_exp_home = np.array(model_exp_home)
+            model_exp_away = np.array(model_exp_away)
+
+            self.blender.fit(
+                model_home=model_exp_home,
+                model_away=model_exp_away,
+                market_home=np.asarray(market_home),
+                market_away=np.asarray(market_away),
+                actual_home=np.asarray(score_outcomes_home),
+                actual_away=np.asarray(score_outcomes_away),
+            )
+        else:
+            self.blender.weight = self.config.market_weight
         self.sigma_home = sigma_home
         self.sigma_away = sigma_away
         return CalibrationResult(
@@ -88,17 +120,18 @@ class Calibrator:
         away_pmfs = joint_probs.sum(axis=1)
         stacked_pmfs = np.stack([home_pmfs, away_pmfs], axis=1)
         transformed = self.temperature.transform(stacked_pmfs)
-        adjusted_joint = joint_probs.copy()
+        adjusted_joint = np.zeros_like(joint_probs)
         for idx in range(joint_probs.shape[0]):
             target_home = transformed[idx, 0, :]
             target_away = transformed[idx, 1, :]
-            joint = adjusted_joint[idx]
-            row_sum = joint.sum(axis=1, keepdims=True)
-            row_sum[row_sum == 0] = 1e-8
-            joint *= (target_home / row_sum)
-            col_sum = joint.sum(axis=0, keepdims=True)
-            col_sum[col_sum == 0] = 1e-8
-            joint *= (target_away / col_sum)
+            joint = joint_probs[idx].copy()
+            for _ in range(5):
+                row_sum = joint.sum(axis=1, keepdims=True)
+                row_sum[row_sum == 0] = 1e-8
+                joint *= (target_home[:, None] / row_sum)
+                col_sum = joint.sum(axis=0, keepdims=True)
+                col_sum[col_sum == 0] = 1e-8
+                joint *= (target_away[None, :] / col_sum)
             total_sum = joint.sum()
             if not np.isfinite(total_sum) or total_sum <= 0:
                 joint = np.outer(target_home, target_away)
