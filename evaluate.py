@@ -190,8 +190,14 @@ def main() -> None:
     print("PIT Histogram Home:", pit_home)
     print("PIT Histogram Away:", pit_away)
 
-    pit_home_values = [home_cdfs[i, outcomes_home[i]] for i in range(len(outcomes_home))]
-    pit_away_values = [away_cdfs[i, outcomes_away[i]] for i in range(len(outcomes_away))]
+    pit_home_values = [
+        home_cdfs[i, int(np.clip(outcomes_home[i], 0, home_cdfs.shape[1] - 1))]
+        for i in range(len(outcomes_home))
+    ]
+    pit_away_values = [
+        away_cdfs[i, int(np.clip(outcomes_away[i], 0, away_cdfs.shape[1] - 1))]
+        for i in range(len(outcomes_away))
+    ]
 
     save_pit_histogram(pit_home_values, reports_path / "pit_home.png", "Home Score PIT")
     save_pit_histogram(pit_away_values, reports_path / "pit_away.png", "Away Score PIT")

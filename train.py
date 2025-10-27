@@ -12,6 +12,7 @@ import yaml
 from features.availability import load_baselines_from_csv
 
 from calibration.calibrator import Calibrator, CalibrationConfig
+from models.bivariate_poisson import BivariatePoissonConfig
 from data.loaders import GameDataLoader
 from training.dataset import TrainingDataset
 from training.trainer import Trainer, TrainerConfig
@@ -45,7 +46,8 @@ def main() -> None:
     if baselines_path and Path(baselines_path).exists():
         load_baselines_from_csv(baselines_path)
     trainer_cfg = TrainerConfig(**cfg.get("training", {}))
-    trainer = Trainer(dataset, config=trainer_cfg)
+    model_cfg = BivariatePoissonConfig(**cfg.get("model", {}))
+    trainer = Trainer(dataset, config=trainer_cfg, model_config=model_cfg)
     model, validation_payload = trainer.fit()
 
     calibration_cfg = CalibrationConfig(**cfg.get("calibration", {}))

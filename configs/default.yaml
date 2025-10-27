@@ -5,15 +5,21 @@ data:
   availability_baselines: data/player_baselines.csv
 
 model:
+  # CV-regularized ridge with stronger shared penalty
+  use_cv: true
+  alphas_home: [0.1, 0.3, 0.5, 1.0, 2.0]
+  alphas_away: [0.1, 0.3, 0.5, 1.0, 2.0]
+  alphas_shared: [1.0, 2.0, 3.0, 5.0]
+  cv_folds: 5
+
+  # Baseline single alphas (fallback if use_cv=false)
   alpha_home: 0.5
-  l1_ratio_home: 0.1
   alpha_away: 0.5
-  l1_ratio_away: 0.1
-  alpha_shared: 0.5
-  l1_ratio_shared: 0.0
-  enable_overdispersion: false
-  overdispersion_alpha: 0.1
-  overdispersion_l1_ratio: 0.0
+  alpha_shared: 2.0
+
+  # Overdispersion toggle
+  enable_overdispersion: true
+  overdispersion_alpha: 0.5
 
 calibration:
   apply_isotonic: true

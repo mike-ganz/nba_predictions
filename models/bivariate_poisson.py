@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Tuple
+from dataclasses import dataclass, field
+from typing import Tuple, List
 
 import numpy as np
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import Ridge, RidgeCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -15,7 +15,12 @@ from sklearn.preprocessing import StandardScaler
 class BivariatePoissonConfig:
     alpha_home: float = 1.0
     alpha_away: float = 1.0
-    alpha_shared: float = 1.0
+    alpha_shared: float = 2.0
+    use_cv: bool = True
+    alphas_home: List[float] = field(default_factory=lambda: [0.1, 0.3, 0.5, 1.0, 2.0])
+    alphas_away: List[float] = field(default_factory=lambda: [0.1, 0.3, 0.5, 1.0, 2.0])
+    alphas_shared: List[float] = field(default_factory=lambda: [1.0, 2.0, 3.0, 5.0])
+    cv_folds: int = 5
     enable_overdispersion: bool = False
     overdispersion_alpha: float = 1.0
 
@@ -23,18 +28,32 @@ class BivariatePoissonConfig:
 class BivariatePoissonModel:
     def __init__(self, config: BivariatePoissonConfig | None = None) -> None:
         self.config = config or BivariatePoissonConfig()
-        self.model_home = Pipeline([
-            ("scaler", StandardScaler()),
-            ("reg", Ridge(alpha=self.config.alpha_home))
-        ])
-        self.model_away = Pipeline([
-            ("scaler", StandardScaler()),
-            ("reg", Ridge(alpha=self.config.alpha_away))
-        ])
-        self.model_shared = Pipeline([
-            ("scaler", StandardScaler()),
-            ("reg", Ridge(alpha=self.config.alpha_shared))
-        ])
+        if self.config.use_cv:
+            self.model_home = Pipeline([
+                ("scaler", StandardScaler()),
+                ("reg", RidgeCV(alphas=self.config.alphas_home, cv=self.config.cv_folds))
+            ])
+            self.model_away = Pipeline([
+                ("scaler", StandardScaler()),
+                ("reg", RidgeCV(alphas=self.config.alphas_away, cv=self.config.cv_folds))
+            ])
+            self.model_shared = Pipeline([
+                ("scaler", StandardScaler()),
+                ("reg", RidgeCV(alphas=self.config.alphas_shared, cv=self.config.cv_folds))
+            ])
+        else:
+            self.model_home = Pipeline([
+                ("scaler", StandardScaler()),
+                ("reg", Ridge(alpha=self.config.alpha_home))
+            ])
+            self.model_away = Pipeline([
+                ("scaler", StandardScaler()),
+                ("reg", Ridge(alpha=self.config.alpha_away))
+            ])
+            self.model_shared = Pipeline([
+                ("scaler", StandardScaler()),
+                ("reg", Ridge(alpha=self.config.alpha_shared))
+            ])
         self.model_overdispersion_home = None
         self.model_overdispersion_away = None
         if self.config.enable_overdispersion:

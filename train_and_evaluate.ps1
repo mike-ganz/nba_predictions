@@ -1,0 +1,2 @@
+python train.py --data data/games_train.jsonl --output artifacts/run_modern --config configs/default.yaml
+python evaluate.py --data data/games_val.jsonl --model artifacts/run_modern --reports-dir reports/run_modern_val

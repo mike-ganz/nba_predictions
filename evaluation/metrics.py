@@ -9,20 +9,25 @@ import pandas as pd
 def compute_log_loss(predicted_probs: np.ndarray, outcomes: np.ndarray) -> float:
     probs = np.clip(predicted_probs, 1e-12, 1.0)
     idx = np.arange(len(probs))
-    return float(-np.log(probs[idx, outcomes]).mean())
+    clipped_outcomes = np.clip(outcomes.astype(int), 0, probs.shape[1] - 1)
+    return float(-np.log(probs[idx, clipped_outcomes]).mean())
 
 
 def compute_crps(cdf: np.ndarray, outcomes: np.ndarray) -> float:
     errors = []
     for i, outcome in enumerate(outcomes):
         indicator = np.zeros_like(cdf[i])
-        indicator[outcome:] = 1
+        clipped_outcome = int(np.clip(outcome, 0, len(indicator) - 1))
+        indicator[clipped_outcome:] = 1
         errors.append(np.mean((cdf[i] - indicator) ** 2))
     return float(np.mean(errors))
 
 
 def pit_histogram(cdf: np.ndarray, outcomes: np.ndarray, bins: int = 10) -> np.ndarray:
-    pit_values = [cdf[i, outcome] for i, outcome in enumerate(outcomes)]
+    pit_values = []
+    for i, outcome in enumerate(outcomes):
+        idx = int(np.clip(outcome, 0, cdf.shape[1] - 1))
+        pit_values.append(cdf[i, idx])
     hist, _ = np.histogram(pit_values, bins=bins, range=(0, 1))
     return hist
 

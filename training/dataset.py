@@ -60,7 +60,8 @@ class TrainingDataset:
         baseline_away = np.array(baseline_away)
         y_home_resid = np.log(np.maximum(y_home_raw, 1)) - np.log(np.maximum(baseline_home, 1))
         y_away_resid = np.log(np.maximum(y_away_raw, 1)) - np.log(np.maximum(baseline_away, 1))
-        shared_target = np.log(np.maximum(np.minimum(y_home_raw, y_away_raw), 1))
+        # Shared component learns baseline-relative game-level deviation, not absolute level
+        shared_target = 0.5 * (y_home_resid + y_away_resid)
 
         return TrainingBatch(
             x_home=np.array(x_home_list),

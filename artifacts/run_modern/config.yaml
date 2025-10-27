@@ -15,13 +15,28 @@ evaluation:
 model:
   alpha_away: 0.5
   alpha_home: 0.5
-  alpha_shared: 0.5
-  enable_overdispersion: false
-  l1_ratio_away: 0.1
-  l1_ratio_home: 0.1
-  l1_ratio_shared: 0.0
-  overdispersion_alpha: 0.1
-  overdispersion_l1_ratio: 0.0
+  alpha_shared: 2.0
+  alphas_away:
+  - 0.1
+  - 0.3
+  - 0.5
+  - 1.0
+  - 2.0
+  alphas_home:
+  - 0.1
+  - 0.3
+  - 0.5
+  - 1.0
+  - 2.0
+  alphas_shared:
+  - 1.0
+  - 2.0
+  - 3.0
+  - 5.0
+  cv_folds: 5
+  enable_overdispersion: true
+  overdispersion_alpha: 0.5
+  use_cv: true
 training:
   random_state: 42
   test_size: 0.2
