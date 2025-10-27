@@ -1,0 +1,32 @@
+data:
+  training_jsonl: data/games_train.jsonl
+  validation_jsonl: data/games_val.jsonl
+  test_jsonl: data/games_test.jsonl
+  availability_baselines: data/player_baselines.csv
+
+model:
+  alpha_home: 0.5
+  l1_ratio_home: 0.1
+  alpha_away: 0.5
+  l1_ratio_away: 0.1
+  alpha_shared: 0.5
+  l1_ratio_shared: 0.0
+  enable_overdispersion: false
+  overdispersion_alpha: 0.1
+  overdispersion_l1_ratio: 0.0
+
+calibration:
+  apply_isotonic: true
+  apply_temperature: true
+  market_weight: 0.5
+
+training:
+  test_size: 0.2
+  random_state: 42
+
+evaluation:
+  max_score: 150
+  margin_low: -60
+  margin_high: 60
+  reports_dir: reports
+
