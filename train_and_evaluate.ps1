@@ -1,2 +1,2 @@
 python train.py --data data/games_train.jsonl --output artifacts/run_modern --config configs/default.yaml
-python evaluate.py --data data/games_val.jsonl --model artifacts/run_modern --reports-dir reports/run_modern_val
+python evaluate.py --data data/games_predict_2024_2025.jsonl --model artifacts/run_modern --reports-dir reports/run_2425_val --gh-samples 13 --max-score 160 --margin-low -60 --margin-high 60 --fast-eval --sharpen 0.9

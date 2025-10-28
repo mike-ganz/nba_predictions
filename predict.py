@@ -147,6 +147,9 @@ def main() -> None:
     for idx, game in enumerate(games):
         joint = calibrated_joint[idx]
         win_home, win_away, _ = compute_win_probabilities(joint)
+        # Apply scalar win-probability calibration if available
+        win_home = float(calibrator.calibrate_win_prob(np.array([win_home]))[0])
+        win_away = 1.0 - win_home
         exp_home, exp_away = expected_scores(joint)
         blended_home, blended_away = calibrator.blend_expectations(
             np.array([exp_home]),
