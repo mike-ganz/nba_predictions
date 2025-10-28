@@ -10,6 +10,8 @@ from typing import Dict, Iterable, List, Tuple
 import pandas as pd
 
 from generate_team_stats import generate_team_stats
+from player_data_loader import get_team_players
+from transform_player_stats import load_player_data
 
 
 TEAM_NAME_TO_ABBR = {
@@ -223,7 +225,7 @@ def get_team_features(team_name: str, date_str: str, season: str) -> Tuple[Dict[
     return features, metadata
 
 
-def build_game_record(game_rows: pd.DataFrame, season: str, venue_col: str) -> Dict:
+def build_game_record(game_rows: pd.DataFrame, season: str, venue_col: str, player_boxscore_df: pd.DataFrame = None) -> Dict:
     rows = game_rows.to_dict("records")
     home_row = next((r for r in rows if str(r.get(venue_col, "")).upper().startswith("H")), None)
     away_row = next((r for r in rows if str(r.get(venue_col, "")).upper().startswith("R")), None)
@@ -235,6 +237,9 @@ def build_game_record(game_rows: pd.DataFrame, season: str, venue_col: str) -> D
     date_str = date.strftime("%Y-%m-%d")
     away_team_name = away_row.get("TEAM")
     home_team_name = home_row.get("TEAM")
+    
+    game_id = rows[0].get("GAME-ID")
+    logging.debug(f"Building game {game_id}: {away_team_name} @ {home_team_name} on {date_str}")
 
     away_features, away_meta = get_team_features(away_team_name, date_str, season)
     home_features, home_meta = get_team_features(home_team_name, date_str, season)
@@ -252,7 +257,28 @@ def build_game_record(game_rows: pd.DataFrame, season: str, venue_col: str) -> D
 
     game_id = f"{date_str}-{away_features['team_id']}-{home_features['team_id']}"
 
-    return {
+    # Build player availability data if player boxscore data is provided
+    players_data = None
+    if player_boxscore_df is not None:
+        try:
+            logging.debug(f"Loading player data for {game_id}...")
+            away_players = get_team_players(away_team_name, date_str, season, player_boxscore_df)
+            logging.debug(f"  Away: {len(away_players)} players")
+            home_players = get_team_players(home_team_name, date_str, season, player_boxscore_df)
+            logging.debug(f"  Home: {len(home_players)} players")
+            
+            # Only include players if both teams have at least 5 players (schema requirement)
+            if len(away_players) >= 5 and len(home_players) >= 5:
+                players_data = {
+                    "A": away_players,
+                    "H": home_players,
+                }
+            else:
+                logging.debug(f"Insufficient players for {game_id}: away={len(away_players)}, home={len(home_players)}")
+        except Exception as e:
+            logging.warning(f"Failed to load player data for {game_id}: {e}")
+
+    game_record = {
         "game_id": game_id,
         "season": season,
         "date": date_str,
@@ -278,16 +304,25 @@ def build_game_record(game_rows: pd.DataFrame, season: str, venue_col: str) -> D
             },
         },
     }
+    
+    # Add players field if we have player data
+    if players_data is not None:
+        game_record["players"] = players_data
+    
+    return game_record
 
 
-def process_file(path: Path, season: str) -> List[Dict]:
+def process_file(path: Path, season: str, player_boxscore_df: pd.DataFrame = None) -> List[Dict]:
     logging.info("Processing %s", path)
     df = pd.read_excel(path)
     df = normalize_columns(df)
     venue_col = parse_venue_columns(df)
     games = []
-    for game_id, group in df.groupby("GAME-ID"):
-        record = build_game_record(group, season, venue_col)
+    total_games = len(df.groupby("GAME-ID"))
+    for idx, (game_id, group) in enumerate(df.groupby("GAME-ID"), 1):
+        if idx % 100 == 0:
+            logging.info(f"  Processed {idx}/{total_games} games...")
+        record = build_game_record(group, season, venue_col, player_boxscore_df)
         if record:
             games.append(record)
     return games
@@ -296,11 +331,18 @@ def process_file(path: Path, season: str) -> List[Dict]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Prepare game-level JSONL using season aggregates")
     parser.add_argument("--team-boxscores-dir", type=str, required=True)
+    parser.add_argument("--player-boxscores-dir", type=str, default="data/player_boxscores/historical",
+                       help="Directory containing player boxscore Excel files")
     parser.add_argument("--output", type=str, required=True)
     parser.add_argument("--seasons", nargs="*", default=None)
+    parser.add_argument("--include-players", action="store_true",
+                       help="Include player availability data in the output")
+    parser.add_argument("--debug", action="store_true",
+                       help="Enable debug logging")
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+    log_level = logging.DEBUG if args.debug else logging.INFO
+    logging.basicConfig(level=log_level, format="[%(levelname)s] %(message)s")
 
     team_dir = Path(args.team_boxscores_dir)
     if not team_dir.exists():
@@ -322,7 +364,25 @@ def main() -> None:
         if not season_match:
             logging.warning("Skipping %s: season not detected", file_path)
             continue
-        all_games.extend(process_file(file_path, season_match))
+        
+        # Load player boxscore data for this season if requested
+        player_df = None
+        if args.include_players:
+            player_dir = Path(args.player_boxscores_dir)
+            if player_dir.exists():
+                try:
+                    player_df = load_player_data(season_match)
+                    logging.info(f"Loaded player data for {season_match}: {len(player_df)} player-games")
+                    
+                    # Pre-load prior season cache for fast fallbacks
+                    from player_data_loader import _load_prior_season_cache
+                    _load_prior_season_cache(season_match)
+                except Exception as e:
+                    logging.warning(f"Failed to load player data for {season_match}: {e}")
+            else:
+                logging.warning(f"Player boxscores directory not found: {player_dir}")
+        
+        all_games.extend(process_file(file_path, season_match, player_df))
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -330,7 +390,9 @@ def main() -> None:
         for record in all_games:
             f.write(json.dumps(record) + "\n")
 
-    logging.info("Wrote %d game records to %s", len(all_games), output_path)
+    games_with_players = sum(1 for g in all_games if "players" in g)
+    logging.info("Wrote %d game records to %s (%d with player data)", 
+                 len(all_games), output_path, games_with_players)
 
 
 if __name__ == "__main__":
