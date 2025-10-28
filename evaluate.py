@@ -213,7 +213,9 @@ def main() -> None:
     margin_range = (args.margin_low, args.margin_high)
 
     margin_cdfs = np.cumsum(margin_stack, axis=1)
-    calibrated_margin_cdfs = calibrator.calibrate_margin_cdf(margin_cdfs)
+    # Use per-bin temperatures by passing spreads (baseline_home - baseline_away)
+    spreads_all = np.array(market_home) - np.array(market_away)
+    calibrated_margin_cdfs = calibrator.calibrate_margin_cdf(margin_cdfs, spreads=spreads_all)
     calibrated_margin_pmfs = np.diff(
         np.concatenate([np.zeros((len(calibrated_margin_cdfs), 1)), calibrated_margin_cdfs], axis=1),
         axis=1,
