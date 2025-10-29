@@ -7,14 +7,15 @@ data:
 model:
   # CV-regularized ridge with stronger shared penalty
   use_cv: true
-  alphas_home: [0.1, 0.3, 0.5, 1.0, 2.0]
-  alphas_away: [0.1, 0.3, 0.5, 1.0, 2.0]
-  alphas_shared: [1.0, 2.0, 3.0, 5.0]
+  # Expanded ranges for player features (15 features per side vs 10)
+  alphas_home: [0.05, 0.1, 0.3, 0.5, 1.0, 2.0, 3.0]
+  alphas_away: [0.05, 0.1, 0.3, 0.5, 1.0, 2.0, 3.0]
+  alphas_shared: [0.5, 1.0, 2.0, 3.0, 5.0, 7.0]
   cv_folds: 5
 
   # Baseline single alphas (fallback if use_cv=false)
-  alpha_home: 0.5
-  alpha_away: 0.5
+  alpha_home: 0.3
+  alpha_away: 0.3
   alpha_shared: 2.0
 
   # Overdispersion toggle
@@ -24,14 +25,33 @@ model:
 calibration:
   apply_isotonic: true
   apply_temperature: true
-  market_weight: 0.5
+  # CRITICAL: Set to 0.0 to trust your model, not the market!
+  # Values > 0.2 mean you're just predicting the spread (no edge)
+  market_weight: 0.0
+  market_weight_bounds: [0.0, 0.3]
+  market_weight_reg: 1.0
+  # ATS-specific calibration
+  apply_win_calibration: true
+  apply_ats_calibration: true
+  ats_split_fav_dog: true
+  ats_bin_edges: [0.0, 1.0, 2.0, 3.0, 4.0, 6.0, 10.0, 40.0]
+  ats_blend_learn: true
+  ats_blend_reg: 0.1
+  ats_blend_shrink: 200.0
+  ats_blend_cap: 0.6
+  ats_clip_low: 0.05
+  ats_clip_high: 0.95
+  # Margin distribution calibration
+  fit_margin_temperature: true
+  fit_margin_temperature_per_bin: true
+  margin_temperature_grid: [0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3]
 
 training:
-  test_size: 0.2
+  test_size: 0.0  # Use all training data (Ridge CV does internal k-fold)
   random_state: 42
 
 evaluation:
-  max_score: 150
+  max_score: 160  # Increased for high-scoring/OT games
   margin_low: -60
   margin_high: 60
   reports_dir: reports
