@@ -25,12 +25,11 @@ model:
 calibration:
   apply_isotonic: true
   apply_temperature: true
-  # CRITICAL: Set to 0.0 to trust your model, not the market!
-  # Values > 0.2 mean you're just predicting the spread (no edge)
-  market_weight: 0.0
-  market_weight_bounds: [0.0, 0.3]
+  # Market blend - 30% helps stabilize predictions
+  market_weight: 0.30
+  market_weight_bounds: [0.0, 0.5]
   market_weight_reg: 1.0
-  # ATS-specific calibration
+  # ATS-specific calibration - current settings are near-optimal
   apply_win_calibration: true
   apply_ats_calibration: true
   ats_split_fav_dog: true

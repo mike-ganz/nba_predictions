@@ -78,11 +78,17 @@ def _compute_simple_season_stats(player_df: pd.DataFrame) -> Optional[dict]:
     ts_denominator = 2 * (fga_pg + 0.44 * fta_pg)
     ts_pct = ppg / ts_denominator if ts_denominator > 0 else 0.53
     
+    # Extract usage rate from source data (column has newline in name)
+    if 'USAGE \nRATE (%)' in player_df.columns:
+        usage_rate = player_df['USAGE \nRATE (%)'].mean()
+    else:
+        usage_rate = 20.0
+    
     return {
         'GP': total_games,
         'MPG': mpg,
         'TS%': ts_pct,
-        'USAGE_RATE': 20.0  # Simplified
+        'USAGE_RATE': usage_rate  # Now actually computed from source data
     }
 
 
@@ -213,6 +219,7 @@ def get_team_players(
         else:
             baseline_minutes = baseline_stats.get('MPG', 20.0)
             baseline_ts = baseline_stats.get('TS%', 0.53)
+            # _compute_simple_season_stats returns 'USAGE_RATE' key
             baseline_usage = baseline_stats.get('USAGE_RATE', 20.0)
         
         # Convert usage to decimal

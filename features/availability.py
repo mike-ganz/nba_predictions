@@ -87,7 +87,8 @@ def compute_availability_features(
         projected_source = player.projected_minutes if player.projected_minutes is not None else baseline_minutes
         missing = max(0.0, baseline_minutes - projected_source)
         missing_minutes += missing
-        if projected_source < 1e-3:
+        # Star is out if projected < 10% of their usual minutes (injury/rest/etc)
+        if projected_source < (baseline_minutes * 0.10):
             star_out = 1
         usage_top2 += baseline.usage_rate if baseline else (player.baseline_usage_rate or 0.25)
 
