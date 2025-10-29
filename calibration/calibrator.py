@@ -315,6 +315,22 @@ class Calibrator:
         else:
             pmf_t = self._apply_temperature_to_pmf(pmf, self.margin_temperature)
         cdf_t = np.cumsum(pmf_t, axis=1)
+        
+        # Check for NaN/inf values before isotonic transformation
+        if np.any(~np.isfinite(cdf_t)):
+            nan_count = np.sum(~np.isfinite(cdf_t))
+            import warnings
+            warnings.warn(
+                f"Found {nan_count} non-finite values in margin CDFs. "
+                f"Replacing with sensible defaults to prevent calibration crash."
+            )
+            # Replace NaN/inf with uniform CDF (uninformative prior)
+            bad_rows = ~np.isfinite(cdf_t).all(axis=1)
+            if np.any(bad_rows):
+                # Create uniform CDF for bad rows
+                uniform_cdf = np.linspace(0, 1, cdf_t.shape[1])
+                cdf_t[bad_rows] = uniform_cdf
+        
         if self.isotonic is None:
             return cdf_t
         return self.isotonic.transform(cdf_t)

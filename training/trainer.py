@@ -37,34 +37,55 @@ class Trainer:
     def fit(self) -> Tuple[BivariatePoissonModel, dict[str, np.ndarray]]:
         batch = self.dataset.build()
 
-        x_home_train, x_home_val, y_home_train, y_home_val = train_test_split(
-            batch.x_home,
-            batch.y_home,
-            test_size=self.config.test_size,
-            random_state=self.config.random_state,
-        )
-        x_away_train, x_away_val, y_away_train, y_away_val = train_test_split(
-            batch.x_away,
-            batch.y_away,
-            test_size=self.config.test_size,
-            random_state=self.config.random_state,
-        )
-        x_shared_train, x_shared_val, y_shared_train, y_shared_val = train_test_split(
-            batch.x_shared,
-            batch.y_shared,
-            test_size=self.config.test_size,
-            random_state=self.config.random_state,
-        )
-        baseline_home_train, baseline_home_val = train_test_split(
-            batch.baseline_home,
-            test_size=self.config.test_size,
-            random_state=self.config.random_state,
-        )
-        baseline_away_train, baseline_away_val = train_test_split(
-            batch.baseline_away,
-            test_size=self.config.test_size,
-            random_state=self.config.random_state,
-        )
+        # If test_size is 0, use all data for training (no internal split)
+        if self.config.test_size == 0 or self.config.test_size == 0.0:
+            x_home_train = batch.x_home
+            x_away_train = batch.x_away
+            x_shared_train = batch.x_shared
+            y_home_train = batch.y_home
+            y_away_train = batch.y_away
+            y_shared_train = batch.y_shared
+            baseline_home_train = batch.baseline_home
+            baseline_away_train = batch.baseline_away
+            
+            # Use same data for validation payload (calibration will use external holdout)
+            x_home_val = batch.x_home
+            x_away_val = batch.x_away
+            x_shared_val = batch.x_shared
+            y_home_val = batch.y_home
+            y_away_val = batch.y_away
+            baseline_home_val = batch.baseline_home
+            baseline_away_val = batch.baseline_away
+        else:
+            # Normal train/test split
+            x_home_train, x_home_val, y_home_train, y_home_val = train_test_split(
+                batch.x_home,
+                batch.y_home,
+                test_size=self.config.test_size,
+                random_state=self.config.random_state,
+            )
+            x_away_train, x_away_val, y_away_train, y_away_val = train_test_split(
+                batch.x_away,
+                batch.y_away,
+                test_size=self.config.test_size,
+                random_state=self.config.random_state,
+            )
+            x_shared_train, x_shared_val, y_shared_train, y_shared_val = train_test_split(
+                batch.x_shared,
+                batch.y_shared,
+                test_size=self.config.test_size,
+                random_state=self.config.random_state,
+            )
+            baseline_home_train, baseline_home_val = train_test_split(
+                batch.baseline_home,
+                test_size=self.config.test_size,
+                random_state=self.config.random_state,
+            )
+            baseline_away_train, baseline_away_val = train_test_split(
+                batch.baseline_away,
+                test_size=self.config.test_size,
+                random_state=self.config.random_state,
+            )
 
         self.model.fit(
             x_home_train,

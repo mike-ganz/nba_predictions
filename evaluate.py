@@ -158,6 +158,20 @@ def main() -> None:
             m_low, m_high = args.margin_low, args.margin_high
             m_vals = _np.arange(m_low, m_high + 1)
             margin_p = _np.zeros_like(m_vals, dtype=_np.float64)
+            
+            # Check for extreme lambda values that will cause numerical issues
+            if lam_h > 200 or lam_a > 200 or s_h > 5 or s_a > 5:
+                import warnings
+                warnings.warn(
+                    f"Extreme prediction detected (game {len(margin_pmfs)+1}): "
+                    f"lambda_h={lam_h:.2f}, lambda_a={lam_a:.2f}, "
+                    f"sigma_h={s_h:.4f}, sigma_a={s_a:.4f}. Using fallback uniform margin."
+                )
+                # Use uniform margin distribution as fallback
+                margin_p = _np.ones_like(m_vals, dtype=_np.float64) / len(m_vals)
+                margin_pmfs.append(margin_p)
+                continue
+            
             for i in range(len(gh_x)):
                 for j in range(len(gh_x)):
                     adj_lh = lam_h * _np.exp(_np.sqrt(2) * s_h * gh_x[i] - s_h ** 2)
@@ -172,12 +186,23 @@ def main() -> None:
                     bessel_vals = _besseli(orders, t)
                     pow_term = _np.power(mu1 / mu2, 0.5 * m_vals)
                     pmf_vec = _np.exp(-(mu1 + mu2)) * pow_term * bessel_vals
+                    
+                    # Check for NaN in calculation
+                    if not _np.all(_np.isfinite(pmf_vec)):
+                        # Skip this GH point if it produces NaN (will be handled by normalization)
+                        continue
+                    
                     margin_p += gh_w[i] * gh_w[j] * pmf_vec
+            
             # Normalize GH (2D) and PMF
             margin_p = _np.clip(margin_p / _np.pi, 0.0, None)
             s = margin_p.sum()
             if s > 0:
                 margin_p /= s
+            else:
+                # If all probabilities are 0/NaN, use uniform
+                margin_p = _np.ones_like(m_vals, dtype=_np.float64) / len(m_vals)
+            
             margin_pmfs.append(margin_p)
         else:
             joint = (
