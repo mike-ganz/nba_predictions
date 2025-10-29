@@ -23,8 +23,7 @@ python prepare_data.py `
     --player-boxscores-dir data/player_boxscores/historical `
     --output data/games_train_with_players.jsonl `
     --seasons 2021-2022 2022-2023 2023-2024 `
-    --include-players `
-    --debug
+    --include-players
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""

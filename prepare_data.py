@@ -239,7 +239,6 @@ def build_game_record(game_rows: pd.DataFrame, season: str, venue_col: str, play
     home_team_name = home_row.get("TEAM")
     
     game_id = rows[0].get("GAME-ID")
-    logging.debug(f"Building game {game_id}: {away_team_name} @ {home_team_name} on {date_str}")
 
     away_features, away_meta = get_team_features(away_team_name, date_str, season)
     home_features, home_meta = get_team_features(home_team_name, date_str, season)
@@ -261,11 +260,8 @@ def build_game_record(game_rows: pd.DataFrame, season: str, venue_col: str, play
     players_data = None
     if player_boxscore_df is not None:
         try:
-            logging.debug(f"Loading player data for {game_id}...")
             away_players = get_team_players(away_team_name, date_str, season, player_boxscore_df)
-            logging.debug(f"  Away: {len(away_players)} players")
             home_players = get_team_players(home_team_name, date_str, season, player_boxscore_df)
-            logging.debug(f"  Home: {len(home_players)} players")
             
             # Only include players if both teams have at least 5 players (schema requirement)
             if len(away_players) >= 5 and len(home_players) >= 5:
@@ -273,8 +269,6 @@ def build_game_record(game_rows: pd.DataFrame, season: str, venue_col: str, play
                     "A": away_players,
                     "H": home_players,
                 }
-            else:
-                logging.debug(f"Insufficient players for {game_id}: away={len(away_players)}, home={len(home_players)}")
         except Exception as e:
             logging.warning(f"Failed to load player data for {game_id}: {e}")
 
@@ -374,9 +368,9 @@ def main() -> None:
                     player_df = load_player_data(season_match)
                     logging.info(f"Loaded player data for {season_match}: {len(player_df)} player-games")
                     
-                    # Pre-load prior season cache for fast fallbacks
-                    from player_data_loader import _load_prior_season_cache
-                    _load_prior_season_cache(season_match)
+                    # PRE-COMPUTE all player baselines for this season (HUGE speedup)
+                    from player_data_loader import precompute_season_baselines
+                    precompute_season_baselines(season_match, player_df)
                 except Exception as e:
                     logging.warning(f"Failed to load player data for {season_match}: {e}")
             else:

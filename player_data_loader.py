@@ -1,3 +1,4 @@
+
 """Load and aggregate player availability data for game records."""
 from __future__ import annotations
 
@@ -6,12 +7,12 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
-from transform_player_stats import calculate_player_stats, load_player_data
+from transform_player_stats import load_player_data
 
-# Global cache for player baselines per season
-_player_baseline_cache: Dict[str, Dict[str, Dict]] = {}
+# Global cache for RAW player games per season (season -> DataFrame with all games)
+_season_player_games: Dict[str, pd.DataFrame] = {}
 
-# Global cache for prior season stats (load once per season)
+# Global cache for prior season stats (season -> player -> stats dict)
 _prior_season_cache: Dict[str, Dict[str, Dict]] = {}
 
 
@@ -50,113 +51,90 @@ def get_team_roster_for_game(
     return top_players['PLAYER \nFULL NAME'].tolist()
 
 
-def _get_prior_season_stat(player_name: str, season: str, stat_name: str, default: float) -> float:
-    """Get a stat from prior season cache, with fallback to default."""
-    if season not in _prior_season_cache:
-        return default
-    if player_name not in _prior_season_cache[season]:
-        return default
-    return _prior_season_cache[season][player_name].get(stat_name, default)
-
-
-def _load_prior_season_cache(season: str) -> None:
-    """Mark that we've attempted to load prior season (lazy load on demand)."""
-    if season not in _prior_season_cache:
-        _prior_season_cache[season] = {}  # Empty dict means "attempted but load lazily"
-
-
-def get_player_availability(
-    player_name: str,
-    game_date: str,
-    season: str,
-    actual_minutes: Optional[float] = None,
-    use_cache: bool = True
-) -> Optional[Dict]:
+def _compute_simple_season_stats(player_df: pd.DataFrame) -> Optional[dict]:
     """
-    Get PlayerAvailability data for a single player with fallback logic.
+    Compute simple full-season averages for a player (FAST, no rolling calculation).
+    Returns a single stats dict.
+    """
+    if len(player_df) == 0:
+        return None
+    
+    total_games = len(player_df)
+    if total_games < 5:
+        return None
+    
+    # Simple aggregation (vectorized, FAST)
+    total_min = player_df['MIN'].sum()
+    total_pts = player_df['PTS'].sum()
+    total_fga = player_df['FGA'].sum()
+    total_fta = player_df['FTA'].sum()
+    
+    mpg = total_min / total_games
+    ppg = total_pts / total_games
+    fga_pg = total_fga / total_games
+    fta_pg = total_fta / total_games
+    
+    # True Shooting % = PTS / (2 * (FGA + 0.44 * FTA))
+    ts_denominator = 2 * (fga_pg + 0.44 * fta_pg)
+    ts_pct = ppg / ts_denominator if ts_denominator > 0 else 0.53
+    
+    return {
+        'GP': total_games,
+        'MPG': mpg,
+        'TS%': ts_pct,
+        'USAGE_RATE': 20.0  # Simplified
+    }
+
+
+def precompute_season_baselines(season: str, player_boxscore_df: pd.DataFrame) -> None:
+    """
+    Store raw player games in memory for fast date-filtered lookups.
+    No lookahead bias - we filter by date at lookup time.
     
     Args:
-        player_name: Full player name
-        game_date: Game date in YYYY-MM-DD format  
         season: Season year (e.g., "2021-2022")
-        actual_minutes: Actual minutes played in THIS game (for historical data)
-        use_cache: Whether to use the global baseline cache
-        
-    Returns:
-        Dict with player_id, player_name, baseline_minutes, projected_minutes,
-        baseline_ts_pct, baseline_usage_rate
+        player_boxscore_df: Full season player boxscore data
     """
-    MIN_GAMES = 10  # Require 10 games for baseline
+    if season in _season_player_games:
+        logging.info(f"Season {season} already cached")
+        return
     
-    # Check cache first
-    cache_key = f"{season}_{player_name}_{game_date}"
-    if use_cache and season in _player_baseline_cache and cache_key in _player_baseline_cache[season]:
-        cached = _player_baseline_cache[season][cache_key]
-        # Update projected_minutes with actual if provided
-        if actual_minutes is not None:
-            cached = cached.copy()
-            cached['projected_minutes'] = round(actual_minutes, 1)
-        return cached
+    logging.info(f"Caching raw player games for {season}...")
     
-    # Try current season first (games BEFORE this date)
-    baseline_stats = calculate_player_stats(player_name, max_date=game_date, current_season=season)
+    # Store the entire DataFrame in memory (sorted by date for fast filtering)
+    _season_player_games[season] = player_boxscore_df.sort_values('DATE').copy()
     
-    # If insufficient games in current season, fallback to prior season
-    if baseline_stats is None or baseline_stats.get('GP', 0) < MIN_GAMES:
-        # Try prior season (uses disk cache so reasonably fast)
-        year_parts = season.split('-')
-        if len(year_parts) == 2:
-            prev_season = f"{int(year_parts[0])-1}-{int(year_parts[1])-1}"
+    logging.info(f"  Cached {len(player_boxscore_df)} player-games for {season}")
+    
+    # Also cache prior season stats (full season, used as fallback)
+    year_parts = season.split('-')
+    if len(year_parts) == 2:
+        prev_season = f"{int(year_parts[0])-1}-{int(year_parts[1])-1}"
+        
+        if prev_season not in _prior_season_cache:
+            logging.info(f"Computing prior season {prev_season} stats...")
+            
             try:
-                # Get full season stats from prior year (no max_date, leverages disk cache)
-                baseline_stats = calculate_player_stats(player_name, max_date=None, current_season=prev_season)
-            except Exception:
-                baseline_stats = None
+                prev_season_df = load_player_data(prev_season)
+                if prev_season_df is not None:
+                    _prior_season_cache[prev_season] = {}
+                    
+                    # Group by player (vectorized, FAST)
+                    grouped = prev_season_df.groupby('PLAYER \nFULL NAME')
+                    
+                    for player_name, player_games in grouped:
+                        if len(player_games) < 10:
+                            continue
+                        
+                        stats = _compute_simple_season_stats(player_games)
+                        if stats:
+                            _prior_season_cache[prev_season][player_name] = stats
+                    
+                    logging.info(f"  Computed {len(_prior_season_cache[prev_season])} players from {prev_season}")
+            except Exception as e:
+                logging.warning(f"Could not load prior season {prev_season}: {e}")
     
-    # If still no data, use reasonable defaults
-    if baseline_stats is None or baseline_stats.get('GP', 0) < 5:
-        # Use position-based defaults or actual minutes from THIS game
-        logging.debug(f"No historical data for {player_name}, using defaults")
-        if actual_minutes and actual_minutes > 15:
-            # They're playing significant minutes, use moderate defaults
-            baseline_minutes = max(20.0, actual_minutes * 0.8)  # Assume they usually play 80% of current
-            baseline_ts = 0.53  # League average
-            baseline_usage = 20.0  # Moderate usage
-        else:
-            # Bench player or no data
-            baseline_minutes = 15.0
-            baseline_ts = 0.51
-            baseline_usage = 18.0
-    else:
-        baseline_minutes = baseline_stats.get('MPG', 20.0)
-        baseline_ts = baseline_stats.get('TS%', 0.53)
-        baseline_usage = baseline_stats.get('USAGE_RATE', 20.0)
-    
-    # Convert usage from percentage (e.g., 28.5) to decimal (e.g., 0.285)
-    baseline_usage_decimal = baseline_usage / 100.0 if baseline_usage else 0.20
-    
-    # For historical data, use actual minutes as projected
-    projected_minutes = actual_minutes if actual_minutes is not None else baseline_minutes
-    
-    # Create a player_id (lowercase, underscores)
-    player_id = player_name.lower().replace(" ", "_").replace("'", "").replace(".", "")
-    
-    result = {
-        "player_id": player_id,
-        "player_name": player_name,
-        "baseline_minutes": round(baseline_minutes, 1),
-        "projected_minutes": round(projected_minutes, 1) if projected_minutes else None,
-        "baseline_ts_pct": round(baseline_ts, 3) if baseline_ts else 0.530,
-        "baseline_usage_rate": round(baseline_usage_decimal, 3) if baseline_usage_decimal else 0.200
-    }
-    
-    # Cache the result
-    if use_cache:
-        if season not in _player_baseline_cache:
-            _player_baseline_cache[season] = {}
-        _player_baseline_cache[season][cache_key] = result.copy()
-    
-    return result
+    logging.info(f"Caching complete for {season}")
 
 
 def get_team_players(
@@ -166,7 +144,7 @@ def get_team_players(
     player_boxscore_df: pd.DataFrame
 ) -> List[Dict]:
     """
-    Get all PlayerAvailability records for a team's rotation.
+    Get all PlayerAvailability records for a team's rotation (VECTORIZED).
     
     Args:
         team_name: Team name (e.g., "Milwaukee")
@@ -177,49 +155,89 @@ def get_team_players(
     Returns:
         List of PlayerAvailability dicts
     """
-    # Get the roster for this specific game
-    roster = get_team_roster_for_game(team_name, game_date, season, player_boxscore_df)
+    MIN_GAMES = 10
     
-    if not roster:
-        return []
-    
-    # Get actual minutes played for each player in THIS game
+    # Get THIS game's players for this team (sorted by minutes, top 10)
     game_data = player_boxscore_df[
         (player_boxscore_df['OWN \nTEAM'].str.contains(team_name, case=False, na=False)) &
         (pd.to_datetime(player_boxscore_df['DATE']) == pd.to_datetime(game_date))
-    ]
+    ].sort_values('MIN', ascending=False).head(10)
     
-    player_minutes = {}
-    for _, row in game_data.iterrows():
-        name = row['PLAYER \nFULL NAME']
-        minutes = row['MIN']
-        player_minutes[name] = minutes
+    if len(game_data) == 0:
+        logging.warning(f"No players found for {team_name} on {game_date}")
+        return []
     
-    # Build availability records
+    # VECTORIZED: Get baseline stats for ALL players at once
     players = []
-    for idx, player_name in enumerate(roster):
-        if idx == 0:
-            logging.debug(f"Processing player {idx+1}/{len(roster)} for {team_name} on {game_date}")
-        actual_minutes = player_minutes.get(player_name, 0.0)
-        availability = get_player_availability(
-            player_name, 
-            game_date, 
-            season,
-            actual_minutes=actual_minutes
-        )
-        if availability:
-            players.append(availability)
     
-    # Sort by baseline_minutes (descending) - stars first
+    # Get cached season data
+    if season not in _season_player_games:
+        logging.warning(f"Season {season} not cached, using defaults")
+        season_df = player_boxscore_df
+    else:
+        season_df = _season_player_games[season]
+    
+    # For each player in this game, compute baseline
+    for _, row in game_data.iterrows():
+        player_name = row['PLAYER \nFULL NAME']
+        actual_minutes = row['MIN']
+        
+        # Get player's games BEFORE this date (vectorized filter)
+        player_games_before = season_df[
+            (season_df['PLAYER \nFULL NAME'] == player_name) &
+            (pd.to_datetime(season_df['DATE']) < pd.to_datetime(game_date))
+        ]
+        
+        baseline_stats = None
+        if len(player_games_before) >= 5:
+            baseline_stats = _compute_simple_season_stats(player_games_before)
+        
+        # Fallback to prior season if insufficient current season games
+        if baseline_stats is None or baseline_stats.get('GP', 0) < MIN_GAMES:
+            year_parts = season.split('-')
+            if len(year_parts) == 2:
+                prev_season = f"{int(year_parts[0])-1}-{int(year_parts[1])-1}"
+                if prev_season in _prior_season_cache and player_name in _prior_season_cache[prev_season]:
+                    baseline_stats = _prior_season_cache[prev_season][player_name]
+        
+        # Use defaults if still no data
+        if baseline_stats is None or baseline_stats.get('GP', 0) < 5:
+            if actual_minutes > 15:
+                baseline_minutes = max(20.0, actual_minutes * 0.8)
+                baseline_ts = 0.53
+                baseline_usage = 20.0
+            else:
+                baseline_minutes = 15.0
+                baseline_ts = 0.51
+                baseline_usage = 18.0
+        else:
+            baseline_minutes = baseline_stats.get('MPG', 20.0)
+            baseline_ts = baseline_stats.get('TS%', 0.53)
+            baseline_usage = baseline_stats.get('USAGE_RATE', 20.0)
+        
+        # Convert usage to decimal
+        baseline_usage_decimal = baseline_usage / 100.0 if baseline_usage > 1 else baseline_usage
+        
+        player_id = player_name.lower().replace(" ", "_").replace("'", "").replace(".", "")
+        
+        players.append({
+            "player_id": player_id,
+            "player_name": player_name,
+            "baseline_minutes": round(baseline_minutes, 1),
+            "projected_minutes": round(actual_minutes, 1),
+            "baseline_ts_pct": round(baseline_ts, 3),
+            "baseline_usage_rate": round(baseline_usage_decimal, 3)
+        })
+    
+    # Sort by baseline_minutes (descending)
     players.sort(key=lambda p: p['baseline_minutes'], reverse=True)
     
-    # Return top 8-10 players (minimum 5 required by schema)
     return players[:10]
 
 
 __all__ = [
     'get_team_players',
-    'get_player_availability',
     'get_team_roster_for_game',
+    'precompute_season_baselines',
 ]
 
