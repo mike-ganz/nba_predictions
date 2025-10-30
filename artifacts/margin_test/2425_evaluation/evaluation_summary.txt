@@ -1,0 +1,17 @@
+======================================================================
+MARGIN MODEL EVALUATION SUMMARY
+======================================================================
+
+Dataset: 1315 games
+
+Margin MAE:      10.74 points
+Margin RMSE:     13.85 points
+Margin R²:       0.246
+
+ATS Accuracy:    50.19%
+ATS ROI:         -4.14%
+Brier Score:     0.2611
+ML Accuracy:     67.91%
+
+Calibration:     INVERTED/FLAT
+Sigma-Error Corr: 0.364
