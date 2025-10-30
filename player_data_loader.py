@@ -78,11 +78,14 @@ def _compute_simple_season_stats(player_df: pd.DataFrame) -> Optional[dict]:
     ts_denominator = 2 * (fga_pg + 0.44 * fta_pg)
     ts_pct = ppg / ts_denominator if ts_denominator > 0 else 0.53
     
-    # Extract usage rate from source data (column has newline in name)
+    # Extract usage rate from source data (check both versions - newline and stripped)
     if 'USAGE \nRATE (%)' in player_df.columns:
         usage_rate = player_df['USAGE \nRATE (%)'].mean()
+    elif 'USAGE RATE (%)' in player_df.columns:
+        usage_rate = player_df['USAGE RATE (%)'].mean()
     else:
         usage_rate = 20.0
+        logging.warning(f"No usage rate column found in player data. Available columns: {list(player_df.columns)[:10]}")
     
     return {
         'GP': total_games,

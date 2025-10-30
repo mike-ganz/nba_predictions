@@ -90,7 +90,8 @@ def compute_availability_features(
         # Star is out if projected < 10% of their usual minutes (injury/rest/etc)
         if projected_source < (baseline_minutes * 0.10):
             star_out = 1
-        usage_top2 += baseline.usage_rate if baseline else (player.baseline_usage_rate or 0.25)
+        # ALWAYS use player.baseline_usage_rate (current value), NOT cached value
+        usage_top2 += (player.baseline_usage_rate or 0.25)
 
     total_minutes = 0.0
     weighted_ts = 0.0

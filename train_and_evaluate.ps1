@@ -1,11 +1,13 @@
-Write-Host "Starting data regeneration" -ForegroundColor Cyan
+# Set-Location -Path $PSScriptRoot
 
-.\regenerate_data_with_players.ps1
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Data regeneration failed with exit code $LASTEXITCODE" -ForegroundColor Red
-    exit $LASTEXITCODE
-}
-Write-Host "Data regeneration complete" -ForegroundColor Green
+# Write-Host "Starting data regeneration" -ForegroundColor Cyan
+
+# .\regenerate_data_with_players.ps1
+# if ($LASTEXITCODE -ne 0) {
+#     Write-Host "Data regeneration failed with exit code $LASTEXITCODE" -ForegroundColor Red
+#     exit $LASTEXITCODE
+# }
+# Write-Host "Data regeneration complete" -ForegroundColor Green
 
 python train.py --data data/games_train_with_players_90.jsonl --output artifacts/run_with_players --config configs/default.yaml
 if ($LASTEXITCODE -ne 0) {
