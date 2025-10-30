@@ -206,23 +206,23 @@ Write-Host ""
 # Show file sizes and game counts
 Write-Host "File statistics:" -ForegroundColor Cyan
 if (Test-Path "data/games_train_with_players_90.jsonl") {
-    $trainFile = Get-Item "data/games_train_with_players_90.jsonl"
+$trainFile = Get-Item "data/games_train_with_players_90.jsonl"
     $trainLines = (Get-Content "data/games_train_with_players_90.jsonl" | Measure-Object -Line).Lines
     Write-Host "  Training: $trainLines games ($([math]::Round($trainFile.Length/1MB, 1)) MB)"
 } else {
     Write-Host "  Training: 0 games (0 MB)" -ForegroundColor Yellow
 }
 if (Test-Path "data/games_val_with_players.jsonl") {
-    $valFile = Get-Item "data/games_val_with_players.jsonl"
+$valFile = Get-Item "data/games_val_with_players.jsonl"
     $valLines = (Get-Content "data/games_val_with_players.jsonl" | Measure-Object -Line).Lines
     Write-Host "  Validation: $valLines games ($([math]::Round($valFile.Length/1MB, 1)) MB)"
 } else {
     Write-Host "  Validation: 0 games (0 MB)" -ForegroundColor Yellow
 }
 if (Test-Path "data/games_predict_2024_2025_with_players.jsonl") {
-    $predFile = Get-Item "data/games_predict_2024_2025_with_players.jsonl"
-    $predLines = (Get-Content "data/games_predict_2024_2025_with_players.jsonl" | Measure-Object -Line).Lines
-    Write-Host "  Prediction: $predLines games ($([math]::Round($predFile.Length/1MB, 1)) MB)"
+$predFile = Get-Item "data/games_predict_2024_2025_with_players.jsonl"
+$predLines = (Get-Content "data/games_predict_2024_2025_with_players.jsonl" | Measure-Object -Line).Lines
+Write-Host "  Prediction: $predLines games ($([math]::Round($predFile.Length/1MB, 1)) MB)"
 } else {
     Write-Host "  Prediction: 0 games (0 MB)" -ForegroundColor Yellow
 }
