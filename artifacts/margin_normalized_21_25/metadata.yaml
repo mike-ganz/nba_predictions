@@ -1,0 +1,15 @@
+excluded_features:
+- shared_team_weighted_ts_away
+- away_usage_share_top2
+- shared_implied_home_winprob
+num_features: 29
+total_games: 5271
+training_data:
+- games_train_with_players_90_norm.jsonl
+- games_val_with_players_norm.jsonl
+- games_predict_2024_2025_with_players_norm.jsonl
+training_seasons:
+- 2021-2022
+- 2022-2023
+- 2023-2024
+- 2024-2025

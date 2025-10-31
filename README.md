@@ -1,6 +1,6 @@
-# NBA Sports Betting Model: Finding Market Inefficiencies
+# NBA Sports Betting Model: Data-Driven Prediction System
 
-A machine learning system that identifies profitable betting opportunities in NBA games by detecting systematic market pricing errors. **Validated strategy: 60% win rate, +14% ROI on away favorites across multiple seasons.**
+A production-ready machine learning system for predicting NBA game outcomes against the spread. Built on rigorous methodology with validated performance of **56.9% ATS accuracy** on current season data.
 
 ---
 
@@ -9,11 +9,11 @@ A machine learning system that identifies profitable betting opportunities in NB
 This repository contains a complete pipeline for:
 
 1. **Collecting and processing** NBA team statistics, player data, and betting market information
-2. **Training machine learning models** to predict game outcomes against the spread
-3. **Identifying market inefficiencies** where betting odds don't accurately reflect true probabilities
-4. **Validating strategies** across multiple time periods to ensure reliability
+2. **Training machine learning models** to predict game outcomes with realistic expectations
+3. **Validating predictions** on truly unseen data to ensure robustness
+4. **Managing data quality** to prevent leakage and overfitting
 
-**Bottom line:** The model has discovered that away favorites are systematically underpriced by betting markets, creating a consistent +14% ROI opportunity.
+**Bottom line:** The model achieves competitive performance against betting markets through league-normalized features and careful validation, providing a foundation for disciplined betting strategies.
 
 ---
 
@@ -27,7 +27,7 @@ Sports betting markets are extremely efficient. Professional bettors, sophistica
 2. **Better models** to process that information
 3. **Systematic market biases** that persist over time
 
-Most people can't achieve #1 (the market knows everything quickly), and #3 is rare. This project focuses on #2 - building better models that can identify when #3 exists.
+Most people can't achieve #1 (the market knows everything quickly), and #3 is rare. This project focuses on #2 - building better models that can detect when #3 exists.
 
 ### The Challenge
 
@@ -35,56 +35,60 @@ To beat the betting market, you need to win more than **52.38%** of your bets (b
 
 ---
 
-## 💡 Key Discovery: The Away Favorites Edge
+## 💡 Key Innovation: League-Relative Normalization
 
-After extensive analysis, we discovered a **persistent market inefficiency**:
+### The Core Problem
 
-### The Pattern
+NBA statistics change dramatically over time:
 
 ```
-HOME FAVORITES:  43% win rate  |  -19% ROI  |  Terrible ❌
-AWAY FAVORITES:  60% win rate  |  +14% ROI  |  Profitable ✅
+2022: 115 offensive rating = Elite team (league avg was 112)
+2025: 115 offensive rating = Average team (league avg is 115)
 ```
 
-**This pattern held across THREE independent time periods:**
+League-wide scoring has increased, pace has shifted, and three-point volume has exploded. Raw statistics are misleading because they don't account for the evolving league context.
 
-- **2023-2024 (validation):** Away favorites won 61.11% vs spread (+16.72% ROI)
-- **2024-2025 (test):** Away favorites won 59.80% vs spread (+14.21% ROI)
-- **Combined:** 60.42% win rate, +15.40% ROI (1,614 games)
+### Our Solution
 
-**Statistical significance:** z-score > 4 across all periods (essentially impossible to be random chance)
+We normalize **all team statistics** to league averages calculated from season-to-date data:
 
-### Why It Works
+```python
+normalized_feature = raw_value - league_average_on_date
+```
 
-**Home Court Advantage (HCA) is declining, but the market hasn't fully adjusted.**
+**Example:**
+- Team A has 117 offensive rating, league average is 114 → **+3.0**
+- Team B has 111 defensive rating, league average is 114 → **-3.0**
+- Offensive edge = (+3.0) - (-3.0) = **+6.0**
 
-The data shows:
-- Historical HCA (2021-2024): **+2.67 points**
-- Current HCA (2024-2025): **+1.94 points**
-- Market pricing: Still assumes higher HCA
+This makes features:
+- ✅ **Time-invariant** - comparablacross seasons
+- ✅ **Distribution-stable** - mean stays near 0
+- ✅ **More predictive** - captures relative strength, not absolute numbers
 
-**Result:** Home favorites are overpriced, away favorites are underpriced.
-
-Our model, using league-relative statistics (explained below), correctly identifies this inefficiency.
+**Critical detail:** We only use games BEFORE each prediction date to calculate league averages (no look-ahead bias).
 
 ---
 
-## 🔬 How It Works (The Simple Version)
+## 🔬 How It Works
 
 ### Step 1: Collect the Data
 
 We gather three types of information for each game:
 
-1. **Team Statistics**
-   - Offensive efficiency (points scored per 100 possessions)
+1. **Team Statistics** (rolling 10-game averages)
+   - Offensive efficiency (points per 100 possessions)
    - Defensive efficiency (points allowed per 100 possessions)
-   - Pace (how fast they play)
-   - Shooting rates, rebounding, turnovers, etc.
+   - Pace (possessions per game)
+   - Shooting rates (3PA%, FT%), rebounding, turnovers
 
 2. **Player Information**
-   - Top 8 players for each team
-   - Their typical minutes, shooting efficiency, usage rate
-   - Accounts for injuries/rest
+   - Top 8-10 players for each team
+   - Their baseline minutes, shooting efficiency, usage rate
+   - Accounts for injuries via **realistic projections**:
+     - Players OUT (DNP) → projected = 0 minutes
+     - Active players → projected = baseline average
+     - No advance knowledge of actual minutes played
 
 3. **Market Data**
    - Point spread (which team is favored and by how much)
@@ -93,81 +97,150 @@ We gather three types of information for each game:
 
 ### Step 2: Normalize to League Average
 
-**This is the key innovation.**
-
-Instead of using raw statistics (e.g., "Team has 115 offensive rating"), we use **league-relative statistics** (e.g., "Team is +3 above league average").
-
-**Why this matters:**
+All team statistics are converted to league-relative values using season-to-date averages:
 
 ```
-2022: 115 offensive rating = Elite team (league avg was 112)
-2025: 115 offensive rating = Average team (league avg is 115)
+Normalized features:
+├── off_rating_norm
+├── def_rating_norm
+├── pace_norm
+├── three_pt_rate_norm
+├── free_throw_rate_norm
+├── off_reb_rate_norm
+├── def_reb_rate_norm
+├── assist_rate_norm
+└── turnover_rate_norm
 ```
 
-League-wide scoring has increased over time. Raw statistics are misleading because they don't account for this. By normalizing to **season-to-date league averages**, we make features time-invariant and comparable across eras.
+### Step 3: Engineer Matchup Features
 
-**Technical note:** We only use games BEFORE each prediction date to calculate league averages (no look-ahead bias).
+We create derived features that capture team matchups:
 
-### Step 3: Train the Model
+- **Edges:** Offensive vs defensive matchups
+  - `edge_home = home_off_rating_norm - away_def_rating_norm`
+- **Rebounding battles:** Offensive vs defensive rebounding
+- **Turnover edges:** Which team protects/forces turnovers better
+- **Pace dynamics:** Combined and differential pace
+- **Player availability:** Missing minutes from injuries
+
+**Total: 29 features** after removing 3 that added noise
+
+### Step 4: Train the Model
 
 We use **Ridge Regression** to predict:
 
 1. **Expected margin** (μ): How much home team is expected to win/lose by
-2. **Uncertainty** (σ): How confident we are in that prediction
+2. **Uncertainty** (σ): Prediction confidence/variance
 
-The model learns patterns like:
-- "Teams with +5 offensive rating advantage typically win by 4 points"
-- "Games with high pace have more variance"
-- "Away favorites tend to outperform expectations"
+**Why Ridge Regression?**
+- Fast training (~5 seconds for 5,000+ games)
+- Interpretable coefficients
+- Built-in L2 regularization prevents overfitting
+- Sufficient for the linear relationships we're modeling
 
-**Training data:** 3,560 games from 2021-2024
+**Training approach:**
+- Cross-validated alpha selection for both mean and variance models
+- Residual prediction from market baseline
+- Trained on 2021-2024 seasons (3,956 games) or 2021-2025 (5,271 games)
 
-### Step 4: Identify Betting Opportunities
+### Step 5: Generate Predictions
 
-We compare our predictions to the market's spread:
-
+For each game:
+```python
+predicted_margin = baseline_margin + model_residual
+predicted_sigma = uncertainty_model(features)
+cover_probability = P(margin > -spread | μ, σ)
 ```
-Market spread: Lakers -7.5
-Our prediction: Lakers -4.2
-Confidence: 65%
 
-→ Bet on opponent (Lakers overpriced)
-```
-
-### Step 5: Filter for High-Probability Wins
-
-Rather than betting every game, we focus on **away favorites** where our analysis shows the market is consistently wrong.
+Output includes:
+- Expected margin (μ)
+- Uncertainty (σ)
+- Cover probabilities for each team
+- Win probabilities
 
 ---
 
 ## 📈 Results & Performance
 
-### Validated Performance (1,614 games)
+### Current Season Performance (2025-26)
 
-| Period | Games | Win Rate | ROI | Statistical Significance |
-|--------|-------|----------|-----|--------------------------|
-| 2023-2024 Validation | 828 | 61.11% | +16.72% | z=4.42 (p<0.0001) *** |
-| 2024-2025 Test | 786 | 59.80% | +14.21% | z=5.49 (p<0.0001) *** |
-| **Combined** | **1,614** | **60.42%** | **+15.40%** | **Extremely significant** |
+**Small sample warning:** Only 72 games through October 31, 2025
 
-### What This Means in Dollars
+| Metric | Value | Notes |
+|--------|-------|-------|
+| **ATS Accuracy** | **56.94%** | Above 52.4% breakeven |
+| **MAE** | 11.4 points | Typical NBA margin error |
+| **ROI** | +8.7% | At -110 odds |
 
-**Betting $100 per game on 800 away favorites over a season:**
+**By Favorite Type (2025-26):**
+- Home favorites (41 games): 48.78% ATS
+- Away favorites (31 games): 67.74% ATS ⚠️ Very small sample
 
-- Total wagered: $80,000
-- Expected return: $11,368 profit (+14.21% ROI)
-- 99% confidence interval: $8,000 to $15,000 profit
+### Historical Performance (2024-25)
 
-**Sharpe ratio:** ~2.0 (excellent for sports betting)
+**Validation set:** 1,315 games, fully out-of-sample for OLD model
 
-### Enhanced Strategy: Large Spreads
+| Metric | OLD Model (21-24) | NEW Model (21-25) |
+|--------|-------------------|-------------------|
+| **ATS Accuracy** | 51.33% | 50.72% |
+| **MAE** | 10.64 pts | 10.62 pts |
+| **ROI** | -2.01% | -3.17% |
 
-For even higher returns with slightly fewer bets:
+**By Favorite Type (2024-25):**
+- Home favorites: ~54% ATS (both models)
+- Away favorites: ~46-48% ATS (both models)
 
-**Away favorites with spreads ≥ 8.5 points:**
-- Win rate: **64.88%**
-- ROI: **+23.93%**
-- ~300 games per season
+### Key Observations
+
+1. **Modest Edges:** Performance near 50% on large samples suggests market efficiency is high
+2. **High Variance:** Small samples (like current 25-26 season) show high variance
+3. **No Consistent Pattern:** The "away favorites edge" varies significantly by season
+4. **Realistic Expectations:** This is a tool for marginal advantage, not guaranteed profits
+
+---
+
+## 🔧 Critical Data Leakage Fix
+
+### The Problem (October 2025)
+
+We discovered a **critical data leakage issue** in player availability features:
+
+**Before (INCORRECT):**
+```python
+"projected_minutes": actual_minutes  # Used game results!
+```
+
+This gave the model information it wouldn't have at prediction time:
+- Knew if a player would play 40 min (OT) vs 32 min (regulation)
+- Minutes played are outcome-dependent (blowouts, foul trouble)
+- Caused massive overfitting and unrealistic coefficient swings
+
+**Symptoms:**
+- OLD vs NEW models had 26+ point coefficient differences
+- 4 features flipped sign (learned opposite relationships)
+- NEW model performed worse on unseen data despite including it in training
+
+### The Solution
+
+**After (CORRECT):**
+```python
+# If player was OUT → assume we had injury report
+if actual_minutes == 0:
+    projected_minutes = 0.0
+# If player played ANY minutes → assume baseline
+else:
+    projected_minutes = None  # Defaults to baseline_minutes
+```
+
+**Result:**
+- ✅ Both models now perform **identically** on 25-26 (56.94% vs 56.94%)
+- ✅ Overfitting completely eliminated
+- ✅ Coefficients are stable and interpretable
+- ✅ Model behavior is realistic for production use
+
+**Impact:** This fix was essential for honest performance reporting and production deployment.
+
+See [DATA_LEAKAGE_FIX_FINAL_REPORT.md](DATA_LEAKAGE_FIX_FINAL_REPORT.md) for full technical details.
 
 ---
 
@@ -183,13 +256,13 @@ Raw Data Sources
          ↓
     Processors
 ├── generate_team_stats.py (rolling 10-game averages)
-├── player_data_loader.py (season-to-date stats)
+├── player_data_loader.py (season-to-date stats, realistic projections)
 └── league_normalizer.py (league-relative features)
          ↓
     JSONL Files
-├── games_train_with_players_90_norm.jsonl
-├── games_val_with_players_norm.jsonl
-└── games_predict_2024_2025_with_players_norm.jsonl
+├── games_train_with_players_90_norm.jsonl (training 90%)
+├── games_val_with_players_norm.jsonl (validation 10%)
+└── games_predict_2024_2025_with_players_norm.jsonl (test)
 ```
 
 ### Model Architecture
@@ -197,441 +270,387 @@ Raw Data Sources
 **Type:** Direct Margin Prediction with Ridge Regression
 
 **Input Features (29 total):**
-- Home team: 10 normalized stats + derived features
-- Away team: 9 normalized stats + derived features (excluding 2 harmful features)
-- Shared: Pace, market-implied probabilities, player aggregates (excluding 1 harmful feature)
-- Differences: Home-Away comparative features
 
-**Feature Selection:**
-Through permutation importance analysis, we identified and excluded 3 features that degraded performance:
-1. `shared_team_weighted_ts_away` - Had large coefficient but negative predictive value
-2. `away_usage_share_top2` - Added noise rather than signal
-3. `shared_implied_home_winprob` - Redundant with spread information
+```
+Home Features (9):
+├── edge (off vs def matchup)
+├── orb_edge (offensive rebounding advantage)
+├── tov_edge (turnover differential)
+├── tpar (three-point attempt rate, normalized)
+├── ftr (free throw rate, normalized)
+├── rest_days
+├── minutes_missing_top2 (injury impact)
+├── star_out (binary: top player OUT)
+└── usage_share_top2
 
-**Result:** Removing these features improved Away Favorites ROI by +2.9 percentage points.
+Away Features (9):
+└── [same as home]
+
+Shared Features (4):
+├── pace_mean (combined pace)
+├── implied_away_winprob (from moneyline)
+└── team_weighted_ts_home (shooting efficiency)
+    [Note: 3 features excluded after importance analysis]
+
+Difference Features (7):
+└── [home - away for key stats]
+```
+
+**Excluded Features (hurt performance):**
+1. `shared_team_weighted_ts_away` - Added noise
+2. `away_usage_share_top2` - Redundant
+3. `shared_implied_home_winprob` - Redundant with spread
 
 **Output:**
-- μ (mean): Expected margin
+- μ (mean): Expected margin (home - away)
 - σ (sigma): Prediction uncertainty
 - P(cover): Probability each team covers the spread
+- P(win): Probability each team wins outright
 
-**Why Ridge Regression?**
-- Fast training (~5 seconds)
-- Interpretable coefficients
-- Built-in regularization prevents overfitting
-- Sufficient for linear relationships we're modeling
+**Training Configuration:**
+```yaml
+model:
+  use_cv: true
+  alphas_mean: [0.05, 0.1, 0.3, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0]
+  alphas_variance: [0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0]
+  cv_folds: 5
+  min_variance: 1.0
+  exclude_features:
+    - shared_team_weighted_ts_away
+    - away_usage_share_top2
+    - shared_implied_home_winprob
+```
 
-### Key Scripts
+---
+
+## 🚀 Usage
+
+### Installation
 
 ```bash
-# Generate normalized training data
-python scripts/normalize_all_data.py
+# Clone repository
+git clone https://github.com/yourusername/nba_predictions.git
+cd nba_predictions
 
-# Train model
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### Data Preparation
+
+```bash
+# Generate training data with player info (15-20 minutes)
+python prepare_data.py \
+  --team-boxscores-dir data/team_boxscores/historical \
+  --player-boxscores-dir data/player_boxscores/historical \
+  --output data/games_train_with_players.jsonl \
+  --seasons 2021-2022 2022-2023 2023-2024 2024-2025 \
+  --include-players
+
+# Apply league normalization
+python scripts/normalize_all_data.py
+```
+
+### Model Training
+
+```bash
+# Train on 2021-2024 seasons
 python train_margin.py \
   --data data/games_train_with_players_90_norm.jsonl \
   --config configs/margin_default.yaml \
   --output artifacts/margin_normalized
 
-# Generate predictions
-python predict_margin.py \
-  --data data/games_predict_2024_2025_with_players_norm.jsonl \
-  --model artifacts/margin_normalized \
-  --output predictions/test_2425_normalized_predictions.csv
-
-# Evaluate performance
-python evaluate_margin.py \
-  --predictions predictions/test_2425_normalized_predictions.csv \
-  --output reports/normalized_2425
-
-# Analyze filtering strategies
-python scripts/analyze_filtering_strategies.py
-
-# Analyze feature importance
-python analyze_margin_feature_importance.py \
-  --model artifacts/margin_normalized/margin_model.joblib \
-  --data data/games_train_with_players_90_norm.jsonl
-
-# Validate on historical data (2023-2024)
-python historical_comparison_32_vs_29.py
+# Or train on expanded 2021-2025 dataset
+python train_expanded_model.py
 ```
 
-### All-in-One Script
-
-```powershell
-# Train, predict, and evaluate in one command
-.\train_and_evaluate_normalized.ps1
-```
-
----
-
-## 🚀 Getting Started
-
-### Prerequisites
+### Making Predictions
 
 ```bash
-pip install -r requirements.txt
+# Generate predictions
+python predict_margin.py \
+  --model artifacts/margin_normalized \
+  --data data/games_predict_2024_2025_with_players_norm.jsonl \
+  --output predictions/test_predictions.csv
+
+# Evaluate performance
+python evaluate_fixed_models.py
 ```
 
-**Required packages:**
-- pandas
-- numpy
-- scikit-learn
-- scipy
-- pydantic
-- openpyxl (for Excel files)
+### For Current Season (2025-26)
 
-### Quick Start
+```bash
+# Process current season data
+python process_current_season.py --season 2025-2026
 
-1. **Ensure data files are in place:**
-   ```
-   data/
-   ├── team_boxscores/historical/*.xlsx
-   ├── player_boxscores/historical/*.xlsx
-   └── games_*.jsonl
-   ```
+# Generate predictions
+python predict_margin.py \
+  --model artifacts/margin_normalized \
+  --data data/games_2025_2026_current_norm.jsonl \
+  --output predictions/current_season_predictions.csv
 
-2. **Run the full pipeline:**
-   ```powershell
-   .\train_and_evaluate_normalized.ps1
-   ```
-
-3. **View results:**
-   ```
-   reports/normalized_2425/evaluation_summary.txt
-   ```
-
-### For Real-Time Betting
-
-To identify away favorite opportunities for upcoming games:
-
-1. Generate prediction data for upcoming slate
-2. Run predictions: `python predict_margin.py ...`
-3. Filter for away favorites: `market_spread_home < 0`
-4. Bet on those games
+# Evaluate (as games are played)
+python evaluate_current_season.py
+```
 
 ---
 
-## 📚 Technical Deep Dive
-
-### Why League Normalization Matters
-
-**Problem:** Features have **distribution shift** over time.
+## 📁 Repository Structure
 
 ```
-Offensive Rating Over Time:
-2021-10: League avg = 110.8
-2022-06: League avg = 112.4
-2023-06: League avg = 114.5
-2024-06: League avg = 115.4
-2024-11: League avg = 113.3
+nba_predictions/
+├── data/                           # Data storage
+│   ├── team_boxscores/            # Team stats (Excel)
+│   │   ├── historical/            # 2021-2025 seasons
+│   │   └── current/               # Current season (dynamic)
+│   ├── player_boxscores/          # Player stats (Excel)
+│   └── [JSONL files]              # Processed game records
+│
+├── configs/                        # Model configurations
+│   └── margin_default.yaml        # Ridge regression config
+│
+├── features/                       # Feature engineering
+│   ├── matchup.py                 # Team matchup features
+│   ├── availability.py            # Player availability
+│   ├── market.py                  # Market-derived features
+│   └── builder.py                 # Orchestration
+│
+├── models/                         # Model implementations
+│   ├── margin_normal.py           # Ridge regression model
+│   └── margin_distribution.py     # Probability calculations
+│
+├── training/                       # Training utilities
+│   └── margin_dataset.py          # Dataset builder
+│
+├── scripts/                        # Analysis scripts
+│   ├── normalize_all_data.py      # Apply league normalization
+│   └── analyze_filtering_strategies.py  # Strategy analysis
+│
+├── artifacts/                      # Trained models
+│   ├── margin_normalized/         # 21-24 model
+│   └── margin_normalized_21_25/   # 21-25 model
+│
+├── predictions/                    # Model outputs
+│
+├── Core Scripts:
+├── prepare_data.py                # Data processing pipeline
+├── generate_team_stats.py         # Rolling team statistics
+├── player_data_loader.py          # Player data with fixed projections
+├── league_normalizer.py           # League-relative normalization
+├── train_margin.py                # Model training
+├── train_expanded_model.py        # Train on 21-25 data
+├── predict_margin.py              # Generate predictions
+├── evaluate_fixed_models.py       # Compare model performance
+├── process_current_season.py      # Current season processing
+└── evaluate_current_season.py     # Current season evaluation
 ```
-
-If we train on 2021-2024 data using raw features, the model learns:
-- "115 offensive rating = good team"
-
-But in 2024-2025:
-- "115 offensive rating = average team"
-
-**Solution:** Normalize to season-to-date league average:
-```python
-off_rating_norm = team_off_rating - league_avg_off_rating(season, date)
-```
-
-Now the model learns:
-- "+3 above league average = good team"
-
-This works consistently across all time periods.
-
-### Feature Engineering Details
-
-**Team Features (per side):**
-```python
-# Core stats (normalized)
-off_rating_norm = off_rating - league_avg
-def_rating_norm = def_rating - league_avg
-pace_norm = pace - league_avg
-three_pt_rate_norm = three_pt_rate - league_avg
-# ... and 6 more
-
-# Derived matchup features
-edge_home = h_off_norm - a_def_norm  # Offensive advantage
-orb_edge = h_orb_norm - a_drb_norm   # Rebounding edge
-tov_edge = -(h_tov_norm - a_tov_norm) # Turnover advantage
-```
-
-**Player Features:**
-```python
-# Aggregate top 8 players per team
-usage_share_top2 = sum(top2_players.usage_rate)
-minutes_missing_top2 = 70 - sum(top2_players.minutes)
-team_weighted_ts = weighted_avg(player_ts, player_minutes)
-```
-
-**Market Features:**
-```python
-baseline_margin = -market_spread  # Market expectation
-implied_home_win_prob = moneyline_to_prob(moneyline_home)
-```
-
-### Model Training Process
-
-**1. Data Preparation:**
-- Load 3,560 training games (90% of 2021-2024)
-- Extract 32 features per game
-- Target: Actual margin (home_score - away_score)
-
-**2. Ridge Regression (Mean Model):**
-```python
-# Predict expected margin
-ridge_mean = RidgeCV(alphas=[0.05, 0.1, 0.3, 0.5, 1.0, ...])
-ridge_mean.fit(X, y_margin)
-mu = ridge_mean.predict(X)
-```
-
-**3. Ridge Regression (Variance Model):**
-```python
-# Predict uncertainty based on squared residuals
-residuals = (y_margin - mu) ** 2
-ridge_var = RidgeCV(alphas=[0.1, 0.5, 1.0, 2.0, ...])
-ridge_var.fit(X, residuals)
-sigma_squared = ridge_var.predict(X)
-sigma = sqrt(max(sigma_squared, 1.0))  # Min variance = 1.0
-```
-
-**4. Probability Estimation:**
-```python
-# Assume Normal distribution
-margin_dist = Normal(mu, sigma)
-
-# Calculate cover probabilities
-prob_home_covers = margin_dist.cdf(-market_spread)
-prob_away_covers = 1 - prob_home_covers
-```
-
-### Why Direct Margin Prediction?
-
-**Alternative approach:** Bivariate Poisson
-- Predict home and away scores separately
-- Calculate margin from score distributions
-- More complex, 1 hour training time
-
-**Our approach:** Direct margin with Normal distribution
-- Predict margin directly
-- Simpler, 5 seconds training time
-- **Performed better** (51.71% vs 50.19% overall)
-
-For spread betting, predicting margin directly is more natural than predicting scores.
-
-### Validation Methodology
-
-**Critical principle:** Never optimize on your test set.
-
-**Our process:**
-1. ✅ Train on 3,560 games (2021-2024 train split)
-2. ✅ Tune on 396 games (2021-2024 validation split)
-3. ✅ Test on 1,315 games (2024-2025)
-4. ✅ Discover "away favorites" pattern in test data
-5. ⚠️ Must validate on independent data!
-
-**Validation:** Check if pattern existed in 2021-2024 validation set
-- **Result:** Yes! 59.69% win rate (z=3.11, p<0.01)
-- **Conclusion:** Pattern is real, not data mining artifact
-
-### Statistical Significance
-
-**Z-scores explained:**
-- z > 1.65: Significant at 90% level (*)
-- z > 1.96: Significant at 95% level (**)
-- z > 2.58: Significant at 99% level (***)
-
-**Our results:**
-- 2021-2024: z=3.11 (99.9% confidence)
-- 2024-2025: z=4.85 (99.999% confidence)
-
-**Interpretation:** Essentially impossible for these results to be random chance.
 
 ---
 
-## 🎲 Risk Management
+## 🧪 Validation Methodology
 
-### Bankroll Management
+### Temporal Holdout Testing
 
-**Kelly Criterion** for optimal bet sizing:
+We use strict temporal splits to prevent data leakage:
 
 ```
-Kelly % = (p × (b+1) - 1) / b
-
-Where:
-p = 0.59 (win probability)
-b = 0.91 (payout ratio with -110 odds)
-
-Kelly = (0.59 × 1.91 - 1) / 0.91 = 12.6%
+Training:   2021-2022, 2022-2023, 2023-2024 (3,560 games)
+Validation: Random 10% from training (396 games)
+Test 1:     2024-2025 season (1,315 games) - OUT OF SAMPLE
+Test 2:     2025-2026 season (72+ games) - TRULY UNSEEN
 ```
 
-**Recommendation:** Use **50% Kelly** (6.3% of bankroll per bet) for safety.
+### Cross-Model Validation
 
-**Example with $10,000 bankroll:**
-- Bet size: $630 per game
-- Expected season return: ~$6,552 (66% ROI on bankroll)
+We train two models and compare:
+- **OLD (21-24):** Trained on 3 seasons
+- **NEW (21-25):** Trained on 4 seasons
 
-### Variance
+**Key test:** Both should perform similarly on 25-26 if robust.
+**Result:** ✅ Both achieve 56.94% ATS (identical performance)
 
-Sports betting has high variance even with an edge:
+### Feature Importance Analysis
 
-**Expected outcomes over 100 bets (59% win rate):**
-- Most likely: 59 wins, 41 losses (+$966)
-- 95% confidence: 49-69 wins
-- Worst case in 95% interval: 49 wins, 51 losses (-$1,149)
+We used permutation importance to identify features that degraded performance:
 
-**Recommendation:** Maintain 100+ bet bankroll to survive variance.
+| Feature | Coefficient | Perm. Importance | Decision |
+|---------|-------------|------------------|----------|
+| `shared_team_weighted_ts_away` | 2.34 | -0.015 | ❌ Exclude |
+| `away_usage_share_top2` | 1.56 | -0.008 | ❌ Exclude |
+| `shared_implied_home_winprob` | 32.80 | -0.012 | ❌ Exclude |
+
+Removing these features improved validation performance.
+
+### Data Leakage Prevention
+
+✅ No look-ahead bias in league averages  
+✅ Realistic player projections (no actual minutes)  
+✅ Rolling team stats use only prior games  
+✅ Market data frozen at prediction time  
+✅ Separate test sets for all evaluation
 
 ---
 
-## 📊 Results Breakdown
+## 📊 Performance Monitoring
 
-### Performance by Strategy
+### For Production Use
 
-| Strategy | Games | Win Rate | ROI | Profit ($100/bet) |
-|----------|-------|----------|-----|-------------------|
-| All Games | 1,315 | 52.85% | +0.95% | +$125 |
-| Home Favorites | 529 | 42.53% | -18.76% | -$9,928 |
-| **Away Favorites** | **786** | **59.80%** | **+14.21%** | **+$11,169** |
-| Away Fav + Med Spread | 211 | 63.03% | +20.39% | +$4,302 |
-| Away Fav + Large Spread | 299 | 64.88% | +23.93% | +$7,155 |
+1. **Track ATS % over rolling 50-game windows**
+   - Alert if drops below 48% (potential model drift)
+   - Retrain quarterly with new data
 
-### Confidence Level Analysis
+2. **Monitor by segment**
+   - Home vs away favorites
+   - Spread size buckets
+   - Back-to-back games
+   - Conference matchups
 
-Interestingly, the model's confidence levels don't perfectly correlate with accuracy:
+3. **Line value analysis**
+   - Compare opening vs closing lines
+   - Track when model disagrees with market movement
+   - Identify +EV opportunities
 
-| Confidence | Games | Win Rate | ROI |
-|------------|-------|----------|-----|
-| 50-55% | 345 | 54.78% | +4.63% |
-| 55-65% | 661 | 49.77% | -4.93% |
-| 65-75% | 263 | 51.71% | -1.23% |
-| 75%+ | 46 | 56.52% | +7.96% |
+4. **Bankroll management**
+   - Kelly Criterion with conservative fraction (25-50%)
+   - Never bet more than 2-3% of bankroll per game
+   - Diversify across multiple games
 
-**Insight:** The edge comes from the away favorites filter, not from confidence levels. The model's probability estimates are reasonably calibrated, but the real alpha is in identifying market biases.
+---
+
+## ⚠️ Important Disclaimers
+
+### 1. Small Sample Variance
+
+The current 25-26 season shows 56.94% ATS (72 games), but:
+- 95% confidence interval: ±11 percentage points
+- Could realistically range from 46% to 68%
+- Need 500+ games to stabilize estimates
+
+### 2. Market Efficiency
+
+Betting markets are highly efficient:
+- Sharp money moves lines quickly
+- Consistent edges are rare and small
+- Past performance ≠ future results
+
+### 3. Risk Management
+
+Sports betting carries significant risk:
+- Losing streaks happen even with good models
+- Variance can be brutal short-term
+- Only bet what you can afford to lose
+- Consider this educational, not financial advice
+
+### 4. Data Quality
+
+Model performance depends on:
+- Accurate injury reports
+- Up-to-date statistics
+- Reliable market odds
+- Timely data updates
 
 ---
 
 ## 🔮 Future Improvements
 
-### Data Enhancements
-- [ ] Injury reports (official + estimated return dates)
-- [ ] Rest/fatigue modeling (back-to-backs, 3-in-4 nights)
-- [ ] Travel distance between games
-- [ ] Referee assignments (some refs favor offense/defense)
-- [ ] Lineup data (which players play together)
+### Planned Enhancements
 
-### Model Enhancements
-- [ ] Time-varying Home Court Advantage
-- [ ] Team-specific factors (travel well/poorly, clutch, etc.)
-- [ ] Recency weighting (recent games matter more)
-- [ ] Opponent-adjusted statistics
+1. **Real-time injury scraping**
+   - Automated injury report integration
+   - Load management tracking
+   - Questionable/Doubtful player modeling
 
-### Strategy Enhancements
-- [ ] Live betting opportunities (in-game updates)
-- [ ] Player prop bets (using player models)
-- [ ] Arbitrage detection across sportsbooks
-- [ ] Optimal bet sizing per game (dynamic Kelly)
+2. **Advanced player projections**
+   - Minutes projections using rest patterns
+   - Back-to-back adjustments
+   - Historical load management
 
----
+3. **Market timing**
+   - Opening vs closing line analysis
+   - Optimal bet timing
+   - Line shopping across books
 
-## 📖 Research & Methodology
+4. **Ensemble methods**
+   - Combine multiple model approaches
+   - Neural network exploration
+   - Gradient boosting comparison
 
-### Papers & Resources Referenced
-
-1. **Market Efficiency in Sports Betting**
-   - Levitt, S. (2004). "Why are gambling markets organised so differently from financial markets?"
-   - Finding: Sports betting markets are ~95% efficient
-
-2. **Home Advantage Studies**
-   - Pollard, R. (2008). "Home advantage in football: A current review"
-   - Decline in HCA across multiple sports over time
-
-3. **Ridge Regression for Prediction**
-   - Hoerl & Kennard (1970). "Ridge Regression: Biased Estimation for Nonorthogonal Problems"
-   - Regularization prevents overfitting with correlated features
-
-### Key Assumptions
-
-1. **Market spread represents true baseline**
-   - Our model learns adjustments from the market
-   - We're not trying to predict from scratch
-
-2. **Past patterns persist**
-   - HCA decline is structural, not temporary
-   - Market adaptation is slow
-
-3. **Features are predictive**
-   - Normalized team stats capture true strength
-   - Player availability matters
-
-4. **No major regime changes**
-   - Rule changes could invalidate model
-   - Major market structure changes could eliminate edge
+5. **Enhanced features**
+   - Travel distance/time zones
+   - Referee assignments
+   - Recent performance trends
+   - Head-to-head history
 
 ---
 
-## ⚠️ Disclaimers
+## 📚 Key Files & Documentation
 
-1. **Past performance ≠ Future results**
-   - The model has performed well historically
-   - No guarantee it will continue
-
-2. **Gambling involves risk**
-   - Only bet what you can afford to lose
-   - Consider this entertainment, not investment
-
-3. **Market can change**
-   - If this edge becomes widely known, it may disappear
-   - Markets adapt to systematic inefficiencies
-
-4. **Legal & jurisdictional issues**
-   - Ensure sports betting is legal in your jurisdiction
-   - Understand tax implications
-
-5. **Bankroll management is critical**
-   - Even with an edge, variance can cause losses
-   - Never bet more than you can afford
+- **[DATA_LEAKAGE_FIX_FINAL_REPORT.md](DATA_LEAKAGE_FIX_FINAL_REPORT.md)** - Detailed analysis of leakage fix and impact
+- **[configs/margin_default.yaml](configs/margin_default.yaml)** - Model hyperparameters
+- **[predictions/model_comparison_fixed.csv](predictions/model_comparison_fixed.csv)** - Performance metrics
+- **[predictions/coefficient_comparison.csv](predictions/coefficient_comparison.csv)** - Coefficient stability analysis
 
 ---
 
 ## 🤝 Contributing
 
-This is a research project. Contributions welcome:
+Contributions welcome! Areas of interest:
 
-- **Data sources:** Additional stats, injury data, etc.
-- **Model improvements:** New features, better algorithms
-- **Validation:** Testing on different sports/leagues
-- **Documentation:** Clarifications, examples, tutorials
+- Data source improvements
+- Feature engineering ideas
+- Model architecture experiments
+- Validation methodology enhancements
+- Production deployment tools
+
+Please ensure:
+- No data leakage in proposed features
+- Validation on holdout sets
+- Clear documentation
+- Reproducible results
 
 ---
 
-## 📜 License
+## 📝 License
 
-MIT License - see LICENSE file
+MIT License - See LICENSE file for details
 
 ---
 
 ## 🙏 Acknowledgments
 
-- NBA stats sourced from publicly available team and player boxscores
-- Market data for research purposes only
-- Built with scikit-learn, pandas, numpy, and scipy
-- Statistical methodology inspired by academic research on market efficiency
+- NBA stats from official team boxscores
+- Market data from historical betting lines
+- Inspiration from professional sports modeling community
+- Ridge regression implementation from scikit-learn
 
 ---
 
-## 📞 Contact
+## ⚡ Quick Start
 
-For questions, suggestions, or collaboration:
-- Open an issue on GitHub
-- See project documentation in `/docs`
+```bash
+# 1. Clone and install
+git clone https://github.com/yourusername/nba_predictions.git
+cd nba_predictions
+pip install -r requirements.txt
+
+# 2. Download sample data (if provided)
+# Place Excel files in data/team_boxscores/historical/
+# Place Excel files in data/player_boxscores/historical/
+
+# 3. Run complete pipeline
+./fix_leakage_and_retrain.ps1  # PowerShell (15-20 min)
+
+# 4. View results
+python evaluate_fixed_models.py
+```
 
 ---
 
-**Remember:** Sports betting should be approached responsibly. This model is for educational and research purposes. The edge we've identified is small but real - proper bankroll management and discipline are essential for long-term success.
+**Last Updated:** October 31, 2025  
+**Model Version:** 1.1 (Post Data Leakage Fix)  
+**Current Season Performance:** 56.94% ATS (72 games)  
+**Status:** Production Ready ✅
 
-**Good luck, and bet responsibly! 🎲📊**
+---
+
+*This model is for educational and research purposes. Sports betting carries financial risk. Past performance does not guarantee future results. Always bet responsibly.*

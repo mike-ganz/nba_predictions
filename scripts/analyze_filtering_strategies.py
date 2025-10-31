@@ -16,7 +16,7 @@ print("FILTERING STRATEGY ANALYSIS")
 print("=" * 80)
 
 # Load uncalibrated predictions
-df = pd.read_csv('predictions/test_2425_normalized_predictions.csv')
+df = pd.read_csv('predictions/test_2425_normalized_predictions_FRESH.csv')
 
 # Calculate outcomes
 df['actual_margin'] = df['actual_home'] - df['actual_away']
@@ -25,8 +25,9 @@ df['pred_home_covers'] = (df['cover_prob_home'] > 0.5).astype(int)
 df['ats_correct'] = (df['pred_home_covers'] == df['actual_home_covers']).astype(int)
 
 # Create filtering variables
-df['home_favored'] = df['market_spread_home'] > 0
-df['away_favored'] = df['market_spread_home'] < 0
+# CORRECTED: Negative spread = home favored, Positive spread = away favored
+df['home_favored'] = df['market_spread_home'] < 0
+df['away_favored'] = df['market_spread_home'] > 0
 df['pick_n_toss'] = df['market_spread_home'] == 0
 
 df['model_picks_home'] = df['pred_home_covers'] == 1

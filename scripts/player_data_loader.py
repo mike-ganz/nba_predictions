@@ -230,11 +230,19 @@ def get_team_players(
         
         player_id = player_name.lower().replace(" ", "_").replace("'", "").replace(".", "")
         
+        # FIX DATA LEAKAGE: Only use projected_minutes if player was OUT (DNP)
+        # If player played ANY minutes, assume we expected their baseline
+        # If player played 0 minutes, assume we had injury report (set to 0)
+        if actual_minutes == 0:
+            projected_minutes_value = 0.0
+        else:
+            projected_minutes_value = None  # Will default to baseline_minutes
+        
         players.append({
             "player_id": player_id,
             "player_name": player_name,
             "baseline_minutes": round(baseline_minutes, 1),
-            "projected_minutes": round(actual_minutes, 1),
+            "projected_minutes": projected_minutes_value,
             "baseline_ts_pct": round(baseline_ts, 3),
             "baseline_usage_rate": round(baseline_usage_decimal, 3)
         })

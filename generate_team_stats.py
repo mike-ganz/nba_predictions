@@ -99,8 +99,8 @@ def load_team_data(season_year=None):
     if season_year is None:
         from config.settings import config
         season_year = config.season_year
-    """Load team boxscore data for the specified season year."""
-    # Map season year to file path
+    
+    # Map season year to file path (for historical seasons)
     file_mapping = {
         "2020-2021": "data/team_boxscores/historical/2020-2021_NBA_Box_Score_Team-Stats.xlsx",
         "2021-2022": "data/team_boxscores/historical/2021-2022_NBA_Box_Score_Team-Stats.xlsx",
@@ -109,19 +109,51 @@ def load_team_data(season_year=None):
         "2024-2025": "data/team_boxscores/historical/2024-2025_NBA_Box_Score_Team-Stats.xlsx"
     }
     
-    if season_year not in file_mapping:
-        raise ValueError(f"Season year {season_year} not supported. Available options: {list(file_mapping.keys())}")
+    # Check if it's a historical season
+    if season_year in file_mapping:
+        file_path = file_mapping[season_year]
+        
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Data file not found: {file_path}")
+        
+        df = pd.read_excel(file_path)
+        df.columns = df.columns.str.replace('\n', ' ')
+        df.columns = df.columns.str.strip()
+        df['DATE'] = pd.to_datetime(df['DATE'])
+        return df
     
-    file_path = file_mapping[season_year]
+    # For current season (e.g., 2025-2026), look in current/ directory
+    # Find the most recent file
+    from pathlib import Path
+    import re
     
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Data file not found: {file_path}")
+    current_dir = Path("data/team_boxscores/current")
+    if current_dir.exists():
+        files = list(current_dir.glob("*.xlsx"))
+        if files:
+            # Extract dates from filenames and find most recent
+            dated_files = []
+            for f in files:
+                match = re.match(r'(\d{1,2})-(\d{1,2})-(\d{4})', f.name)
+                if match:
+                    month, day, year = match.groups()
+                    try:
+                        date = datetime(int(year), int(month), int(day))
+                        dated_files.append((date, f))
+                    except ValueError:
+                        continue
+            
+            if dated_files:
+                dated_files.sort(reverse=True)
+                file_path = str(dated_files[0][1])
+                
+                df = pd.read_excel(file_path)
+                df.columns = df.columns.str.replace('\n', ' ')
+                df.columns = df.columns.str.strip()
+                df['DATE'] = pd.to_datetime(df['DATE'])
+                return df
     
-    df = pd.read_excel(file_path)
-    df.columns = df.columns.str.replace('\n', ' ')
-    df.columns = df.columns.str.strip()
-    df['DATE'] = pd.to_datetime(df['DATE'])
-    return df
+    raise ValueError(f"Season year {season_year} not supported. Available options: {list(file_mapping.keys())} or place current season data in data/team_boxscores/current/")
 
 # Data will be loaded dynamically when needed based on global config
 df: pd.DataFrame | None = None
