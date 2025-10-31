@@ -16,6 +16,7 @@ datasets = [
     ('data/games_train_with_players_90.jsonl', 'data/games_train_with_players_90_norm.jsonl'),
     ('data/games_val_with_players.jsonl', 'data/games_val_with_players_norm.jsonl'),
     ('data/games_predict_2024_2025_with_players.jsonl', 'data/games_predict_2024_2025_with_players_norm.jsonl'),
+    ('data/games_2025_2026_current.jsonl', 'data/games_2025_2026_current_norm.jsonl'),  # Current season
 ]
 
 for input_path, output_path in datasets:

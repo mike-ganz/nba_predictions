@@ -2,10 +2,13 @@
 Compare model coefficients between old and new models.
 See if the weights learned changed significantly.
 """
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import joblib
 import numpy as np
 import pandas as pd
-from pathlib import Path
 
 print("="*100)
 print("MODEL COEFFICIENTS COMPARISON")

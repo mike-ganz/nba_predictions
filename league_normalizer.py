@@ -25,18 +25,30 @@ def _load_team_boxscores_for_season(season: str) -> pd.DataFrame:
         '2024-2025': '2024-2025_NBA_Box_Score_Team-Stats.xlsx',
     }
     
-    if season not in season_map:
-        return pd.DataFrame()
+    # Check historical seasons first
+    if season in season_map:
+        # Files are in historical directory
+        file_path = Path('data') / 'team_boxscores' / 'historical' / season_map[season]
+        
+        if file_path.exists():
+            df = pd.read_excel(file_path)
+            df['DATE'] = pd.to_datetime(df['DATE'])
+            return df
     
-    # Files are in historical directory
-    file_path = Path('data') / 'team_boxscores' / 'historical' / season_map[season]
+    # For current season (2025-2026), look in current/ directory
+    if season == '2025-2026':
+        current_dir = Path('data') / 'team_boxscores' / 'current'
+        if current_dir.exists():
+            # Find most recent file (should be only one, but pick latest if multiple)
+            xlsx_files = list(current_dir.glob('*.xlsx'))
+            if xlsx_files:
+                # Use the first/only file
+                file_path = xlsx_files[0]
+                df = pd.read_excel(file_path)
+                df['DATE'] = pd.to_datetime(df['DATE'])
+                return df
     
-    if not file_path.exists():
-        return pd.DataFrame()
-    
-    df = pd.read_excel(file_path)
-    df['DATE'] = pd.to_datetime(df['DATE'])
-    return df
+    return pd.DataFrame()
 
 
 def calculate_league_averages(season: str, target_date: str, min_games: int = 20) -> Optional[Dict[str, float]]:
@@ -73,6 +85,7 @@ def calculate_league_averages(season: str, target_date: str, min_games: int = 20
             '2022-2023': '2021-2022',
             '2023-2024': '2022-2023',
             '2024-2025': '2023-2024',
+            '2025-2026': '2024-2025',
         }
         
         if season in prior_season_map:
