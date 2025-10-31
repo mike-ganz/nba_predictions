@@ -43,7 +43,10 @@ def main():
     
     # Build dataset
     print("\nBuilding training dataset...")
-    dataset = MarginTrainingDataset(records)
+    exclude_features = cfg.get('model', {}).get('exclude_features', [])
+    if exclude_features:
+        print(f"  Excluding {len(exclude_features)} features: {exclude_features}")
+    dataset = MarginTrainingDataset(records, exclude_features=exclude_features)
     batch = dataset.build()
     print(f"  Feature dimensionality: {batch.x.shape[1]}")
     print(f"  Actual margin range: {batch.y_margin.min():.1f} to {batch.y_margin.max():.1f} (mean: {batch.y_margin.mean():.2f})")
@@ -53,7 +56,9 @@ def main():
     print("\n" + "="*70)
     print("Training Margin Model")
     print("="*70)
-    model_config = MarginNormalConfig(**cfg.get('model', {}))
+    # Remove exclude_features from model config (it's for dataset, not model)
+    model_cfg = {k: v for k, v in cfg.get('model', {}).items() if k != 'exclude_features'}
+    model_config = MarginNormalConfig(**model_cfg)
     model = MarginNormalModel(model_config)
     model.fit(batch.x, batch.y_margin, batch.baseline_margin)
     

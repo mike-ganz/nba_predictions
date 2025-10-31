@@ -27,5 +27,9 @@ model:
   - 10.0
   - 20.0
   cv_folds: 5
+  exclude_features:
+  - shared_team_weighted_ts_away
+  - away_usage_share_top2
+  - shared_implied_home_winprob
   min_variance: 1.0
   use_cv: true

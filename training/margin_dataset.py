@@ -46,9 +46,10 @@ class MarginTrainingDataset:
     - Added difference features to capture relative advantages
     """
     
-    def __init__(self, records: Iterable[GameRecord], builder: FeatureBuilder | None = None):
+    def __init__(self, records: Iterable[GameRecord], builder: FeatureBuilder | None = None, exclude_features: List[str] | None = None):
         self.records: List[GameRecord] = list(records)
         self.builder = builder or FeatureBuilder()
+        self.exclude_features = exclude_features or []
     
     def build(self) -> MarginTrainingBatch:
         x_list = []
@@ -64,9 +65,13 @@ class MarginTrainingDataset:
             
             # Combine all features into single vector
             # Format: [home_features, away_features, shared_features, home-away diffs]
-            home_feats = [features.x_home[k] for k in HOME_FEATURE_KEYS]
-            away_feats = [features.x_away[k] for k in AWAY_FEATURE_KEYS]
-            shared_feats = [features.x_shared[k] for k in SHARED_FEATURE_KEYS]
+            # Filter out excluded features
+            home_feats = [features.x_home[k] for k in HOME_FEATURE_KEYS 
+                         if f'home_{k}' not in self.exclude_features]
+            away_feats = [features.x_away[k] for k in AWAY_FEATURE_KEYS 
+                         if f'away_{k}' not in self.exclude_features]
+            shared_feats = [features.x_shared[k] for k in SHARED_FEATURE_KEYS 
+                           if f'shared_{k}' not in self.exclude_features]
             
             # Add difference features (capture asymmetry)
             # These help the model learn relative advantages
@@ -74,7 +79,8 @@ class MarginTrainingDataset:
             diff_feats = []
             for k in HOME_FEATURE_KEYS:
                 if k in AWAY_FEATURE_KEYS:  # If both sides have this feature
-                    diff_feats.append(features.x_home[k] - features.x_away.get(k, 0))
+                    if f'diff_{k}' not in self.exclude_features:
+                        diff_feats.append(features.x_home[k] - features.x_away.get(k, 0))
             
             combined = home_feats + away_feats + shared_feats + diff_feats
             x_list.append(combined)

@@ -21,6 +21,13 @@ model:
   
   # Minimum predicted variance (prevents overconfidence)
   min_variance: 1.0
+  
+  # Features to exclude (identified as harmful via permutation importance)
+  # Format: 'home_FEATURE', 'away_FEATURE', 'shared_FEATURE', or 'diff_FEATURE'
+  exclude_features:
+    - shared_team_weighted_ts_away
+    - away_usage_share_top2
+    - shared_implied_home_winprob
 
 evaluation:
   # Range for margin PMF (if needed for compatibility)

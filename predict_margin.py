@@ -30,6 +30,19 @@ def main():
     print(f"Loading model from {model_path}")
     model = joblib.load(model_path)
     
+    # Load config to get exclude_features
+    config_path = Path(args.model) / "config.yaml"
+    if config_path.exists():
+        import yaml
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
+        exclude_features = cfg.get('model', {}).get('exclude_features', [])
+    else:
+        exclude_features = []
+    
+    if exclude_features:
+        print(f"Excluding {len(exclude_features)} features: {exclude_features}")
+    
     # Load data
     print(f"Loading games from {args.data}")
     data_path = Path(args.data)
@@ -40,7 +53,7 @@ def main():
     
     # Build features
     print("Building features...")
-    dataset = MarginTrainingDataset(records)
+    dataset = MarginTrainingDataset(records, exclude_features=exclude_features)
     batch = dataset.build()
     
     # Predict
