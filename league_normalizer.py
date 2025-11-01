@@ -39,11 +39,12 @@ def _load_team_boxscores_for_season(season: str) -> pd.DataFrame:
     if season == '2025-2026':
         current_dir = Path('data') / 'team_boxscores' / 'current'
         if current_dir.exists():
-            # Find most recent file (should be only one, but pick latest if multiple)
+            # Find most recent file by sorting filenames (date prefix like 10-31-2025)
             xlsx_files = list(current_dir.glob('*.xlsx'))
             if xlsx_files:
-                # Use the first/only file
-                file_path = xlsx_files[0]
+                # Sort by filename (descending) to get most recent date
+                xlsx_files_sorted = sorted(xlsx_files, key=lambda x: x.name, reverse=True)
+                file_path = xlsx_files_sorted[0]
                 df = pd.read_excel(file_path)
                 df['DATE'] = pd.to_datetime(df['DATE'])
                 return df
@@ -187,6 +188,7 @@ def normalize_game_jsonl(input_path: str, output_path: str):
     """
     print(f"Normalizing features: {input_path} -> {output_path}")
     
+    game_count = 0
     with open(input_path, 'r', encoding='utf-8') as f_in, \
          open(output_path, 'w', encoding='utf-8') as f_out:
         
@@ -207,11 +209,12 @@ def normalize_game_jsonl(input_path: str, output_path: str):
             
             # Write normalized game
             f_out.write(json.dumps(game) + '\n')
+            game_count = i
             
             if i % 500 == 0:
                 print(f"  Processed {i} games...")
     
-    print(f"  Complete! Processed {i} games total.")
+    print(f"  Complete! Processed {game_count} games total.")
 
 
 def test_normalization():

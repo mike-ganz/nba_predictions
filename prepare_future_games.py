@@ -165,8 +165,17 @@ def load_market_data(market_path: Path) -> Dict[Tuple[str, str, str], Dict]:
     with open(market_path, 'r') as f:
         data = json.load(f)
     
+    # Handle both formats: array or object with "games" key
+    if isinstance(data, list):
+        games = data
+    elif isinstance(data, dict) and 'games' in data:
+        games = data['games']
+    else:
+        logging.error(f"Invalid market data format in {market_path}")
+        return {}
+    
     market_dict = {}
-    for game in data.get('games', []):
+    for game in games:
         date_str = game.get('game_date')
         away_team = normalize_team_name(game.get('away_team', ''))
         home_team = normalize_team_name(game.get('home_team', ''))
@@ -374,19 +383,23 @@ def main() -> None:
         player_dir = Path(args.player_boxscores_dir)
         if player_dir.exists():
             try:
-                # Try to load from the prior season (since current season is future)
-                # Map 2025-2026 -> 2024-2025
-                season_parts = args.season.split('-')
-                prior_season = f"{int(season_parts[0])-1}-{int(season_parts[1])-1}"
-                
-                player_df = load_player_data(prior_season)
+                # First try to load current season data (2025-2026)
+                player_df = load_player_data(args.season)
                 if player_df is not None:
-                    logging.info(f"Loaded player data for {prior_season}: {len(player_df)} player-games")
-                    
+                    logging.info(f"Loaded player data for {args.season}: {len(player_df)} player-games")
                     # Precompute season baselines for speed
-                    precompute_season_baselines(prior_season, player_df)
+                    precompute_season_baselines(args.season, player_df)
                 else:
-                    logging.warning(f"Could not load player data for {prior_season}")
+                    # Fall back to prior season if current not available
+                    season_parts = args.season.split('-')
+                    prior_season = f"{int(season_parts[0])-1}-{int(season_parts[1])-1}"
+                    player_df = load_player_data(prior_season)
+                    if player_df is not None:
+                        logging.info(f"Loaded player data for {prior_season}: {len(player_df)} player-games")
+                        # Precompute season baselines for speed
+                        precompute_season_baselines(prior_season, player_df)
+                    else:
+                        logging.warning(f"Could not load player data for {prior_season}")
             except Exception as e:
                 logging.warning(f"Failed to load player data: {e}")
         else:

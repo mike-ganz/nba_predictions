@@ -52,6 +52,21 @@ def load_player_data(season: str) -> Optional[pd.DataFrame]:
                     df['DATE'] = pd.to_datetime(df['DATE'])
                 return df
     
-    # For current season or unknown, return None (caller should handle)
+    # For current season (2025-2026), look in current/ directory
+    if season == '2025-2026':
+        current_dir = Path('data/player_boxscores/current')
+        if current_dir.exists():
+            # Find most recent file by sorting filenames (date prefix like 10-31-2025)
+            xlsx_files = list(current_dir.glob('*.xlsx'))
+            if xlsx_files:
+                # Sort by filename (descending) to get most recent date
+                xlsx_files_sorted = sorted(xlsx_files, key=lambda x: x.name, reverse=True)
+                file_path = xlsx_files_sorted[0]
+                df = pd.read_excel(file_path)
+                if 'DATE' in df.columns:
+                    df['DATE'] = pd.to_datetime(df['DATE'])
+                return df
+    
+    # For unknown seasons, return None (caller should handle)
     return None
 

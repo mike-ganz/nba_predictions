@@ -4,30 +4,112 @@
 This script automatically uses today's date and calls prepare_future_games.py
 with appropriate arguments for a typical daily prediction workflow.
 
+NEW: Can optionally scrape odds and injuries automatically before preparing games!
+
 Usage:
-    # Today's games
+    # Today's games (manual scraping)
     python prepare_todays_games.py
     
-    # Specific date
-    python prepare_todays_games.py --date 2025-11-15
+    # Today's games with automatic scraping (RECOMMENDED)
+    python prepare_todays_games.py --scrape-all
     
-    # Without player data (faster)
-    python prepare_todays_games.py --no-players
+    # Specific date with scraping
+    python prepare_todays_games.py --date 2025-11-15 --scrape-all
+    
+    # Scrape only odds or only injuries
+    python prepare_todays_games.py --scrape-odds
+    python prepare_todays_games.py --scrape-injuries
 """
 
 import argparse
 import subprocess
 import sys
+import logging
 from datetime import datetime
 from pathlib import Path
 
 # Add current directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+
+
+def scrape_odds(output_file: str, date: str = None, show_browser: bool = False) -> bool:
+    """
+    Scrape odds using Selenium.
+    
+    Args:
+        output_file: Path to output JSON file
+        date: Optional date filter
+        show_browser: Show browser window for debugging
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    print("")
+    print("=" * 70)
+    print("SCRAPING ODDS (Selenium)")
+    print("=" * 70)
+    print("")
+    
+    cmd = [sys.executable, "scrape_odds_selenium.py", "--output", output_file, "--mode", "append"]
+    
+    if date:
+        cmd.extend(["--date", date])
+    
+    if show_browser:
+        cmd.append("--show-browser")
+    
+    result = subprocess.run(cmd)
+    
+    if result.returncode == 0:
+        print("")
+        print("[OK] Odds scraped successfully")
+        print("")
+        return True
+    else:
+        print("")
+        print("[ERROR] Failed to scrape odds", file=sys.stderr)
+        print("")
+        return False
+
+
+def scrape_injuries(output_file: str) -> bool:
+    """
+    Scrape injuries from ESPN.
+    
+    Args:
+        output_file: Path to output JSON file
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    print("")
+    print("=" * 70)
+    print("SCRAPING INJURIES (ESPN)")
+    print("=" * 70)
+    print("")
+    
+    cmd = [sys.executable, "scrape_injuries.py", "--output", output_file]
+    
+    result = subprocess.run(cmd)
+    
+    if result.returncode == 0:
+        print("")
+        print("[OK] Injuries scraped successfully")
+        print("")
+        return True
+    else:
+        print("")
+        print("[ERROR] Failed to scrape injuries", file=sys.stderr)
+        print("")
+        return False
+
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Prepare game data for today's (or specified date's) NBA games"
+        description="Prepare game data for today's (or specified date's) NBA games",
+        epilog="TIP: Use --scrape-all to automatically fetch fresh odds and injury data!"
     )
     parser.add_argument(
         "--date",
@@ -69,6 +151,29 @@ def main():
         action="store_true",
         help="Enable debug logging"
     )
+    
+    # NEW: Scraping options
+    parser.add_argument(
+        "--scrape-all",
+        action="store_true",
+        help="Automatically scrape odds and injuries before preparing games (RECOMMENDED)"
+    )
+    parser.add_argument(
+        "--scrape-odds",
+        action="store_true",
+        help="Scrape odds before preparing games"
+    )
+    parser.add_argument(
+        "--scrape-injuries",
+        action="store_true",
+        help="Scrape injuries before preparing games"
+    )
+    parser.add_argument(
+        "--show-browser",
+        action="store_true",
+        help="Show browser window when scraping odds (for debugging)"
+    )
+    
     args = parser.parse_args()
     
     # Use today's date if not specified
@@ -78,6 +183,24 @@ def main():
     else:
         date_str = datetime.now().strftime("%Y-%m-%d")
         print(f"Using today's date: {date_str}")
+    
+    # Handle scraping flags
+    scrape_odds_flag = args.scrape_all or args.scrape_odds
+    scrape_injuries_flag = args.scrape_all or args.scrape_injuries
+    
+    # Scrape odds if requested
+    if scrape_odds_flag:
+        success = scrape_odds(args.market, date_str, args.show_browser)
+        if not success:
+            print("[WARNING] Odds scraping failed, will try to use existing market data")
+            print("")
+    
+    # Scrape injuries if requested
+    if scrape_injuries_flag:
+        success = scrape_injuries(args.injuries)
+        if not success:
+            print("[WARNING] Injury scraping failed, will try to use existing injury data")
+            print("")
     
     # Build output filename
     output_file = f"data/games_future_{date_str}.jsonl"
@@ -127,6 +250,16 @@ def main():
         print("=" * 70)
         print("")
         print(f"Output file: {output_file}")
+        
+        if scrape_odds_flag or scrape_injuries_flag:
+            print("")
+            print("Data sources:")
+            if scrape_odds_flag:
+                print(f"  [LIVE] Odds scraped from oddschecker.com")
+            if scrape_injuries_flag:
+                print(f"  [LIVE] Injuries scraped from ESPN")
+        
+        print("")
         print("Next steps:")
         print("  1. Review the prepared game data")
         print("  2. Generate predictions:")
