@@ -85,11 +85,17 @@ class MarginTrainingDataset:
             combined = home_feats + away_feats + shared_feats + diff_feats
             x_list.append(combined)
             
-            # Target: actual margin
-            if not record.outcome:
-                raise ValueError(f"GameRecord {record.game_id} missing outcome data for training")
+            # Target: actual margin (optional for future games)
+            if record.outcome:
+                margin = record.outcome.home_final - record.outcome.away_final
+                actual_home_val = record.outcome.home_final
+                actual_away_val = record.outcome.away_final
+            else:
+                # Future game without outcome - use NaN placeholders
+                margin = float('nan')
+                actual_home_val = float('nan')
+                actual_away_val = float('nan')
             
-            margin = record.outcome.home_final - record.outcome.away_final
             y_margin.append(margin)
             
             # Baseline from market (spread implies expected margin)
@@ -97,9 +103,9 @@ class MarginTrainingDataset:
             baseline = -record.market.spread_home
             baseline_margin.append(baseline)
             
-            # Store for evaluation
-            actual_home.append(record.outcome.home_final)
-            actual_away.append(record.outcome.away_final)
+            # Store for evaluation (will be NaN for future games)
+            actual_home.append(actual_home_val)
+            actual_away.append(actual_away_val)
             market_spread_home.append(record.market.spread_home)
             game_ids.append(record.game_id)
         

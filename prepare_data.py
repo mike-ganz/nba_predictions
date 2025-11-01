@@ -10,7 +10,7 @@ from typing import Dict, Iterable, List, Tuple
 import pandas as pd
 
 from generate_team_stats import generate_team_stats
-from player_data_loader import get_team_players
+from scripts.player_data_loader import get_team_players
 from transform_player_stats import load_player_data
 
 
@@ -369,7 +369,7 @@ def main() -> None:
                     logging.info(f"Loaded player data for {season_match}: {len(player_df)} player-games")
                     
                     # PRE-COMPUTE all player baselines for this season (HUGE speedup)
-                    from player_data_loader import precompute_season_baselines
+                    from scripts.player_data_loader import precompute_season_baselines
                     precompute_season_baselines(season_match, player_df)
                 except Exception as e:
                     logging.warning(f"Failed to load player data for {season_match}: {e}")
