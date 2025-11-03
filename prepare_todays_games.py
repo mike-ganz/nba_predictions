@@ -255,7 +255,7 @@ def main():
             print("")
             print("Data sources:")
             if scrape_odds_flag:
-                print(f"  [LIVE] Odds scraped from oddschecker.com")
+                print(f"  [LIVE] Odds scraped from evanalytics.com")
             if scrape_injuries_flag:
                 print(f"  [LIVE] Injuries scraped from ESPN")
         

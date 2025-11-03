@@ -1,8 +1,7 @@
 """
 NBA Odds Scraper with Selenium - Fully Automated
 
-Scrapes NBA game odds (spread, total, moneyline) from oddschecker.com using Selenium
-to bypass Cloudflare protection.
+Scrapes NBA game odds (spread, total, moneyline) from evanalytics.com using Selenium.
 
 Usage:
     python scrape_odds_selenium.py [--output OUTPUT_FILE] [--date YYYY-MM-DD] [--headless]
@@ -110,40 +109,44 @@ def parse_total(total_str: str) -> float:
 
 def parse_game_date_text(date_text: str) -> str:
     """
-    Parse date from text like 'Today' or 'Tomorrow'.
+    Parse date from text like 'Sunday, November 02, 2025'.
     Returns date in YYYY-MM-DD format.
     """
     today = datetime.now().date()
     
-    if 'today' in date_text.lower():
-        game_date = today
-    elif 'tomorrow' in date_text.lower():
-        game_date = today + timedelta(days=1)
-    else:
-        # Try to parse as a date string
-        try:
-            # Try format like "Thursday, December 25"
-            match = re.search(r'(\w+),?\s+(\w+)\s+(\d+)', date_text)
-            if match:
-                month_name = match.group(2)
-                day = int(match.group(3))
-                game_date = datetime.strptime(f"{month_name} {day} {today.year}", '%B %d %Y').date()
-                # If date is in the past, assume next year
-                if game_date < today:
-                    game_date = game_date.replace(year=today.year + 1)
-            else:
-                logging.warning(f"Could not parse date text: '{date_text}' - using today")
-                game_date = today
-        except ValueError:
-            logging.warning(f"Could not parse date text: '{date_text}' - using today")
-            game_date = today
+    # Try to parse as full date string "Sunday, November 02, 2025"
+    try:
+        match = re.search(r'(\w+),\s+(\w+)\s+(\d+),\s+(\d{4})', date_text)
+        if match:
+            month_name = match.group(2)
+            day = int(match.group(3))
+            year = int(match.group(4))
+            game_date = datetime.strptime(f"{month_name} {day} {year}", '%B %d %Y').date()
+            return game_date.strftime('%Y-%m-%d')
+    except (ValueError, AttributeError):
+        pass
     
-    return game_date.strftime('%Y-%m-%d')
+    # Fallback: try without year
+    try:
+        match = re.search(r'(\w+),?\s+(\w+)\s+(\d+)', date_text)
+        if match:
+            month_name = match.group(2)
+            day = int(match.group(3))
+            game_date = datetime.strptime(f"{month_name} {day} {today.year}", '%B %d %Y').date()
+            # If date is in the past, assume next year
+            if game_date < today:
+                game_date = game_date.replace(year=today.year + 1)
+            return game_date.strftime('%Y-%m-%d')
+    except (ValueError, AttributeError):
+        pass
+    
+    logging.warning(f"Could not parse date text: '{date_text}' - using today")
+    return today.strftime('%Y-%m-%d')
 
 
 def scrape_odds_with_selenium(headless: bool = True, target_date: Optional[str] = None) -> List[Dict]:
     """
-    Scrape odds using Selenium to automate browser interaction.
+    Scrape odds using Selenium from evanalytics.com.
     
     Args:
         headless: Run browser in headless mode (no GUI)
@@ -163,7 +166,7 @@ def scrape_odds_with_selenium(headless: bool = True, target_date: Optional[str] 
     chrome_options.add_argument('--disable-dev-shm-usage')
     chrome_options.add_argument('--window-size=1920,1080')
     
-    # Add user agent to avoid detection
+    # Add user agent
     chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
     
     # Initialize driver
@@ -178,138 +181,165 @@ def scrape_odds_with_selenium(headless: bool = True, target_date: Optional[str] 
     games = []
     
     try:
-        url = "https://www.oddschecker.com/us/basketball/nba"
+        url = "https://evanalytics.com/nba/odds"
         logging.info(f"Navigating to {url}")
         driver.get(url)
         
-        # Wait for page to load - look for game elements
+        # Wait for page to load
         logging.info("Waiting for page to load...")
-        time.sleep(5)  # Give Cloudflare time to pass
+        time.sleep(2)
         
-        # Try to find game container sections
+        # Wait for table to appear
         try:
-            # Wait for game elements to appear
-            WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.TAG_NAME, "article"))
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.TAG_NAME, "table"))
             )
             logging.info("Page loaded successfully")
         except Exception as e:
             logging.error(f"Timeout waiting for page to load: {e}")
-            logging.error("The page structure may have changed or Cloudflare is blocking")
             driver.save_screenshot("error_screenshot.png")
             logging.error("Screenshot saved to error_screenshot.png")
             return games
         
-        # Find all game sections
-        game_sections = driver.find_elements(By.XPATH, "//article//div[contains(@class, 'flex-col')]")
+        # Wait for odds data to load (JavaScript rendered)
+        logging.info("Waiting for odds data to load...")
+        time.sleep(5)  # Give extra time for odds data to populate
         
-        logging.info(f"Found {len(game_sections)} potential game sections")
+        # Click on "Game Line" tab to show only full game lines (not quarters/halves)
+        try:
+            game_line_button = driver.find_element(By.XPATH, "//button[contains(text(), 'Game Line') or contains(., '1. Game Line')]")
+            game_line_button.click()
+            time.sleep(1)
+            logging.info("Clicked 'Game Line' tab")
+        except:
+            logging.warning("Could not find/click 'Game Line' tab, proceeding anyway")
         
-        current_date_label = None
+        # Find all table rows
+        rows = driver.find_elements(By.TAG_NAME, "tr")
+        logging.info(f"Found {len(rows)} table rows")
         
-        for section in game_sections:
+        current_date = None
+        processed_games = set()
+        
+        for i, row in enumerate(rows):
             try:
-                section_html = section.get_attribute('innerHTML')
+                # Check if this row is a date header
+                row_text = row.text.strip()
                 
-                # Check if this section has a date label
-                date_elements = section.find_elements(By.TAG_NAME, "p")
-                for elem in date_elements:
-                    text = elem.text.strip()
-                    if text in ['Today', 'Tomorrow'] or re.search(r'\w+,\s+\w+\s+\d+', text):
-                        current_date_label = text
-                        logging.debug(f"Found date label: {current_date_label}")
-                        break
+                # Date headers contain full dates like "Sunday, November 02, 2025"
+                if re.search(r'\w+,\s+\w+\s+\d+,\s+\d{4}', row_text):
+                    current_date = parse_game_date_text(row_text)
+                    logging.info(f"Found date header: {row_text} -> {current_date}")
+                    continue
                 
-                # Look for team names in links
-                game_links = section.find_elements(By.TAG_NAME, "a")
+                # Skip if we don't have a date yet
+                if not current_date:
+                    continue
                 
-                for link in game_links:
-                    link_text = link.text.strip()
+                # Filter by target date if specified
+                if target_date and current_date != target_date:
+                    continue
+                
+                # Get all cells in the row
+                cells = row.find_elements(By.TAG_NAME, "td")
+                
+                # We need at least 7 cells: Time, Team, ?, Spread, Totals, Moneyline, Win Prob
+                if len(cells) < 7:
+                    continue
+                
+                # Extract time cell - only process rows with valid game times
+                time_cell = cells[0].text.strip()
+                if not re.search(r'\d+:\d+\s+(AM|PM)', time_cell):
+                    continue
+                
+                # Extract team cell - must contain both teams
+                team_cell = cells[1]
+                team_imgs = team_cell.find_elements(By.TAG_NAME, "img")
+                
+                # A full game line row should have 2 team logos (away and home)
+                if len(team_imgs) < 2:
+                    continue
+                
+                # Get team names from img alt tags
+                away_team = team_imgs[0].get_attribute("alt").replace(" logo", "").strip()
+                home_team = team_imgs[1].get_attribute("alt").replace(" logo", "").strip()
+                
+                if not away_team or not home_team:
+                    continue
+                
+                # Check for duplicates
+                game_key = (away_team, home_team, current_date)
+                if game_key in processed_games:
+                    continue
+                
+                logging.debug(f"Processing: {away_team} @ {home_team}")
+                
+                # Extract odds cells (indices based on evanalytics.com table structure)
+                # cells[2] appears to be team ref/abbreviation
+                spread_cell = cells[3].text.strip()  # Was cells[2]
+                totals_cell = cells[4].text.strip()   # Was cells[3]
+                moneyline_cell = cells[5].text.strip() # Was cells[4]
+                
+                # Debug: log cell contents for first game
+                if len(games) == 0:
+                    logging.info(f"First game cell contents:")
+                    logging.info(f"  spread_cell: '{spread_cell}'")
+                    logging.info(f"  totals_cell: '{totals_cell}'")
+                    logging.info(f"  moneyline_cell: '{moneyline_cell}'")
+                
+                # Parse spread (format: "+13.0-110\n-13.0-110" - each line has spread+odds)
+                # Extract just the spread values (before the odds)
+                spread_lines = [line.strip() for line in spread_cell.split('\n') if line.strip()]
+                if len(spread_lines) >= 2:
+                    # Extract spread from first line (away): e.g., "+13.0" from "+13.0-110"
+                    away_match = re.match(r'([+-]\d+\.?\d*)', spread_lines[0])
+                    # Extract spread from second line (home): e.g., "-13.0" from "-13.0-110"
+                    home_match = re.match(r'([+-]\d+\.?\d*)', spread_lines[1])
                     
-                    # Check if this is a game link (contains @ symbol)
-                    if '@' in link_text:
-                        # Extract teams from link text
-                        # Format: "Away Team @ Home Team" or "Away Team logo @ Home Team"
-                        parts = link_text.split('@')
-                        if len(parts) == 2:
-                            away_team = parts[0].strip()
-                            home_team = parts[1].strip()
-                            
-                            # Clean up team names (remove "logo" text)
-                            away_team = re.sub(r'\s+logo\s*$', '', away_team, flags=re.IGNORECASE).strip()
-                            home_team = re.sub(r'^logo\s+', '', home_team, flags=re.IGNORECASE).strip()
-                            
-                            if not away_team or not home_team:
-                                continue
-                            
-                            # Get game date
-                            game_date = parse_game_date_text(current_date_label) if current_date_label else datetime.now().strftime('%Y-%m-%d')
-                            
-                            # Filter by date if specified
-                            if target_date and game_date != target_date:
-                                continue
-                            
-                            logging.debug(f"Found game: {away_team} @ {home_team} on {game_date}")
-                            
-                            # Now find odds for this game (in the same section or nearby)
-                            # Look for buttons with odds data
-                            parent_section = link.find_element(By.XPATH, "./ancestor::div[contains(@class, 'flex-col')]")
-                            
-                            # Find spread, total, and moneyline buttons
-                            odds_buttons = parent_section.find_elements(By.TAG_NAME, "button")
-                            
-                            spread_away = None
-                            spread_home = None
-                            total = None
-                            moneyline_away = None
-                            moneyline_home = None
-                            
-                            for button in odds_buttons:
-                                button_text = button.text.strip()
-                                
-                                # Spread pattern: "+6.5 -106" or "-6.5 -105"
-                                spread_match = re.match(r'([+-]\d+\.?\d*)\s+([+-]\d+)', button_text)
-                                if spread_match:
-                                    if spread_away is None:
-                                        spread_away = parse_spread(spread_match.group(1))
-                                    elif spread_home is None:
-                                        spread_home = parse_spread(spread_match.group(1))
-                                    continue
-                                
-                                # Total pattern: "O 233 -110" or "U 233 -110"
-                                total_match = re.match(r'[OU]\s+([\d.]+)\s+([+-]\d+)', button_text)
-                                if total_match and total is None and button_text.startswith('O'):
-                                    total = parse_total(total_match.group(1))
-                                    continue
-                                
-                                # Moneyline pattern: "+210" or "-250"
-                                ml_match = re.match(r'^([+-]\d+)$', button_text)
-                                if ml_match:
-                                    if moneyline_away is None:
-                                        moneyline_away = parse_odds_american(ml_match.group(1))
-                                    elif moneyline_home is None:
-                                        moneyline_home = parse_odds_american(ml_match.group(1))
-                                    continue
-                            
-                            # Validate we have all required data
-                            if all(x is not None for x in [spread_home, total, moneyline_away, moneyline_home]):
-                                game = {
-                                    'away_team': normalize_team_name(away_team),
-                                    'home_team': normalize_team_name(home_team),
-                                    'game_date': game_date,
-                                    'spread_home': spread_home,
-                                    'total': total,
-                                    'moneyline_home': moneyline_home,
-                                    'moneyline_away': moneyline_away,
-                                }
-                                games.append(game)
-                                logging.info(f"Scraped: {game['away_team']} @ {game['home_team']}")
-                            else:
-                                logging.warning(f"Incomplete odds data for {away_team} @ {home_team}")
-                                logging.debug(f"  spread_home={spread_home}, total={total}, ml_away={moneyline_away}, ml_home={moneyline_home}")
-            
+                    if away_match and home_match:
+                        away_spread = float(away_match.group(1))
+                        home_spread = float(home_match.group(1))
+                    else:
+                        logging.warning(f"Could not parse spread for {away_team} @ {home_team}: '{spread_cell}'")
+                        continue
+                else:
+                    logging.warning(f"Could not parse spread for {away_team} @ {home_team}: '{spread_cell}'")
+                    continue
+                
+                # Parse totals (format: "o228.5 -110 u228.5 -110")
+                total_match = re.search(r'[ou](\d+\.?\d*)', totals_cell.lower())
+                if total_match:
+                    total = float(total_match.group(1))
+                else:
+                    logging.warning(f"Could not parse total for {away_team} @ {home_team}: '{totals_cell}'")
+                    continue
+                
+                # Parse moneyline (format: "+520 -680")
+                ml_match = re.findall(r'([+-]\d+)', moneyline_cell)
+                if len(ml_match) >= 2:
+                    moneyline_away = int(ml_match[0])
+                    moneyline_home = int(ml_match[1])
+                else:
+                    logging.warning(f"Could not parse moneyline for {away_team} @ {home_team}: '{moneyline_cell}'")
+                    continue
+                
+                # Create game entry
+                game = {
+                    'away_team': normalize_team_name(away_team),
+                    'home_team': normalize_team_name(home_team),
+                    'game_date': current_date,
+                    'spread_home': home_spread,
+                    'total': total,
+                    'moneyline_home': moneyline_home,
+                    'moneyline_away': moneyline_away,
+                }
+                
+                games.append(game)
+                processed_games.add(game_key)
+                logging.info(f"Scraped: {game['away_team']} @ {game['home_team']} ({current_date})")
+                
             except Exception as e:
-                logging.debug(f"Error processing section: {e}")
+                logging.debug(f"Error processing row: {e}")
                 continue
     
     finally:
@@ -353,7 +383,7 @@ def merge_games(existing_games: List[Dict], new_games: List[Dict]) -> List[Dict]
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Scrape NBA odds from oddschecker.com using Selenium')
+    parser = argparse.ArgumentParser(description='Scrape NBA odds from evanalytics.com using Selenium')
     parser.add_argument('--output', type=str, default='data/market/current_spreads.json',
                         help='Output JSON file path')
     parser.add_argument('--date', type=str, help='Filter games for specific date (YYYY-MM-DD)')
@@ -374,8 +404,8 @@ def main():
         logging.error("No games found!")
         logging.error("This could mean:")
         logging.error("  1. No games scheduled for the specified date")
-        logging.error("  2. Cloudflare is still blocking (try --show-browser to debug)")
-        logging.error("  3. The website structure has changed")
+        logging.error("  2. The website structure has changed")
+        logging.error("  3. The page failed to load properly (try --show-browser to debug)")
         sys.exit(1)
     
     # Output to file
@@ -409,8 +439,8 @@ def main():
     output_data = {
         "games": all_games,
         "last_updated": datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ'),
-        "source": "oddschecker.com",
-        "source_url": "https://www.oddschecker.com/us/basketball/nba"
+        "source": "evanalytics.com",
+        "source_url": "https://evanalytics.com/nba/odds"
     }
     
     with open(output_file, 'w', encoding='utf-8') as f:
