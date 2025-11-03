@@ -3,43 +3,43 @@ CURRENT SEASON (2025-2026) MODEL EVALUATION REPORT
 ======================================================================
 
 Model: models/margin_normalized/ (29 features)
-Evaluation Date: 2025-11-02 22:31:13
+Evaluation Date: 2025-11-03 11:35:25
 
 OVERALL PERFORMANCE
 ----------------------------------------------------------------------
-Games Evaluated: 85
-ATS Accuracy: 62.35%
-ROI: 13.88%
-Profit/Loss: $12.98 (on $93.50 wagered)
-Avg Prediction Error: 10.97 points
-Median Prediction Error: 8.18 points
+Games Evaluated: 93
+ATS Accuracy: 61.29%
+ROI: 11.94%
+Profit/Loss: $12.21 (on $102.30 wagered)
+Avg Prediction Error: 11.08 points
+Median Prediction Error: 9.09 points
 
 KEY STRATEGY SEGMENTS
 ----------------------------------------------------------------------
 
 Home Favored:
-  Games: 45
-  ATS Accuracy: 62.22%
-  ROI: 13.64%
-  Profit/Loss: $6.75
+  Games: 50
+  ATS Accuracy: 62.00%
+  ROI: 13.23%
+  Profit/Loss: $7.28
 
 Away Favored:
-  Games: 40
-  ATS Accuracy: 62.50%
-  ROI: 14.15%
-  Profit/Loss: $6.23
+  Games: 43
+  ATS Accuracy: 60.47%
+  ROI: 10.43%
+  Profit/Loss: $4.93
 
 Away Fav + Small Spread:
-  Games: 21
-  ATS Accuracy: 66.67%
-  ROI: 21.76%
-  Profit/Loss: $5.03
+  Games: 22
+  ATS Accuracy: 68.18%
+  ROI: 24.52%
+  Profit/Loss: $5.93
 
 Away Fav + Medium Spread:
-  Games: 12
-  ATS Accuracy: 58.33%
-  ROI: 6.54%
-  Profit/Loss: $0.86
+  Games: 14
+  ATS Accuracy: 50.00%
+  ROI: -8.68%
+  Profit/Loss: $-1.34
 
 Away Fav + Large Spread:
   Games: 7
