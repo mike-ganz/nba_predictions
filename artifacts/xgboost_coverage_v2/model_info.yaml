@@ -1,0 +1,15 @@
+hyperparameters:
+  colsample_bytree: 0.7
+  learning_rate: 0.01
+  max_depth: 2
+  min_child_weight: 50
+  n_estimators: 50
+  reg_alpha: 1.0
+  reg_lambda: 5.0
+  subsample: 0.7
+model_type: xgboost
+n_features: 32
+n_training_games: 3560
+scale_pos_weight: 1.0566146735990756
+training_accuracy: 0.5558988764044944
+training_logloss: 0.6905994361672535

@@ -1,0 +1,6 @@
+FEATURES TO EXCLUDE
+======================================================================
+
+Add these to configs/margin_default.yaml under exclude_features:
+
+  - diff_orb_edge

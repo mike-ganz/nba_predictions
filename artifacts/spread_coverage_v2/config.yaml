@@ -1,0 +1,46 @@
+data:
+  prediction_jsonl: data/games_predict_2024_2025_with_players.jsonl
+  training_jsonl: data/games_train_with_players_90.jsonl
+  validation_jsonl: data/games_val_with_players.jsonl
+evaluation:
+  confidence_bins:
+  - 0.5
+  - 0.55
+  - 0.6
+  - 0.65
+  - 0.7
+  - 1.0
+model:
+  C: 1.0
+  Cs:
+  - 0.001
+  - 0.01
+  - 0.1
+  - 1.0
+  - 10.0
+  - 100.0
+  - 1000.0
+  cv_folds: 5
+  exclude_features:
+  - shared_team_weighted_ts_away
+  - away_usage_share_top2
+  - shared_implied_home_winprob
+  - home_edge
+  - away_edge
+  - home_orb_edge
+  - away_orb_edge
+  - home_tov_edge
+  - away_tov_edge
+  - diff_tov_edge
+  - home_ftr
+  - away_tpar
+  - away_rest_days
+  l1_ratio: 0.5
+  l1_ratios:
+  - 0.0
+  - 0.1
+  - 0.3
+  - 0.5
+  - 0.7
+  max_iter: 5000
+  use_cv: true

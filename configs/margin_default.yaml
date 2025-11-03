@@ -1,4 +1,4 @@
-# Configuration for Direct Margin Prediction Model
+# Configuration for Spread Coverage Prediction Model (Logistic Regression)
 
 data:
   training_jsonl: data/games_train_with_players_90.jsonl
@@ -9,28 +9,65 @@ model:
   # Use cross-validation to automatically tune regularization
   use_cv: true
   
-  # Alpha ranges for CV (wider range for mean, stronger for variance)
-  alphas_mean: [0.05, 0.1, 0.3, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0]
-  alphas_variance: [0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0]
+  # Cs: Inverse of regularization strength (larger = less regularization)
+  # Will search over these values to find optimal regularization
+  Cs: [0.001, 0.01, 0.1, 1.0, 10.0, 100.0, 1000.0]
+  
+  # l1_ratios: Mix of L1 and L2 regularization
+  # 0.0 = pure L2 (Ridge), 1.0 = pure L1 (Lasso), between = ElasticNet
+  # Favor L2 more to avoid over-sparsification
+  l1_ratios: [0.0, 0.1, 0.3, 0.5, 0.7]
   
   cv_folds: 5
   
-  # Fallback alphas if use_cv=false
-  alpha_mean: 0.5
-  alpha_variance: 2.0
+  # Fallback values if use_cv=false
+  C: 1.0
+  l1_ratio: 0.5
   
-  # Minimum predicted variance (prevents overconfidence)
-  min_variance: 1.0
+  # Maximum iterations for solver convergence
+  max_iter: 5000
   
   # Features to exclude (identified as harmful via permutation importance)
   # Format: 'home_FEATURE', 'away_FEATURE', 'shared_FEATURE', or 'diff_FEATURE'
   exclude_features:
+    # Previously excluded:
     - shared_team_weighted_ts_away
     - away_usage_share_top2
     - shared_implied_home_winprob
+    
+    # Problem #1: Redundant features (keep only diff_ versions)
+    - home_edge              # Redundant with diff_edge
+    - away_edge              # Redundant with diff_edge
+    - home_orb_edge          # Redundant with diff_orb_edge
+    - away_orb_edge          # Redundant with diff_orb_edge
+    
+    # Problem #2: Harmful features (negative permutation importance - Round 1)
+    - home_tov_edge          # Harmful AND redundant
+    - away_tov_edge          # Harmful AND redundant
+    - diff_tov_edge          # Harmful AND redundant
+    - home_ftr               # Harmful (-0.002022)
+    - away_tpar              # Harmful (-0.000843)
+    - away_rest_days         # Harmful (-0.000674)
+    
+    # Round 2: NEW harmful features (exposed after removing redundancy)
+    - diff_ftr               # Harmful (-0.002247)
+    - diff_rest_days         # Harmful (-0.001236)
+    - shared_pace_mean       # Harmful (-0.000787)
+    - shared_implied_away_winprob  # Harmful (-0.000702)
+    - home_rest_days         # Harmful (-0.000309)
+    
+    # Round 2: Zero-coefficient features (model ignores these entirely)
+    - home_star_out
+    - away_star_out
+    - home_minutes_missing_top2
+    - away_minutes_missing_top2
+    - home_usage_share_top2
+    - diff_star_out
+    - diff_minutes_missing_top2
+    - diff_usage_share_top2
+    - shared_team_weighted_ts_home
 
 evaluation:
-  # Range for margin PMF (if needed for compatibility)
-  margin_low: -60
-  margin_high: 60
+  # Calibration settings for probability evaluation
+  confidence_bins: [0.5, 0.55, 0.60, 0.65, 0.70, 1.0]
 

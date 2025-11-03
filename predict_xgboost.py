@@ -1,7 +1,7 @@
-"""Prediction script for spread coverage model.
+"""Prediction script for XGBoost spread coverage model.
 
 Usage:
-    python predict_margin.py --data data/games_val_with_players.jsonl --model artifacts/margin_test --output predictions.csv
+    python predict_xgboost.py --data data/games_val.jsonl --model artifacts/xgboost_coverage --output predictions.csv
 """
 
 import argparse
@@ -12,11 +12,10 @@ import numpy as np
 
 from data.loaders import GameDataLoader
 from training.margin_dataset import MarginTrainingDataset
-from models.margin_distribution import margin_cover_probability
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Predict using spread coverage model")
+    parser = argparse.ArgumentParser(description="Predict using XGBoost model")
     parser.add_argument("--data", type=str, required=True, help="Games JSONL to predict")
     parser.add_argument("--model", type=str, required=True, help="Model artifact directory")
     parser.add_argument("--output", type=str, required=True, help="Output CSV path")
@@ -27,22 +26,9 @@ def main():
     args = parse_args()
     
     # Load model
-    model_path = Path(args.model) / "margin_model.joblib"
+    model_path = Path(args.model) / "xgboost_model.joblib"
     print(f"Loading model from {model_path}")
     model = joblib.load(model_path)
-    
-    # Load config to get exclude_features
-    config_path = Path(args.model) / "config.yaml"
-    if config_path.exists():
-        import yaml
-        with open(config_path) as f:
-            cfg = yaml.safe_load(f)
-        exclude_features = cfg.get('model', {}).get('exclude_features', [])
-    else:
-        exclude_features = []
-    
-    if exclude_features:
-        print(f"Excluding {len(exclude_features)} features: {exclude_features}")
     
     # Load data
     print(f"Loading games from {args.data}")
@@ -52,15 +38,15 @@ def main():
     records = collection.games
     print(f"Loaded {len(records)} games")
     
-    # Build features
+    # Build features (no exclusions - XGBoost uses all features)
     print("Building features...")
-    dataset = MarginTrainingDataset(records, exclude_features=exclude_features)
+    dataset = MarginTrainingDataset(records, exclude_features=[])
     batch = dataset.build()
     
     # Predict
     print("Generating predictions...")
-    prob_home_covers = model.predict(batch.x)
-    prob_home_covers_out, prob_away_covers = margin_cover_probability(prob_home_covers)
+    prob_home_covers = model.predict_proba(batch.x)[:, 1]
+    prob_away_covers = 1 - prob_home_covers
     
     # Build output dataframe
     results = []
@@ -71,7 +57,7 @@ def main():
             'away_team': record.teams.A.team_id,
             'home_team': record.teams.H.team_id,
             'market_spread_home': batch.market_spread_home[i],
-            'cover_prob_home': prob_home_covers_out[i],
+            'cover_prob_home': prob_home_covers[i],
             'cover_prob_away': prob_away_covers[i],
         }
         
@@ -98,6 +84,13 @@ def main():
     print(f"  Median home cover prob: {np.median(prob_home_covers):.3f}")
     print(f"  Probability range:     {prob_home_covers.min():.3f} to {prob_home_covers.max():.3f}")
     
+    # Home/Away distribution
+    home_picks = (prob_home_covers > 0.5).sum()
+    away_picks = (prob_home_covers < 0.5).sum()
+    print(f"\nPrediction Distribution:")
+    print(f"  Predicts HOME covers: {home_picks} games ({home_picks/len(prob_home_covers)*100:.1f}%)")
+    print(f"  Predicts AWAY covers: {away_picks} games ({away_picks/len(prob_home_covers)*100:.1f}%)")
+    
     # Confidence distribution
     confidence = np.maximum(prob_home_covers, 1 - prob_home_covers)
     print(f"\nConfidence Distribution:")
@@ -120,3 +113,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
