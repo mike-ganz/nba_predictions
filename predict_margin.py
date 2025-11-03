@@ -2,12 +2,14 @@
 
 Usage:
     python predict_margin.py --data data/games_val_with_players.jsonl --model artifacts/margin_test --output predictions.csv
+    python predict_margin.py --data data/games_val_with_players.jsonl --model artifacts/margin_xgboost --output predictions.csv
 """
 
 import argparse
 from pathlib import Path
 import joblib
 import pandas as pd
+import yaml
 
 from data.loaders import GameDataLoader
 from training.margin_dataset import MarginTrainingDataset
@@ -22,26 +24,57 @@ def parse_args():
     return parser.parse_args()
 
 
+def detect_model_type(model_dir: Path) -> str:
+    """Detect model type from artifact directory."""
+    # Try metadata first (preferred)
+    metadata_path = model_dir / "metadata.yaml"
+    if metadata_path.exists():
+        with open(metadata_path) as f:
+            metadata = yaml.safe_load(f)
+            if 'model_type' in metadata:
+                return metadata['model_type']
+    
+    # Fallback to config.yaml
+    config_path = model_dir / "config.yaml"
+    if config_path.exists():
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
+            model_type = cfg.get('model', {}).get('model_type', 'ridge')
+            return model_type
+    
+    # Default to ridge if no metadata found
+    return 'ridge'
+
+
 def main():
     args = parse_args()
+    model_dir = Path(args.model)
+    
+    # Detect model type
+    model_type = detect_model_type(model_dir)
+    print(f"Detected model type: {model_type}")
     
     # Load model
-    model_path = Path(args.model) / "margin_model.joblib"
+    model_path = model_dir / "margin_model.joblib"
     print(f"Loading model from {model_path}")
     model = joblib.load(model_path)
     
-    # Load config to get exclude_features
-    config_path = Path(args.model) / "config.yaml"
+    # Load config to get exclude_features and include_diff_features
+    config_path = model_dir / "config.yaml"
     if config_path.exists():
-        import yaml
         with open(config_path) as f:
             cfg = yaml.safe_load(f)
         exclude_features = cfg.get('model', {}).get('exclude_features', [])
+        include_diff_features = cfg.get('model', {}).get('include_diff_features', True)
     else:
         exclude_features = []
+        include_diff_features = True
     
     if exclude_features:
         print(f"Excluding {len(exclude_features)} features: {exclude_features}")
+    
+    if not include_diff_features:
+        print(f"Excluding difference features (tree-based model)")
     
     # Load data
     print(f"Loading games from {args.data}")
@@ -53,14 +86,23 @@ def main():
     
     # Build features
     print("Building features...")
-    dataset = MarginTrainingDataset(records, exclude_features=exclude_features)
+    dataset = MarginTrainingDataset(records, exclude_features=exclude_features,
+                                   include_diff_features=include_diff_features)
     batch = dataset.build()
     
-    # Predict
+    # Predict (handle different model types)
     print("Generating predictions...")
-    mu, sigma = model.predict(batch.x, batch.baseline_margin)
-    prob_home_covers, prob_away_covers = margin_cover_probability(mu, sigma, batch.market_spread_home)
-    prob_home_win, prob_away_win = margin_win_probability(mu, sigma)
+    if model_type == 'ridge':
+        mu, sigma = model.predict(batch.x, batch.baseline_margin)
+        prob_home_covers, prob_away_covers = margin_cover_probability(mu, sigma, batch.market_spread_home)
+        prob_home_win, prob_away_win = margin_win_probability(mu, sigma)
+    else:  # xgboost
+        mu = model.predict(batch.x, batch.baseline_margin)
+        sigma = None
+        prob_home_covers = None
+        prob_away_covers = None
+        prob_home_win = None
+        prob_away_win = None
     
     # Build output dataframe
     results = []
@@ -73,12 +115,15 @@ def main():
             'market_spread_home': batch.market_spread_home[i],
             'baseline_margin': batch.baseline_margin[i],
             'pred_margin_mu': mu[i],
-            'pred_margin_sigma': sigma[i],
-            'cover_prob_home': prob_home_covers[i],
-            'cover_prob_away': prob_away_covers[i],
-            'win_prob_home': prob_home_win[i],
-            'win_prob_away': prob_away_win[i],
         }
+        
+        # Add model-specific columns
+        if model_type == 'ridge' and sigma is not None:
+            row['pred_margin_sigma'] = sigma[i]
+            row['cover_prob_home'] = prob_home_covers[i]
+            row['cover_prob_away'] = prob_away_covers[i]
+            row['win_prob_home'] = prob_home_win[i]
+            row['win_prob_away'] = prob_away_win[i]
         
         # Add actuals if available
         if record.outcome:
@@ -99,9 +144,11 @@ def main():
     
     print(f"\nSummary Statistics:")
     print(f"  Mean predicted margin: {mu.mean():.2f} (std: {mu.std():.2f})")
-    print(f"  Mean predicted sigma:  {sigma.mean():.2f} (range: {sigma.min():.2f} to {sigma.max():.2f})")
-    print(f"  Mean home cover prob:  {prob_home_covers.mean():.3f}")
-    print(f"  Mean home win prob:    {prob_home_win.mean():.3f}")
+    
+    if model_type == 'ridge' and sigma is not None:
+        print(f"  Mean predicted sigma:  {sigma.mean():.2f} (range: {sigma.min():.2f} to {sigma.max():.2f})")
+        print(f"  Mean home cover prob:  {prob_home_covers.mean():.3f}")
+        print(f"  Mean home win prob:    {prob_home_win.mean():.3f}")
     
     # If we have actuals, show quick accuracy
     if 'actual_margin' in df.columns:

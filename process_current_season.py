@@ -130,7 +130,7 @@ def main():
                 logging.info(f"Loaded {len(player_df)} player-game records")
                 
                 # Pre-compute baselines for this season
-                from player_data_loader import precompute_season_baselines
+                from scripts.player_data_loader import precompute_season_baselines
                 precompute_season_baselines(args.season, player_df)
             except Exception as e:
                 logging.warning(f"Failed to load player data: {e}")

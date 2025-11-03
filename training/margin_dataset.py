@@ -46,10 +46,11 @@ class MarginTrainingDataset:
     - Added difference features to capture relative advantages
     """
     
-    def __init__(self, records: Iterable[GameRecord], builder: FeatureBuilder | None = None, exclude_features: List[str] | None = None):
+    def __init__(self, records: Iterable[GameRecord], builder: FeatureBuilder | None = None, exclude_features: List[str] | None = None, include_diff_features: bool = True):
         self.records: List[GameRecord] = list(records)
         self.builder = builder or FeatureBuilder()
         self.exclude_features = exclude_features or []
+        self.include_diff_features = include_diff_features
     
     def build(self) -> MarginTrainingBatch:
         x_list = []
@@ -74,13 +75,14 @@ class MarginTrainingDataset:
                            if f'shared_{k}' not in self.exclude_features]
             
             # Add difference features (capture asymmetry)
-            # These help the model learn relative advantages
-            # Only compute diffs for features that exist on both sides
+            # These help linear models learn relative advantages
+            # Tree models can learn these automatically, so they're optional
             diff_feats = []
-            for k in HOME_FEATURE_KEYS:
-                if k in AWAY_FEATURE_KEYS:  # If both sides have this feature
-                    if f'diff_{k}' not in self.exclude_features:
-                        diff_feats.append(features.x_home[k] - features.x_away.get(k, 0))
+            if self.include_diff_features:
+                for k in HOME_FEATURE_KEYS:
+                    if k in AWAY_FEATURE_KEYS:  # If both sides have this feature
+                        if f'diff_{k}' not in self.exclude_features:
+                            diff_feats.append(features.x_home[k] - features.x_away.get(k, 0))
             
             combined = home_feats + away_feats + shared_feats + diff_feats
             x_list.append(combined)

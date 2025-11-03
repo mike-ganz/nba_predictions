@@ -127,8 +127,11 @@ We create derived features that capture team matchups:
 
 ### Step 4: Train the Model
 
-We use **Ridge Regression** to predict:
+We support **two model types** for margin prediction:
 
+#### Ridge Regression (Production Model)
+
+Ridge predicts two outputs:
 1. **Expected margin** (μ): How much home team is expected to win/lose by
 2. **Uncertainty** (σ): Prediction confidence/variance
 
@@ -143,6 +146,30 @@ We use **Ridge Regression** to predict:
 - Residual prediction from market baseline
 - **Production model trained on 2021-2024 seasons** (3,560 games)
 - Alternative 2021-2025 model available but not recommended (overfit to anomalous 24-25 season)
+
+#### XGBoost (Challenger Model)
+
+XGBoost is available as an alternative for testing:
+- **Automatic feature interactions**: Captures non-linear relationships without manual engineering
+- **Only predicts margin (μ)**: Variance/uncertainty prediction not yet implemented
+- **Slower training**: ~1-2 minutes vs Ridge's 5 seconds
+- **Feature importance**: Native metrics for understanding model decisions
+
+**When to use XGBoost:**
+- Testing if tree-based models outperform linear models
+- Exploring feature interactions automatically
+- Comparing against Ridge baseline
+
+**Training XGBoost:**
+```bash
+python train_margin.py \
+  --data data/games_train_with_players_90_norm.jsonl \
+  --config configs/margin_xgboost.yaml \
+  --model-type xgboost \
+  --output artifacts/margin_xgboost
+```
+
+**Note:** Current production uses Ridge due to superior interpretability and comparable performance. XGBoost is provided as an experimental alternative.
 
 ### Step 5: Generate Predictions
 
@@ -397,11 +424,21 @@ python scripts/normalize_all_data.py
 ### Model Training
 
 ```bash
-# Train on 2021-2024 seasons (RECOMMENDED for production)
+# Train Ridge (RECOMMENDED for production)
 python train_margin.py \
   --data data/games_train_with_players_90_norm.jsonl \
   --config configs/margin_default.yaml \
   --output artifacts/margin_normalized
+
+# Train XGBoost (experimental alternative)
+python train_margin.py \
+  --data data/games_train_with_players_90_norm.jsonl \
+  --config configs/margin_xgboost.yaml \
+  --model-type xgboost \
+  --output artifacts/margin_xgboost
+
+# Or use convenience script for XGBoost
+./train_and_evaluate_xgboost.ps1
 
 # Alternative: Train on 2021-2025 dataset (NOT recommended - includes anomalous 24-25)
 python train_expanded_model.py
@@ -437,12 +474,85 @@ python predict_margin.py \
 python evaluate_current_season.py
 ```
 
+### Comparing Ridge vs XGBoost
+
+To evaluate if XGBoost provides better predictions than Ridge:
+
+**Step 1: Train both models**
+```bash
+# Ridge (if not already trained)
+python train_margin.py \
+  --data data/games_train_with_players_90_norm.jsonl \
+  --config configs/margin_default.yaml \
+  --output artifacts/margin_normalized
+
+# XGBoost
+python train_margin.py \
+  --data data/games_train_with_players_90_norm.jsonl \
+  --config configs/margin_xgboost.yaml \
+  --model-type xgboost \
+  --output artifacts/margin_xgboost
+```
+
+**Step 2: Generate predictions from both models**
+```bash
+# Ridge predictions
+python predict_margin.py \
+  --model artifacts/margin_normalized \
+  --data data/games_predict_2024_2025_with_players_norm.jsonl \
+  --output predictions/ridge_2425_predictions.csv
+
+# XGBoost predictions
+python predict_margin.py \
+  --model artifacts/margin_xgboost \
+  --data data/games_predict_2024_2025_with_players_norm.jsonl \
+  --output predictions/xgboost_2425_predictions.csv
+```
+
+**Step 3: Compare performance**
+```bash
+python compare_ridge_vs_xgboost.py \
+  --ridge-predictions predictions/ridge_2425_predictions.csv \
+  --xgboost-predictions predictions/xgboost_2425_predictions.csv \
+  --output reports/ridge_vs_xgboost_comparison
+```
+
+The comparison script will show:
+- Margin accuracy (MAE, RMSE, R²) for both models
+- ATS accuracy and ROI comparison
+- Statistical significance testing (paired t-test)
+- Game-by-game analysis showing where each model performs better
+- Performance breakdown by spread size
+
+**Step 4: Tune XGBoost hyperparameters (optional)**
+```bash
+# Quick tuning (faster, less thorough)
+python tune_xgboost_hyperparameters.py \
+  --data data/games_train_with_players_90_norm.jsonl \
+  --quick
+
+# Full tuning (slower, more thorough)
+python tune_xgboost_hyperparameters.py \
+  --data data/games_train_with_players_90_norm.jsonl \
+  --method random \
+  --n-iter 100
+```
+
+This will save an optimized config file that you can use for retraining.
+
 ### Implementing the Betting Strategy
 
 **Step 1: Generate predictions for upcoming games**
 ```bash
+# Using Ridge (production model)
 python predict_margin.py \
   --model artifacts/margin_normalized \
+  --data data/games_2025_2026_current_norm.jsonl \
+  --output predictions/today_predictions.csv
+
+# Or using XGBoost (if it performs better)
+python predict_margin.py \
+  --model artifacts/margin_xgboost \
   --data data/games_2025_2026_current_norm.jsonl \
   --output predictions/today_predictions.csv
 ```
@@ -712,10 +822,10 @@ Model performance depends on:
    - Optimal bet timing
    - Line shopping across books
 
-4. **Ensemble methods**
-   - Combine multiple model approaches
+4. **Alternative models**
+   - **XGBoost variance prediction** (currently only predicts mean)
+   - Ensemble combining Ridge + XGBoost
    - Neural network exploration
-   - Gradient boosting comparison
 
 5. **Enhanced features**
    - Travel distance/time zones
@@ -732,9 +842,10 @@ Model performance depends on:
 - **[PREDICTION_FILES_GUIDE.md](PREDICTION_FILES_GUIDE.md)** - Guide to analyzing game-by-game predictions
 
 ### Configuration & Model Files
-- **[configs/margin_default.yaml](configs/margin_default.yaml)** - Model hyperparameters and excluded features
-- **[artifacts/margin_normalized/](artifacts/margin_normalized/)** - Production model (21-24 training)
-- **[artifacts/margin_normalized_21_25/](artifacts/margin_normalized_21_25/)** - Alternative model (not recommended)
+- **[configs/margin_default.yaml](configs/margin_default.yaml)** - Ridge model configuration
+- **[configs/margin_xgboost.yaml](configs/margin_xgboost.yaml)** - XGBoost model configuration
+- **[artifacts/margin_normalized/](artifacts/margin_normalized/)** - Production Ridge model (21-24 training)
+- **[artifacts/margin_normalized_21_25/](artifacts/margin_normalized_21_25/)** - Alternative Ridge model (not recommended)
 
 ### Prediction Outputs
 - **[predictions/OLD_model_2425_predictions.csv](predictions/OLD_model_2425_predictions.csv)** - 24-25 season predictions (strategy discovery)
@@ -744,7 +855,9 @@ Model performance depends on:
 ### Analysis Scripts
 - **[final_strategy_analysis.py](final_strategy_analysis.py)** - Strategy discovery and validation pipeline
 - **[strategy_analysis_user_buckets.py](strategy_analysis_user_buckets.py)** - Advanced 5-bucket spread analysis
-- **[compare_model_coefficients.py](scripts/compare_model_coefficients.py)** - OLD vs NEW model comparison
+- **[compare_model_coefficients.py](scripts/compare_model_coefficients.py)** - OLD vs NEW Ridge model comparison
+- **[compare_ridge_vs_xgboost.py](compare_ridge_vs_xgboost.py)** - Ridge vs XGBoost performance comparison
+- **[tune_xgboost_hyperparameters.py](tune_xgboost_hyperparameters.py)** - XGBoost hyperparameter optimization
 
 ---
 

@@ -19,29 +19,29 @@ python process_current_season.py `
     --include-players
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ Error processing current season data" -ForegroundColor Red
+    Write-Host "Error processing current season data" -ForegroundColor Red
     exit 1
 }
 
 Write-Host ""
-Write-Host "✅ Current season data processed successfully" -ForegroundColor Green
+Write-Host "Current season data processed successfully" -ForegroundColor Green
 Write-Host ""
 
 # Step 2: Generate predictions
 Write-Host "[Step 2/3] Generating predictions with trained model..." -ForegroundColor Green
 Write-Host ""
 python predict_margin.py `
-    --model models/margin_normalized `
+    --model artifacts/margin_normalized `
     --data data/games_2025_2026_current_norm.jsonl `
     --output predictions/current_season_2025_2026_predictions.csv
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ Error generating predictions" -ForegroundColor Red
+    Write-Host "Error generating predictions" -ForegroundColor Red
     exit 1
 }
 
 Write-Host ""
-Write-Host "✅ Predictions generated successfully" -ForegroundColor Green
+Write-Host "Predictions generated successfully" -ForegroundColor Green
 Write-Host ""
 
 # Step 3: Evaluate on completed games
@@ -53,7 +53,7 @@ python evaluate_current_season.py `
     --output predictions/current_season_evaluation.txt
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ Error evaluating predictions" -ForegroundColor Red
+    Write-Host "Error evaluating predictions" -ForegroundColor Red
     exit 1
 }
 
@@ -64,6 +64,6 @@ Write-Host "  EVALUATION COMPLETE!" -ForegroundColor Yellow
 Write-Host "=" -NoNewline -ForegroundColor Cyan
 Write-Host ("=" * 69) -ForegroundColor Cyan
 Write-Host ""
-Write-Host "📊 Results saved to: predictions/current_season_evaluation.txt" -ForegroundColor Cyan
+Write-Host "Results saved to: predictions/current_season_evaluation.txt" -ForegroundColor Cyan
 Write-Host ""
 
