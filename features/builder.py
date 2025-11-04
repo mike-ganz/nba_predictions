@@ -27,6 +27,7 @@ HOME_FEATURE_KEYS: List[str] = [
 AWAY_FEATURE_KEYS: List[str] = HOME_FEATURE_KEYS.copy()
 SHARED_FEATURE_KEYS: List[str] = [
     "pace_mean",
+    "pace_diff",  # NEW: Home pace - Away pace (provides orthogonal info to pace_mean)
     "implied_home_winprob",
     "implied_away_winprob",
     "team_weighted_ts_home",
@@ -56,6 +57,7 @@ class FeatureBuilder:
 
         x_shared = {
             "pace_mean": matchup.pace_mean,
+            "pace_diff": matchup.pace_diff,  # NEW: Home pace - Away pace
             "implied_home_winprob": market.implied_home_winprob,
             "implied_away_winprob": market.implied_away_winprob,
             "team_weighted_ts_home": availability_home.team_weighted_ts,

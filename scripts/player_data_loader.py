@@ -110,8 +110,18 @@ def precompute_season_baselines(season: str, player_boxscore_df: pd.DataFrame) -
     
     logging.info(f"Caching raw player games for {season}...")
     
-    # Store the entire DataFrame in memory (sorted by date for fast filtering)
-    _season_player_games[season] = player_boxscore_df.sort_values('DATE').copy()
+    # PERFORMANCE FIX: Convert DATE to datetime ONCE here, not every lookup!
+    df_cached = player_boxscore_df.copy()
+    df_cached['DATE'] = pd.to_datetime(df_cached['DATE'])
+    
+    # PERFORMANCE FIX: Normalize team names to avoid repeated str.contains()
+    # Extract city name for faster exact matching
+    if 'OWN \nTEAM' in df_cached.columns:
+        # Parse team names like "Milwaukee Bucks" -> "Milwaukee"
+        df_cached['TEAM_CITY'] = df_cached['OWN \nTEAM'].str.extract(r'^([A-Za-z\s]+?)(?:\s+[A-Z]|$)', expand=False).str.strip()
+    
+    # Store sorted by date, team, player for better cache locality
+    _season_player_games[season] = df_cached.sort_values(['DATE', 'TEAM_CITY', 'PLAYER \nFULL NAME'])
     
     logging.info(f"  Cached {len(player_boxscore_df)} player-games for {season}")
     
@@ -167,10 +177,34 @@ def get_team_players(
     MIN_GAMES = 10
     
     # Get THIS game's players for this team (sorted by minutes, top 10)
-    game_data = player_boxscore_df[
-        (player_boxscore_df['OWN \nTEAM'].str.contains(team_name, case=False, na=False)) &
-        (pd.to_datetime(player_boxscore_df['DATE']) == pd.to_datetime(game_date))
-    ].sort_values('MIN', ascending=False).head(10)
+    # PERFORMANCE FIX: Use cached DataFrame with pre-converted dates and normalized teams
+    game_date_dt = pd.to_datetime(game_date)
+    
+    # Use cached DataFrame (already has datetime dates)
+    cached_df = player_boxscore_df
+    
+    # PERFORMANCE: Try exact match on TEAM_CITY first (much faster)
+    if 'TEAM_CITY' in cached_df.columns:
+        # Try exact city match first
+        game_data = cached_df[
+            (cached_df['TEAM_CITY'] == team_name) &
+            (cached_df['DATE'] == game_date_dt)
+        ]
+        
+        # Fallback to contains if no exact match
+        if len(game_data) == 0:
+            game_data = cached_df[
+                (cached_df['TEAM_CITY'].str.contains(team_name, case=False, na=False)) &
+                (cached_df['DATE'] == game_date_dt)
+            ]
+    else:
+        # Old method if TEAM_CITY not available
+        game_data = cached_df[
+            (cached_df['OWN \nTEAM'].str.contains(team_name, case=False, na=False)) &
+            (cached_df['DATE'] == game_date_dt)
+        ]
+    
+    game_data = game_data.sort_values('MIN', ascending=False).head(10)
     
     if len(game_data) == 0:
         logging.warning(f"No players found for {team_name} on {game_date}")
@@ -186,15 +220,20 @@ def get_team_players(
     else:
         season_df = _season_player_games[season]
     
+    # PERFORMANCE FIX: Pre-filter season data ONCE for all players (not per-player)
+    games_before_date = season_df[season_df['DATE'] < game_date_dt]
+    
+    # Extract player info as arrays for faster access
+    player_names = game_data['PLAYER \nFULL NAME'].values
+    actual_minutes_arr = game_data['MIN'].values
+    
     # For each player in this game, compute baseline
-    for _, row in game_data.iterrows():
-        player_name = row['PLAYER \nFULL NAME']
-        actual_minutes = row['MIN']
+    for idx, player_name in enumerate(player_names):
+        actual_minutes = actual_minutes_arr[idx]
         
-        # Get player's games BEFORE this date (vectorized filter)
-        player_games_before = season_df[
-            (season_df['PLAYER \nFULL NAME'] == player_name) &
-            (pd.to_datetime(season_df['DATE']) < pd.to_datetime(game_date))
+        # Get player's games BEFORE this date (already filtered above!)
+        player_games_before = games_before_date[
+            games_before_date['PLAYER \nFULL NAME'] == player_name
         ]
         
         baseline_stats = None

@@ -195,6 +195,17 @@ def get_team_features(team_name: str, date_str: str, season: str) -> Tuple[Dict[
         rest_bucket = 3
     else:
         rest_bucket = int(max(0, rest_raw))
+    
+    # Derive contextual features from rest days
+    # B2B: Back-to-back game (1 day rest = played yesterday, playing today)
+    b2b = (rest_raw is not None and rest_raw == 1)
+    
+    # Three-in-four: Approximate as 1 day rest (indicates compressed schedule)
+    # Ideally would track game history, but REST_DAYS==1 is a reasonable proxy
+    three_in_four = (rest_raw is not None and rest_raw == 1)
+    
+    # Four-in-six: 2 days rest or less indicates heavier schedule
+    # four_in_six = (rest_raw is not None and rest_raw <= 2)
 
     abbr = TEAM_NAME_TO_ABBR.get(team_name, team_name[:3].upper())
 
@@ -211,6 +222,8 @@ def get_team_features(team_name: str, date_str: str, season: str) -> Tuple[Dict[
         "assist_rate": _clamp(stats["ASTr"], 0.4, 0.7),
         "turnover_rate": _clamp(stats["TOr"], 0.1, 0.2),
         "rest_days": _clamp(rest_bucket, 0.0, 10.0),
+        "b2b": b2b,
+        "three_in_four": three_in_four,
     }
 
     metadata = {

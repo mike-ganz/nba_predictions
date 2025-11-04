@@ -11,13 +11,24 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Optional, Tuple
 import json
+import math
 
 # Cache for league averages by (season, date)
 _league_avg_cache: Dict[Tuple[str, str], Dict[str, float]] = {}
 
+# Cache for loaded DataFrames (much faster than re-reading Excel files!)
+_df_cache: Dict[str, pd.DataFrame] = {}
+
+# PERFORMANCE: Cache for datetime conversions (avoid repeated parsing)
+_datetime_cache: Dict[str, pd.Timestamp] = {}
+
 
 def _load_team_boxscores_for_season(season: str) -> pd.DataFrame:
-    """Load team boxscore data for a given season"""
+    """Load team boxscore data for a given season (with caching)"""
+    # Check cache first
+    if season in _df_cache:
+        return _df_cache[season]
+    
     season_map = {
         '2021-2022': '2021-2022_NBA_Box_Score_Team-Stats.xlsx',
         '2022-2023': '2022-2023_NBA_Box_Score_Team-Stats.xlsx',
@@ -25,18 +36,21 @@ def _load_team_boxscores_for_season(season: str) -> pd.DataFrame:
         '2024-2025': '2024-2025_NBA_Box_Score_Team-Stats.xlsx',
     }
     
+    df = pd.DataFrame()
+    
     # Check historical seasons first
     if season in season_map:
         # Files are in historical directory
         file_path = Path('data') / 'team_boxscores' / 'historical' / season_map[season]
         
         if file_path.exists():
+            print(f"  Loading {season} data from Excel... ", end='', flush=True)
             df = pd.read_excel(file_path)
             df['DATE'] = pd.to_datetime(df['DATE'])
-            return df
+            print(f"✓ ({len(df)} games)")
     
     # For current season (2025-2026), look in current/ directory
-    if season == '2025-2026':
+    elif season == '2025-2026':
         current_dir = Path('data') / 'team_boxscores' / 'current'
         if current_dir.exists():
             # Find most recent file by sorting filenames (date prefix like 10-31-2025)
@@ -45,11 +59,16 @@ def _load_team_boxscores_for_season(season: str) -> pd.DataFrame:
                 # Sort by filename (descending) to get most recent date
                 xlsx_files_sorted = sorted(xlsx_files, key=lambda x: x.name, reverse=True)
                 file_path = xlsx_files_sorted[0]
+                print(f"  Loading {season} data from {file_path.name}... ", end='', flush=True)
                 df = pd.read_excel(file_path)
                 df['DATE'] = pd.to_datetime(df['DATE'])
-                return df
+                print(f"✓ ({len(df)} games)")
     
-    return pd.DataFrame()
+    # Cache the loaded DataFrame
+    if not df.empty:
+        _df_cache[season] = df
+    
+    return df
 
 
 def calculate_league_averages(season: str, target_date: str, min_games: int = 20) -> Optional[Dict[str, float]]:
@@ -75,9 +94,13 @@ def calculate_league_averages(season: str, target_date: str, min_games: int = 20
     if df.empty:
         return None
     
-    # Filter to games before target date
-    target_dt = pd.to_datetime(target_date)
-    df_before = df[df['DATE'] < target_dt].copy()
+    # PERFORMANCE FIX #2: Cache datetime conversions (avoid repeated parsing)
+    if target_date not in _datetime_cache:
+        _datetime_cache[target_date] = pd.to_datetime(target_date)
+    target_dt = _datetime_cache[target_date]
+    
+    # PERFORMANCE FIX #1: Remove .copy() - we're only reading, not modifying!
+    df_before = df[df['DATE'] < target_dt]
     
     # Check if we have enough data
     if len(df_before) < min_games:
@@ -169,7 +192,6 @@ def normalize_team_features(raw_features: Dict[str, float], season: str, game_da
             league_value = league_avg[league_key]
             
             # Only add normalized value if both raw and league values are valid
-            import math
             if raw_value is not None and league_value is not None:
                 if not (isinstance(raw_value, float) and math.isnan(raw_value)):
                     if not (isinstance(league_value, float) and math.isnan(league_value)):
@@ -181,6 +203,7 @@ def normalize_team_features(raw_features: Dict[str, float], season: str, game_da
 def normalize_game_jsonl(input_path: str, output_path: str):
     """
     Read games from input JSONL, add normalized features, write to output JSONL.
+    OPTIMIZED: Batch process games by date to minimize league average calculations.
     
     Args:
         input_path: Path to input JSONL file
@@ -188,15 +211,36 @@ def normalize_game_jsonl(input_path: str, output_path: str):
     """
     print(f"Normalizing features: {input_path} -> {output_path}")
     
-    game_count = 0
-    with open(input_path, 'r', encoding='utf-8') as f_in, \
-         open(output_path, 'w', encoding='utf-8') as f_out:
+    # PERFORMANCE FIX #3: Batch process games by (season, date)
+    # Read all games first
+    print("  Reading games...")
+    games = []
+    with open(input_path, 'r', encoding='utf-8') as f_in:
+        for line in f_in:
+            games.append(json.loads(line))
+    
+    print(f"  Read {len(games)} games, grouping by date...")
+    
+    # Group games by (season, date) - typically 5-15 games per night
+    from collections import defaultdict
+    games_by_date = defaultdict(list)
+    for game in games:
+        key = (game['season'], game['date'])
+        games_by_date[key].append(game)
+    
+    print(f"  Found {len(games_by_date)} unique dates to process")
+    print("  Computing league averages and normalizing...")
+    
+    # Process all games for each date at once
+    normalized_games = []
+    processed_count = 0
+    
+    for (season, game_date), date_games in games_by_date.items():
+        # Calculate league average ONCE per date (not once per game!)
+        league_avg = calculate_league_averages(season, game_date)
         
-        for i, line in enumerate(f_in, 1):
-            game = json.loads(line)
-            season = game['season']
-            game_date = game['date']
-            
+        # Apply to all games on this date
+        for game in date_games:
             # Normalize home team features
             home_features = game['teams']['H']
             home_normalized = normalize_team_features(home_features, season, game_date)
@@ -207,14 +251,19 @@ def normalize_game_jsonl(input_path: str, output_path: str):
             away_normalized = normalize_team_features(away_features, season, game_date)
             game['teams']['A'] = away_normalized
             
-            # Write normalized game
-            f_out.write(json.dumps(game) + '\n')
-            game_count = i
+            normalized_games.append(game)
+            processed_count += 1
             
-            if i % 500 == 0:
-                print(f"  Processed {i} games...")
+            if processed_count % 500 == 0:
+                print(f"    Processed {processed_count}/{len(games)} games...")
     
-    print(f"  Complete! Processed {game_count} games total.")
+    # Write all normalized games
+    print("  Writing normalized games...")
+    with open(output_path, 'w', encoding='utf-8') as f_out:
+        for game in normalized_games:
+            f_out.write(json.dumps(game) + '\n')
+    
+    print(f"  Complete! Processed {len(normalized_games)} games total.")
 
 
 def test_normalization():

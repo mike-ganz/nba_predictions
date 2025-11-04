@@ -228,10 +228,16 @@ def build_future_game_record(
     
     # Override rest days if provided in schedule
     if away_rest_days is not None:
-        away_features['rest_days'] = _clamp(float(away_rest_days), 0.0, 10.0)
+        rest_bucket = 3 if away_rest_days >= 3 else int(max(0, away_rest_days))
+        away_features['rest_days'] = _clamp(float(rest_bucket), 0.0, 10.0)
+        away_features['b2b'] = (away_rest_days == 1)  # Back-to-back: played yesterday
+        away_features['three_in_four'] = (away_rest_days == 1)  # Proxy for compressed schedule
         away_meta['rest_days_raw'] = away_rest_days
     if home_rest_days is not None:
-        home_features['rest_days'] = _clamp(float(home_rest_days), 0.0, 10.0)
+        rest_bucket = 3 if home_rest_days >= 3 else int(max(0, home_rest_days))
+        home_features['rest_days'] = _clamp(float(rest_bucket), 0.0, 10.0)
+        home_features['b2b'] = (home_rest_days == 1)  # Back-to-back: played yesterday
+        home_features['three_in_four'] = (home_rest_days == 1)  # Proxy for compressed schedule
         home_meta['rest_days_raw'] = home_rest_days
     
     # Get market data (required)

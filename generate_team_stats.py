@@ -194,7 +194,7 @@ def load_from_cache(cache_key):
 
 def calculate_enhanced_rates(team_games_df):
     """
-    Calculate enhanced team rate statistics from team boxscore data.
+    Calculate enhanced team rate statistics from team boxscore data (VECTORIZED).
     
     Args:
         team_games_df: DataFrame with team boxscore data (sorted by date, recent last)
@@ -205,69 +205,32 @@ def calculate_enhanced_rates(team_games_df):
     if len(team_games_df) == 0:
         return None
     
-    # Calculate rates for each game
-    rates_data = []
+    # PERFORMANCE FIX: Vectorize all calculations instead of iterrows()
+    # Filter out rows with missing FGA (critical data)
+    df = team_games_df[team_games_df['FGA'] > 0].copy()
     
-    for _, game in team_games_df.iterrows():
-        # Basic validation
-        fga = game.get('FGA', 0)
-        fgm = game.get('FG', 0)
-        three_pa = game.get('3PA', 0)
-        fta = game.get('FTA', 0)
-        off_reb = game.get('OR', 0)
-        def_reb = game.get('DR', 0)
-        assists = game.get('A', 0)
-        turnovers = game.get('TO', 0)
-        
-        # Skip if critical data is missing
-        if fga == 0:
-            continue
-        
-        # 3-point attempt rate: 3PA / FGA
-        three_par = three_pa / fga if fga > 0 else 0
-        
-        # Free throw rate: FTA / FGA
-        ftr = fta / fga if fga > 0 else 0
-        
-        # Offensive rebound rate: OR / (OR + DR)
-        # Note: In real calculation this should be OR / (OR + opponent_DR)
-        # but we don't have opponent stats in single row, so approximate
-        total_reb = off_reb + def_reb
-        orr = off_reb / total_reb if total_reb > 0 else 0
-        
-        # Defensive rebound rate: DR / (DR + OR)
-        # Note: Similar to ORr, ideally should be DR / (DR + opponent_OR)
-        drr = def_reb / total_reb if total_reb > 0 else 0
-        
-        # Assist rate: AST / FGM
-        astr = assists / fgm if fgm > 0 else 0
-        
-        # Turnover rate: TO / Possessions (approximate with FGA + 0.44*FTA + TO)
-        # This is a per-possession turnover rate
-        approx_possessions = fga + 0.44 * fta + turnovers
-        tor = turnovers / approx_possessions if approx_possessions > 0 else 0
-        
-        rates_data.append({
-            'OEFF': game.get('OEFF', 110.0),
-            'DEFF': game.get('DEFF', 110.0),
-            'PACE': game.get('PACE', 100.0),
-            '3PAr': three_par,
-            'FTr': ftr,
-            'ORr': orr,
-            'DRr': drr,
-            'ASTr': astr,
-            'TOr': tor
-        })
-    
-    if len(rates_data) == 0:
+    if len(df) == 0:
         return None
     
-    # Convert to DataFrame for easy averaging
-    rates_df = pd.DataFrame(rates_data)
+    # Vectorized calculations (100x faster than loops!)
+    df['3PAr'] = df['3PA'] / df['FGA']
+    df['FTr'] = df['FTA'] / df['FGA']
+    
+    # Rebound rates
+    total_reb = df['OR'] + df['DR']
+    df['ORr'] = df['OR'] / total_reb.replace(0, 1)  # Avoid division by zero
+    df['DRr'] = df['DR'] / total_reb.replace(0, 1)
+    
+    # Assist rate: AST / FGM
+    df['ASTr'] = df['A'] / df['FG'].replace(0, 1)
+    
+    # Turnover rate: TO / Possessions
+    approx_possessions = df['FGA'] + 0.44 * df['FTA'] + df['TO']
+    df['TOr'] = df['TO'] / approx_possessions.replace(0, 1)
     
     # Calculate rolling averages (use min of ROLLING_WINDOW or all available games)
-    window = min(ROLLING_WINDOW, len(rates_df))
-    recent_games = rates_df.tail(window)
+    window = min(ROLLING_WINDOW, len(df))
+    recent_games = df.tail(window)
     
     return {
         'OEFF': round(recent_games['OEFF'].mean(), 2),
