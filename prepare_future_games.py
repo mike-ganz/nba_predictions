@@ -183,7 +183,7 @@ def load_market_data(market_path: Path) -> Dict[Tuple[str, str, str], Dict]:
         key = (date_str, away_team, home_team)
         market_dict[key] = {
             'spread_home': game.get('spread_home'),
-            'opening_spread_home': game.get('opening_spread_home'),
+            # opening_spread_home excluded - empirically harmful
             'total': game.get('total'),
             'moneyline_home': game.get('moneyline_home'),
             'moneyline_away': game.get('moneyline_away'),

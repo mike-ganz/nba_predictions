@@ -93,16 +93,8 @@ def parse_spread(row: dict, fallback_row: dict | None = None) -> float | None:
     return spread
 
 
-def parse_opening_spread(row: dict, fallback_row: dict | None = None) -> float | None:
-    """Parse opening spread from team boxscore data."""
-    raw = _get_value(row, "OPENING SPREAD")
-    if raw is None and fallback_row is not None:
-        raw = _get_value(fallback_row, "OPENING SPREAD")
-    spread = parse_market_value(raw)
-    if spread is None or abs(spread) > 40:
-        return None
-    return spread
-
+# parse_opening_spread() removed - feature was empirically harmful
+# Kept parse_spread() which uses closing spread only
 
 def parse_total(row: dict, fallback_row: dict | None = None) -> float | None:
     raw = _get_value(row, "CLOSING TOTAL")
@@ -268,7 +260,8 @@ def build_game_record(game_rows: pd.DataFrame, season: str, venue_col: str, play
     home_features, home_meta = get_team_features(home_team_name, date_str, season)
 
     spread_home = parse_spread(home_row, fallback_row=away_row)
-    opening_spread_home = parse_opening_spread(home_row, fallback_row=away_row)
+    # opening_spread_home removed - testing showed it decreased model performance
+    # opening_spread_home = parse_opening_spread(home_row, fallback_row=away_row)
     total = parse_total(home_row, fallback_row=away_row)
     moneyline_home = parse_moneyline(home_row)
     moneyline_away = parse_moneyline(away_row, fallback_row=home_row)
@@ -307,7 +300,7 @@ def build_game_record(game_rows: pd.DataFrame, season: str, venue_col: str, play
         },
         "market": {
             "spread_home": spread_home,
-            "opening_spread_home": opening_spread_home,
+            # opening_spread_home excluded - empirically decreased ATS accuracy
             "total": total,
             "moneyline_home": moneyline_home,
             "moneyline_away": moneyline_away,
