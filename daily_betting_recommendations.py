@@ -159,7 +159,10 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
     # Filter out pushes
     filtered_recs = [r for r in recommendations if r['recommended_side'] != 'push']
     
-    # Separate upset picks (away favored, model picks home) from regular picks
+    # Separate Best Value picks from regular picks
+    # Best Value criteria:
+    # 1. Away favored, pick home to cover, spread > 0 and < 4
+    # 2. Home favored, pick away to cover, spread >= 4 and < 8
     upset_picks = []
     regular_picks = []
     
@@ -167,8 +170,19 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
         spread = rec['market_spread_home']
         pick_side = rec['recommended_side']
         
-        # Away team is favored (positive spread) AND model picks home = upset
-        if spread > 0 and pick_side == 'home':
+        is_best_value = False
+        
+        # Case 1: Away team favored (positive spread), model picks home
+        # Spread must be > 0 and < 4
+        if spread > 0 and spread < 4 and pick_side == 'home':
+            is_best_value = True
+        
+        # Case 2: Home team favored (negative spread), model picks away
+        # Spread must be <= -4 and > -8 (i.e., abs(spread) >= 4 and < 8)
+        elif spread <= -4 and spread > -8 and pick_side == 'away':
+            is_best_value = True
+        
+        if is_best_value:
             upset_picks.append(rec)
         else:
             regular_picks.append(rec)
@@ -319,6 +333,15 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
                 color: #9ca3af;
                 font-size: 16px;
             }}
+            .no-value-picks {{
+                text-align: center;
+                padding: 24px 20px;
+                color: #6b7280;
+                font-size: 14px;
+                background-color: #f9fafb;
+                border-radius: 8px;
+                margin-bottom: 24px;
+            }}
             .footer {{
                 margin-top: 32px;
                 padding-top: 24px;
@@ -351,9 +374,12 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
         """
     else:
         # Render upset picks first if they exist
+        html += """
+                <div class="section-title">⭐ Best Value Picks</div>
+        """
+        
         if upset_picks:
             html += """
-                <div class="section-title">⭐ Best Value Picks</div>
                 <table class="upset-table">
                     <thead>
                         <tr>
@@ -395,12 +421,25 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
                     </tbody>
                 </table>
             """
+        else:
+            html += """
+                <div class="no-value-picks">
+                    <p>No games meet the Best Value Pick criteria today.</p>
+                    <p style="font-size: 13px; margin-top: 8px; color: #9ca3af;">
+                        (Away favored 0-4 pts picking home, or Home favored 4-8 pts picking away)
+                    </p>
+                </div>
+            """
         
         # Render regular picks if they exist
         if regular_picks:
             if upset_picks:
                 html += """
                 <div class="section-title">Additional Picks</div>
+                """
+            else:
+                html += """
+                <div class="section-title">Today's Picks</div>
                 """
             
             html += """

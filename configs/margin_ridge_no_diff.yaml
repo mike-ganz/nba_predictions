@@ -31,6 +31,7 @@ model:
   - shared_team_weighted_ts_away
   - away_usage_share_top2
   - shared_implied_home_winprob
+  - shared_pace_diff
   min_variance: 1.0
   use_cv: true
   model_type: ridge

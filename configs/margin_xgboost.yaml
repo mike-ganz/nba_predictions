@@ -32,6 +32,7 @@ model:
     - shared_team_weighted_ts_away
     - away_usage_share_top2
     - shared_implied_home_winprob
+    - shared_pace_diff
 
 evaluation:
   # Range for margin analysis (if needed for compatibility)
