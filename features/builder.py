@@ -32,6 +32,7 @@ SHARED_FEATURE_KEYS: List[str] = [
     "implied_away_winprob",
     "team_weighted_ts_home",
     "team_weighted_ts_away",
+    "spread_line_movement",  # NEW: Closing spread - Opening spread (market movement)
 ]
 
 
@@ -62,6 +63,7 @@ class FeatureBuilder:
             "implied_away_winprob": market.implied_away_winprob,
             "team_weighted_ts_home": availability_home.team_weighted_ts,
             "team_weighted_ts_away": availability_away.team_weighted_ts,
+            "spread_line_movement": market.spread_line_movement,  # NEW: Closing - Opening spread
         }
 
         x_home = {

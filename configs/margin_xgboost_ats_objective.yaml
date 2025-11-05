@@ -1,4 +1,4 @@
-# Configuration for XGBoost Margin Prediction Model
+# Configuration for XGBoost with Custom ATS-Focused Objective Function
 
 data:
   training_jsonl: data/games_train_with_players_90_norm.jsonl
@@ -9,7 +9,7 @@ model:
   # Model type identifier
   model_type: xgboost
   
-  # XGBoost hyperparameters
+  # XGBoost hyperparameters (same as standard for fair comparison)
   n_estimators: 100
   max_depth: 4
   learning_rate: 0.05
@@ -26,11 +26,15 @@ model:
   early_stopping_rounds: null
   eval_metric: rmse
   
+  # Custom ATS-Focused Objective
+  use_ats_objective: true
+  ats_penalty_weight: 10.0  # Heavy penalty for getting ATS wrong
+  margin_penalty_weight: 0.1  # Light penalty for margin error
+  
   # Feature engineering
   include_diff_features: false  # XGBoost learns interactions automatically
   
-  # Feature exclusions (same as Ridge for fair comparison)
-  # Format: 'home_FEATURE', 'away_FEATURE', 'shared_FEATURE', or 'diff_FEATURE'
+  # Feature exclusions (same as standard for fair comparison)
   exclude_features:
     - shared_team_weighted_ts_away
     - away_usage_share_top2
