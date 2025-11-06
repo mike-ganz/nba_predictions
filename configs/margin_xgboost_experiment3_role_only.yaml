@@ -1,0 +1,49 @@
+# Experiment 3: Include ONLY favorite/underdog role indicators (no home_ftr change)
+# Tests whether the role indicators alone can capture FTR effects
+
+data:
+  prediction_jsonl: data/games_predict_2024_2025_with_players_norm.jsonl
+  training_jsonl: data/games_train_with_players_90_norm.jsonl
+  validation_jsonl: data/games_val_with_players_norm.jsonl
+
+evaluation:
+  margin_high: 60
+  margin_low: -60
+
+model:
+  colsample_bytree: 0.7
+  early_stopping_rounds: null
+  eval_metric: rmse
+  
+  # CHANGE: Keep home_ftr excluded, but add favorite/underdog features
+  exclude_features:
+  # Original exclusions from tuned model (including home_ftr)
+  - shared_team_weighted_ts_away
+  - away_usage_share_top2
+  - shared_implied_home_winprob
+  - home_ftr  # KEEP EXCLUDED (same as champion)
+  - home_rest_days
+  - away_orb_edge
+  - away_tpar
+  - away_rest_days
+  - shared_pace_mean
+  - shared_pace_diff
+  
+  include_diff_features: false
+  include_fav_underdog_features: true  # NEW: Enable favorite/underdog indicators
+  
+  learning_rate: 0.01
+  max_depth: 2
+  model_type: xgboost
+  n_estimators: 100
+  n_jobs: -1
+  random_state: 42
+  reg_alpha: 0.1
+  reg_lambda: 10.0
+  subsample: 0.6
+
+tuning:
+  note: "Experiment 3: Test ONLY favorite/underdog × home/away indicators (no FTR change)"
+  cv_folds: 5
+  method: feature_selection
+

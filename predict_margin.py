@@ -13,6 +13,7 @@ import yaml
 
 from data.loaders import GameDataLoader
 from training.margin_dataset import MarginTrainingDataset
+from training.margin_dataset_extended import MarginTrainingDatasetExtended
 from models.margin_distribution import margin_cover_probability, margin_win_probability
 
 
@@ -66,15 +67,20 @@ def main():
             cfg = yaml.safe_load(f)
         exclude_features = cfg.get('model', {}).get('exclude_features', [])
         include_diff_features = cfg.get('model', {}).get('include_diff_features', True)
+        include_fav_underdog_features = cfg.get('model', {}).get('include_fav_underdog_features', False)
     else:
         exclude_features = []
         include_diff_features = True
+        include_fav_underdog_features = False
     
     if exclude_features:
         print(f"Excluding {len(exclude_features)} features: {exclude_features}")
     
     if not include_diff_features:
         print(f"Excluding difference features (tree-based model)")
+    
+    if include_fav_underdog_features:
+        print(f"Including favorite/underdog indicators (extended features)")
     
     # Load data
     print(f"Loading games from {args.data}")
@@ -84,10 +90,23 @@ def main():
     records = collection.games
     print(f"Loaded {len(records)} games")
     
-    # Build features
+    # Build features (use extended dataset if needed)
     print("Building features...")
-    dataset = MarginTrainingDataset(records, exclude_features=exclude_features,
-                                   include_diff_features=include_diff_features)
+    if include_fav_underdog_features or 'home_ftr' not in exclude_features:
+        # Use extended dataset for experimental models
+        dataset = MarginTrainingDatasetExtended(
+            records, 
+            exclude_features=exclude_features,
+            include_diff_features=include_diff_features,
+            include_fav_underdog_features=include_fav_underdog_features
+        )
+    else:
+        # Use standard dataset for baseline models
+        dataset = MarginTrainingDataset(
+            records, 
+            exclude_features=exclude_features,
+            include_diff_features=include_diff_features
+        )
     batch = dataset.build()
     
     # Predict (handle different model types)

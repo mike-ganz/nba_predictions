@@ -186,3 +186,4 @@ sample_NBA-2024-2025-Player-BoxScore-Dataset.xlsx
 *.jsonl
 *.db
 reports/*
+predictions/*
