@@ -1,8 +1,0 @@
-exclude_features:
-- shared_team_weighted_ts_away
-- away_usage_share_top2
-- shared_implied_home_winprob
-feature_count: 20
-game_count: 3560
-model_type: ridge
-training_data: data/games_train_with_players_90_norm.jsonl

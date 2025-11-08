@@ -1,0 +1,38 @@
+﻿REST DAYS FIX SUMMARY
+Generated: 20251108_180019
+
+BUG DESCRIPTION:
+The _compute_rest_days() function was returning calendar days instead of rest days,
+causing all teams to have +1 extra rest day in calculated data (training & evaluation).
+
+FIX APPLIED:
+Changed: return float((target_date - last_game_date).days)
+To:      return float(max(0, calendar_days - 1))
+
+AFFECTED DATA:
+- Training data: All historical games had incorrect rest days (+1)
+- Current season evaluation: All games had incorrect rest days (+1)  
+- Daily predictions: NOT affected (used NBA schedule data)
+
+ACTIONS TAKEN:
+[OK] Backed up original artifacts to: C:\Users\micha\nba_predictions\backups\pre_rest_days_fix_20251108_175458
+[SKIP] Cache clearing skipped
+[SKIP] Skipped
+[SKIP] Skipped
+[OK] Retrained Champion model
+[OK] Regenerated current season data
+[OK] Re-evaluated Champion model performance
+
+RESULT:
+All pipelines now use consistent, correct rest days:
+- Training data: Correct
+- Daily predictions: Correct (already was)
+- Post-game evaluation: Correct (now fixed)
+
+FILES MODIFIED:
+- generate_team_stats.py: Fixed _compute_rest_days() function
+- All .jsonl files regenerated with correct rest days
+- New model trained: artifacts/champion_corrected_rest_days/
+
+VERIFICATION:
+Check predictions/current_season_champion_corrected_evaluation.txt for updated performance metrics.

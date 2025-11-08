@@ -47,7 +47,7 @@ def _load_team_boxscores_for_season(season: str) -> pd.DataFrame:
             print(f"  Loading {season} data from Excel... ", end='', flush=True)
             df = pd.read_excel(file_path)
             df['DATE'] = pd.to_datetime(df['DATE'])
-            print(f"✓ ({len(df)} games)")
+            print(f"OK ({len(df)} games)")
     
     # For current season (2025-2026), look in current/ directory
     elif season == '2025-2026':
@@ -62,7 +62,7 @@ def _load_team_boxscores_for_season(season: str) -> pd.DataFrame:
                 print(f"  Loading {season} data from {file_path.name}... ", end='', flush=True)
                 df = pd.read_excel(file_path)
                 df['DATE'] = pd.to_datetime(df['DATE'])
-                print(f"✓ ({len(df)} games)")
+                print(f"OK ({len(df)} games)")
     
     # Cache the loaded DataFrame
     if not df.empty:

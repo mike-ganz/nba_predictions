@@ -1,0 +1,45 @@
+data:
+  training_jsonl: data/games_train_with_players_90_norm.jsonl
+  validation_jsonl: data/games_val_with_players_norm.jsonl
+  prediction_jsonl: data/games_predict_2024_2025_with_players_norm.jsonl
+model:
+  model_type: xgboost
+  n_estimators: 220
+  max_depth: 6
+  learning_rate: 0.0015510379047735934
+  subsample: 0.34574943855925966
+  colsample_bytree: 0.47234013146636733
+  reg_alpha: 0.1046224512977374
+  reg_lambda: 9.039070558706026
+  random_state: 42
+  n_jobs: -1
+  early_stopping_rounds: null
+  eval_metric: rmse
+  include_diff_features: false
+  exclude_features:
+  - away_tov_edge
+  - shared_team_weighted_ts_away
+  - away_usage_share_top2
+  - shared_implied_home_winprob
+  - home_rest_days
+  - away_orb_edge
+  - away_tpar
+  - away_rest_days
+  - shared_pace_mean
+  - shared_pace_diff
+  - home_ftr
+  - away_ftr
+evaluation:
+  margin_low: -60
+  margin_high: 60
+tuning:
+  method: timeseries_random_search_wide
+  cv_type: TimeSeriesSplit
+  cv_folds: 5
+  n_iterations: 200
+  best_cv_rmse: 13.211263222310013
+  n_features: 21
+  training_games: 3560
+  date_range: 2021-10-19 to 2024-06-17
+  search_space: WIDE - exploring extreme configurations
+  note: 'Hybrid approach: TimeSeriesSplit CV + aggressive hyperparameter search'

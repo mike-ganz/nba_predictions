@@ -45,7 +45,12 @@ def _load_season_frame(season_year: str) -> pd.DataFrame:
 
 
 def _compute_rest_days(team_games_df: pd.DataFrame, target_date: pd.Timestamp | None) -> float | None:
-    """Compute rest days using the current-season schedule prior to target_date."""
+    """Compute rest days using the current-season schedule prior to target_date.
+    
+    Returns the number of rest days (not calendar days). For example:
+    - Last game: Nov 5, Current game: Nov 7 → 1 rest day (Nov 6)
+    - Last game: Nov 6, Current game: Nov 7 → 0 rest days (back-to-back)
+    """
 
     if target_date is None or team_games_df.empty:
         return None
@@ -54,7 +59,10 @@ def _compute_rest_days(team_games_df: pd.DataFrame, target_date: pd.Timestamp | 
     if pd.isna(last_game_date):
         return None
 
-    return float((target_date - last_game_date).days)
+    # Calculate rest days = calendar days - 1
+    # (calendar days includes both game days, rest days does not)
+    calendar_days = (target_date - last_game_date).days
+    return float(max(0, calendar_days - 1))
 
 
 def _assemble_stats(

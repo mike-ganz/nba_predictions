@@ -1,0 +1,17 @@
+exclude_features:
+- away_tov_edge
+- shared_team_weighted_ts_away
+- away_usage_share_top2
+- shared_implied_home_winprob
+- home_rest_days
+- away_orb_edge
+- away_tpar
+- away_rest_days
+- shared_pace_mean
+- shared_pace_diff
+- home_ftr
+- away_ftr
+feature_count: 12
+game_count: 3560
+model_type: xgboost
+training_data: data/games_train_with_players_90_norm.jsonl

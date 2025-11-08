@@ -52,6 +52,7 @@ class MarginXGBoostConfig:
     
     # Feature engineering options
     include_diff_features: bool = False  # Trees don't need manual interactions
+    include_fav_underdog_features: bool = False  # Include favorite/underdog indicators
     
     # Feature exclusions (for compatibility with Ridge)
     exclude_features: list[str] = field(default_factory=list)

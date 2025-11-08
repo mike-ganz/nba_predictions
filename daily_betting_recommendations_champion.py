@@ -2,14 +2,15 @@
 """Daily NBA Betting Recommendations Pipeline - Champion Model
 
 ═══════════════════════════════════════════════════════════════════════════════
-MODEL: Champion (Individually-Tuned, No Redundancy)
-Location: artifacts/champion_individually_tuned
+MODEL: Champion (Corrected Rest Days, Individually-Tuned, No Redundancy)
+Location: artifacts/champion_corrected_rest_days
 ═══════════════════════════════════════════════════════════════════════════════
 
 PERFORMANCE:
-  • 61.34% ATS accuracy on 2025-2026 season (119 games)
-  • 50.49% ATS accuracy on 2024-2025 holdout set
-  • 13.33 RMSE, 10.35 MAE on current season
+  • 61.83% ATS accuracy on 2025-2026 season (131 games) - CORRECTED MODEL
+  • 12.93% ROI on current season
+  • 10.68 MAE on current season
+  • Training: 54.47% ATS on 3,560 games (good generalization)
 
 FEATURES (12 total):
   ✓ home_oeff, away_oeff           - Offensive efficiency (league-relative)
@@ -231,46 +232,79 @@ def analyze_predictions(predictions_file: Path) -> Tuple[pd.DataFrame, List[Dict
     return df, recommendations
 
 
+def get_spread_bucket(spread: float) -> int:
+    """
+    Calculate spread bucket based on absolute spread.
+    
+    Formula: =if(ABS(F2)>=8,1,IF(ABS(F2)>=6,2,IF(ABS(F2)>=4,2,3)))
+    
+    Bucket 1: |spread| >= 8
+    Bucket 2: 4 <= |spread| < 8
+    Bucket 3: |spread| < 4
+    """
+    abs_spread = abs(spread)
+    if abs_spread >= 8:
+        return 1
+    elif abs_spread >= 4:
+        return 2
+    else:
+        return 3
+
+
+def is_best_pick(rec: Dict) -> bool:
+    """
+    Determine if a recommendation qualifies as a best pick.
+    
+    Best picks:
+    1. Any home dogs (home team is underdog, spread > 0)
+    2. Home favorites in buckets 1 or 3 (spread < 0, |spread| >= 8 or |spread| < 4)
+    3. Road dogs in buckets 1 or 2 (spread < 0, |spread| >= 4)
+    """
+    spread = rec['market_spread_home']
+    pick_side = rec['recommended_side']
+    bucket = get_spread_bucket(spread)
+    
+    # Case 1: Model picks home dog
+    if pick_side == 'home' and spread > 0:
+        return True
+    
+    # Case 2: Model picks home favorite
+    if pick_side == 'home' and spread < 0:
+        return True
+    
+    # Case 3: Model picks road favorite
+    if pick_side == 'away' and spread > 0:
+        return True
+    
+    return False
+
+
 def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
     """Format recommendations as HTML email body with clean table design."""
     
     # Filter out pushes
     filtered_recs = [r for r in recommendations if r['recommended_side'] != 'push']
     
-    # Separate Best Value picks from regular picks
-    # Best Value criteria:
-    # 1. Away favored, pick home to cover, spread > 0 and < 4
-    # 2. Home favored, pick away to cover, spread >= 4 and < 8
-    upset_picks = []
+    # Separate Best Picks from regular picks
+    # Best Picks criteria:
+    # 1. Any home dogs
+    # 2. Home favorites in buckets 1 or 3
+    # 3. Road dogs in buckets 1 or 2
+    best_picks = []
     regular_picks = []
     
     for rec in filtered_recs:
-        spread = rec['market_spread_home']
-        pick_side = rec['recommended_side']
-        
-        is_best_value = False
-        
-        # Case 1: Away team favored (positive spread), model picks home
-        # Spread must be > 0 and < 4
-        if spread > 0 and spread < 4 and pick_side == 'home':
-            is_best_value = True
-        
-        # # Case 2: Home team favored (negative spread), model picks away
-        # # Spread must be <= -4 and > -8 (i.e., abs(spread) >= 4 and < 8)
-        # elif spread <= -4 and spread > -8 and pick_side == 'away':
-        #     is_best_value = True
-        
-        if is_best_value:
-            upset_picks.append(rec)
+        if is_best_pick(rec):
+            best_picks.append(rec)
         else:
             regular_picks.append(rec)
     
     # Sort each category by edge
-    upset_picks.sort(key=lambda r: r['edge'], reverse=True)
+    best_picks.sort(key=lambda r: r['edge'], reverse=True)
     regular_picks.sort(key=lambda r: r['edge'], reverse=True)
     
-    # Combine: upsets first, then regular
-    sorted_recs = upset_picks + regular_picks
+    # Combine: best picks first, then regular
+    sorted_recs = best_picks + regular_picks
     
     html = f"""
     <html>
@@ -451,12 +485,12 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
                 </div>
         """
     else:
-        # Render upset picks first if they exist
+        # Render best picks first if they exist
         html += """
-                <div class="section-title">⭐ Best Value Picks</div>
+                <div class="section-title">⭐ Best Picks</div>
         """
         
-        if upset_picks:
+        if best_picks:
             html += """
                 <table class="upset-table">
                     <thead>
@@ -469,7 +503,7 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
                     <tbody>
             """
             
-            for rec in upset_picks:
+            for rec in best_picks:
                 # Format matchup
                 matchup = f"{rec['away_team']} <span class='vs'>@</span> {rec['home_team']}"
                 
@@ -502,9 +536,9 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
         else:
             html += """
                 <div class="no-value-picks">
-                    <p>No games meet the Best Value Pick criteria today.</p>
+                    <p>No games meet the Best Picks criteria today.</p>
                     <p style="font-size: 13px; margin-top: 8px; color: #9ca3af;">
-                        (Model picked a home dog of fewer than 4 points)
+                        (Home dogs, home favorites in buckets 1/3, or road dogs in buckets 1/2)
                     </p>
                 </div>
             """
@@ -561,7 +595,7 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
     html += """
                 <div class="footer">
                     <p>Automatically generated by NBA Predictions Pipeline</p>
-                    <p>Model: Champion (12 features, individually tuned) | 61.34% ATS | """ + datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z") + """</p>
+                    <p>Model: Champion (12 features, corrected rest days) | 61.83% ATS | """ + datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z") + """</p>
                 </div>
             </div>
         </div>
@@ -679,7 +713,7 @@ def main():
     logger.info("")
     logger.info("=" * 70)
     logger.info("NBA DAILY BETTING RECOMMENDATIONS PIPELINE")
-    logger.info("Model: Champion (12 features, individually tuned, 61.34% ATS)")
+    logger.info("Model: Champion (12 features, corrected rest days, 61.83% ATS)")
     logger.info("=" * 70)
     logger.info("")
     
@@ -714,7 +748,7 @@ def main():
         sys.executable,
         "predict_margin.py",
         "--data", data_file,
-        "--model", "artifacts/champion_individually_tuned",
+        "--model", "artifacts/champion_corrected_rest_days",
         "--output", predictions_file
     ]
     

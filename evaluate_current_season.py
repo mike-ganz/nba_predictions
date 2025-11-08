@@ -171,7 +171,7 @@ def main():
         print("\nPlease ensure predictions have been generated first.")
         return
     
-    print(f"✅ Loaded {len(df)} completed games with predictions\n")
+    print(f"OK - Loaded {len(df)} completed games with predictions\n")
     
     if len(df) == 0:
         print("⚠️  No completed games found. Check back after some games are played!")
@@ -261,7 +261,7 @@ def main():
             f.write(f"  Profit/Loss: ${metrics['profit']:.2f}\n")
     
     print("=" * 70)
-    print(f"✅ Detailed report saved to: {output_path}")
+    print(f"OK - Detailed report saved to: {output_path}")
     print("=" * 70)
 
 
