@@ -1,0 +1,35 @@
+data:
+  prediction_jsonl: data/games_predict_2024_2025_with_players_norm.jsonl
+  training_jsonl: data/games_train_with_players_90_norm.jsonl
+  validation_jsonl: data/games_val_with_players_norm.jsonl
+evaluation:
+  margin_high: 60
+  margin_low: -60
+model:
+  colsample_bytree: 0.9434709
+  early_stopping_rounds: null
+  eval_metric: rmse
+  exclude_features:
+  - away_tov_edge
+  - shared_team_weighted_ts_away
+  - away_usage_share_top2
+  - shared_implied_home_winprob
+  - home_rest_days
+  - away_orb_edge
+  - away_tpar
+  - away_rest_days
+  - shared_pace_mean
+  - shared_pace_diff
+  include_diff_features: false
+  include_fav_underdog_features: true
+  learning_rate: 0.010159556754971632
+  max_depth: 2
+  model_type: xgboost
+  n_estimators: 476
+  n_jobs: -1
+  random_state: 42
+  reg_alpha: 0.476818
+  reg_lambda: 15.744418
+  subsample: 0.9883195
+tuning:
+  note: Exp2 (home_ftr + role) with optimal hyperparameters (Phase 1)

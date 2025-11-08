@@ -1,0 +1,18 @@
+exclude_features:
+- shared_team_weighted_ts_away
+- away_usage_share_top2
+- shared_implied_home_winprob
+- home_rest_days
+- away_orb_edge
+- away_tpar
+- away_rest_days
+- shared_pace_mean
+- shared_pace_diff
+feature_count: 19
+game_count: 3560
+include_fav_underdog_features: true
+includes_home_ftr: true
+model_type: xgboost
+training_ats_accuracy: 0.5550561797752809
+training_data: data/games_train_with_players_90_norm.jsonl
+training_margin_mae: 10.251369101734698
