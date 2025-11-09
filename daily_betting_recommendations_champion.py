@@ -264,16 +264,24 @@ def is_best_pick(rec: Dict) -> bool:
     pick_side = rec['recommended_side']
     bucket = get_spread_bucket(spread)
     
-    # Case 1: Model picks home dog
-    if pick_side == 'home' and spread > 0:
+    # # Case 1: Model picks home dog
+    # if pick_side == 'home' and spread > 0:
+    #     return True
+    
+    # # Case 2: Model picks home favorite
+    # if pick_side == 'home' and spread < 0:
+    #     return True
+    
+    # # Case 3: Model picks road favorite
+    # if pick_side == 'away' and spread > 0:
+    #     return True
+
+    # Case 1: Road teams in bucket 1
+    if pick_side == 'away' and bucket == 1:
         return True
     
-    # Case 2: Model picks home favorite
-    if pick_side == 'home' and spread < 0:
-        return True
-    
-    # Case 3: Model picks road favorite
-    if pick_side == 'away' and spread > 0:
+    # Case 2: Home teams in buckets 1 or 3
+    elif pick_side == 'home' and (bucket == 1 or bucket == 3):
         return True
     
     return False
