@@ -1,14 +1,14 @@
 # Evaluate Current Season (2025-2026) Performance - Champion Model
 #
-# This script evaluates the Champion model (individually-tuned, 12 features, no redundancy)
-# on the current season data.
+# This script evaluates the Champion model with unified injury handling.
 #
 # Model Details:
 #   - Location: artifacts/champion_corrected_rest_days
 #   - Features: 12 (no FTR, no role indicators, no redundant away_tov_edge)
-#   - Hyperparameters: Individually tuned with colsample_bytree=0.847, n_estimators=210
-#   - Training: Correct rest days (bug fixed Nov 2025)
-#   - Expected Performance: 61.83% ATS on 2025-2026 season
+#   - Training: 5,271 games (retrained Nov 9, 2025)
+#   - Unified Injury Handling: All pipelines now consistent (Nov 9, 2025)
+#   - Previous Performance: 61.83% ATS on 2025-2026 season (legacy model)
+#   - Expected: Similar ATS with more consistent predictions
 
 Write-Host "=" -NoNewline -ForegroundColor Cyan
 Write-Host ("=" * 69) -ForegroundColor Cyan
@@ -77,9 +77,10 @@ Write-Host ("=" * 69) -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Results saved to: predictions/current_season_champion_evaluation.txt" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Champion Model Performance (12 features, corrected rest days):" -ForegroundColor Green
-Write-Host "  - Current ATS: 61.83% on 2025-2026 season (131 games)" -ForegroundColor White
-Write-Host "  - Model trained on 3,560 games with correct rest days" -ForegroundColor White
-Write-Host "  - Rest days bug fixed: Nov 2025" -ForegroundColor White
+Write-Host "Champion Model (Unified Injury Handling):" -ForegroundColor Green
+Write-Host "  - Retrained: November 9, 2025 with 5,271 games" -ForegroundColor White
+Write-Host "  - Unified injury handling across all pipelines" -ForegroundColor White
+Write-Host "  - Previous model: 61.83% ATS on 2025-2026 season" -ForegroundColor White
+Write-Host "  - Expected: Similar performance with better consistency" -ForegroundColor White
 Write-Host ""
 

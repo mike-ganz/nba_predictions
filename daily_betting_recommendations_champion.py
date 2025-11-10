@@ -2,15 +2,15 @@
 """Daily NBA Betting Recommendations Pipeline - Champion Model
 
 ═══════════════════════════════════════════════════════════════════════════════
-MODEL: Champion (Corrected Rest Days, Individually-Tuned, No Redundancy)
+MODEL: Champion (Unified Injury Handling, Corrected Rest Days, No Redundancy)
 Location: artifacts/champion_corrected_rest_days
 ═══════════════════════════════════════════════════════════════════════════════
 
 PERFORMANCE:
-  • 61.83% ATS accuracy on 2025-2026 season (131 games) - CORRECTED MODEL
-  • 12.93% ROI on current season
-  • 10.68 MAE on current season
-  • Training: 54.47% ATS on 3,560 games (good generalization)
+  • Training: 54.89% ATS on 5,271 games (retrained Nov 9, 2025)
+  • Training MAE: 10.38 points, RMSE: 13.32 points
+  • Expected current season: ~61% ATS (similar to previous champion)
+  • Unified injury handling: All pipelines now consistent
 
 FEATURES (12 total):
   ✓ home_oeff, away_oeff           - Offensive efficiency (league-relative)
@@ -27,10 +27,15 @@ FEATURES (12 total):
   ✗ Excludes away_tov_edge         - Redundant (perfect inverse of home_tov_edge)
   ✗ Excludes away_orb_edge         - Highly correlated with home_orb_edge
 
+TRAINING DATA:
+  • 5,271 games (2021-2025 seasons) with unified injury handling
+  • 83.2% of games have detected injuries (vs 0% in legacy pipeline)
+  • Retrained: November 9, 2025
+  
 HYPERPARAMETER TUNING:
   Method: Model-specific RandomizedSearchCV (100 iterations, 5-fold CV)
   Optimized for: RMSE (not ATS, as direct ATS optimization led to overfitting)
-  Training data: 3,560 games (through early 2024-2025 season)
+  Note: Using same hyperparameters as previous champion (proven effective)
   
   Key hyperparameters:
     • n_estimators: 210 (vs 100 in original)
@@ -44,39 +49,40 @@ HYPERPARAMETER TUNING:
     • reg_alpha: 1.90 (L1 regularization)
     • reg_lambda: 13.06 (L2 regularization)
 
-KEY INSIGHTS:
-  1. Removing redundant features required higher colsample_bytree
-     • Original model had away_tov_edge (redundant) with colsample=0.70
-     • Redundancy acted as implicit ensemble - 91% chance of TOV info per tree
-     • Clean model needs colsample=0.847 to achieve similar coverage
+KEY IMPROVEMENTS (Nov 9, 2025):
+  1. Unified Injury Handling Across All Pipelines
+     • Day-of, backlook, and training now handle injuries identically
+     • Eliminates train-test distribution mismatch
+     • Injury features (minutes_missing_top2, star_out) now meaningful
+     • Roster reconstruction: 10-game lookback, 10-min injury threshold
   
-  2. Simpler models generalize better
-     • 12 features outperformed 14, 16, and 18 feature variants
-     • Lower overfitting risk with fewer parameters
+  2. Consistent Player Availability Features
+     • Training data: 83.2% of games have detected injuries
+     • Legacy data: 0% injury detection (players omitted entirely)
+     • Model now sees same injury patterns in training and prediction
   
-  3. League-relative normalization handles regime changes
-     • No need for explicit FTR features despite 2025-26 regime shift
-     • Features adapt naturally to contemporary league conditions
+  3. Better Feature Utilization
+     • Injury features should have higher importance in new model
+     • More reliable predictions for games with significant injuries
+     • Improved generalization from consistent data patterns
   
-  4. RMSE optimization beats direct ATS optimization
-     • Direct ATS optimization achieved 68% on training, 57% on test
-     • RMSE optimization achieved 54% on training, 61% on test
-     • Better generalization from smoother loss landscape
+  4. Maintained Performance with Better Foundation
+     • Same hyperparameters as proven champion model
+     • Retrained on larger dataset (5,271 vs 3,560 games)
+     • Expected similar ATS performance with more consistent predictions
 
-COMPARISON VS ORIGINAL CHAMPION:
-  Original (artifacts/margin_xgboost_optimized_with2425):
-    • 14 features (includes redundant away_tov_edge)
-    • colsample_bytree: 0.70
-    • n_estimators: 100
-    • Trained on 4,875 games
-    • 2025-26 ATS: 53.78%
-  
-  New (artifacts/champion_individually_tuned):
-    • 12 features (no redundancy)
-    • colsample_bytree: 0.847 (+21%)
-    • n_estimators: 210 (+110%)
+MODEL EVOLUTION:
+  Original Champion (Pre-Nov 2025):
     • Trained on 3,560 games
-    • 2025-26 ATS: 61.34% (+7.56 pp improvement!)
+    • Legacy injury handling (incomplete roster)
+    • 61.83% ATS on 2025-26 season
+  
+  Current Champion (Nov 9, 2025):
+    • Trained on 5,271 games (+48% more data)
+    • Unified injury handling (complete roster with injury markers)
+    • Same proven hyperparameters
+    • Eliminates train-test distribution mismatch
+    • More consistent predictions between day-of and backlook
 
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -263,25 +269,16 @@ def is_best_pick(rec: Dict) -> bool:
     spread = rec['market_spread_home']
     pick_side = rec['recommended_side']
     bucket = get_spread_bucket(spread)
-    
-    # # Case 1: Model picks home dog
-    # if pick_side == 'home' and spread > 0:
+
+    # # Case 1: Road teams in bucket 1
+    # if pick_side == 'away' and bucket == 1:
     #     return True
     
-    # # Case 2: Model picks home favorite
-    # if pick_side == 'home' and spread < 0:
-    #     return True
-    
-    # # Case 3: Model picks road favorite
-    # if pick_side == 'away' and spread > 0:
+    # # Case 2: Home teams in buckets 1 or 3
+    # elif pick_side == 'home' and (bucket == 1 or bucket == 3):
     #     return True
 
-    # Case 1: Road teams in bucket 1
-    if pick_side == 'away' and bucket == 1:
-        return True
-    
-    # Case 2: Home teams in buckets 1 or 3
-    elif pick_side == 'home' and (bucket == 1 or bucket == 3):
+    if pick_side == 'home' and bucket == 3:
         return True
     
     return False

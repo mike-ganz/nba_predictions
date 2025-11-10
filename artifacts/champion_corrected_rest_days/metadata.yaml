@@ -12,6 +12,6 @@ exclude_features:
 - home_ftr
 - away_ftr
 feature_count: 12
-game_count: 3560
+game_count: 5271
 model_type: xgboost
-training_data: data/games_train_with_players_90_norm.jsonl
+training_data: data/games_train_with_players_90_new_norm.jsonl

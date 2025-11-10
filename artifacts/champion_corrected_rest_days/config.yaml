@@ -1,6 +1,6 @@
 data:
   prediction_jsonl: data/games_predict_2024_2025_with_players_norm.jsonl
-  training_jsonl: data/games_train_with_players_90_norm.jsonl
+  training_jsonl: data/games_train_with_players_90_new_norm.jsonl
   validation_jsonl: data/games_val_with_players_norm.jsonl
 evaluation:
   margin_high: 60
@@ -39,4 +39,4 @@ tuning:
   method: model_specific_random_search
   n_features: 12
   n_iterations: 100
-  note: Model-specific tuning for Champion
+  note: Champion model retrained with unified injury handling
