@@ -212,6 +212,7 @@ def analyze_predictions(predictions_file: Path) -> Tuple[pd.DataFrame, List[Dict
         recommendation = {
             'game_id': row['game_id'],
             'date': row['date'],
+            'game_time': row.get('game_time'),
             'away_team': row['away_team'],
             'home_team': row['home_team'],
             'market_spread_home': market_spread,
@@ -236,6 +237,37 @@ def analyze_predictions(predictions_file: Path) -> Tuple[pd.DataFrame, List[Dict
     logger.info("")
     
     return df, recommendations
+
+
+def parse_game_time_for_sorting(game_time: str) -> int:
+    """
+    Convert game time string (e.g., '7:30 PM', '10:00 AM') to minutes since midnight for sorting.
+    Returns a large number if parsing fails to push unparseable times to the end.
+    """
+    if not game_time:
+        return 9999  # Push null times to the end
+    
+    try:
+        # Parse time like "7:30 PM" or "10:00 AM"
+        import re
+        match = re.match(r'(\d+):(\d+)\s*(AM|PM)', game_time.strip(), re.IGNORECASE)
+        if not match:
+            return 9999
+        
+        hours = int(match.group(1))
+        minutes = int(match.group(2))
+        period = match.group(3).upper()
+        
+        # Convert to 24-hour format
+        if period == 'PM' and hours != 12:
+            hours += 12
+        elif period == 'AM' and hours == 12:
+            hours = 0
+        
+        # Return minutes since midnight
+        return hours * 60 + minutes
+    except:
+        return 9999
 
 
 def get_spread_bucket(spread: float) -> int:
@@ -304,9 +336,9 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
         else:
             regular_picks.append(rec)
     
-    # Sort each category by edge
-    best_picks.sort(key=lambda r: r['edge'], reverse=True)
-    regular_picks.sort(key=lambda r: r['edge'], reverse=True)
+    # Sort each category by game time (chronological order)
+    best_picks.sort(key=lambda r: parse_game_time_for_sorting(r.get('game_time', '')))
+    regular_picks.sort(key=lambda r: parse_game_time_for_sorting(r.get('game_time', '')))
     
     # Combine: best picks first, then regular
     sorted_recs = best_picks + regular_picks
@@ -500,6 +532,7 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
                 <table class="upset-table">
                     <thead>
                         <tr>
+                            <th>Time</th>
                             <th>Matchup</th>
                             <th>Favored</th>
                             <th>Model Pick</th>
@@ -509,6 +542,11 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
             """
             
             for rec in best_picks:
+                # Format game time
+                game_time_display = rec.get('game_time', 'TBD')
+                if not game_time_display:
+                    game_time_display = 'TBD'
+                
                 # Format matchup
                 matchup = f"{rec['away_team']} <span class='vs'>@</span> {rec['home_team']}"
                 
@@ -528,6 +566,7 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
                 
                 html += f"""
                         <tr>
+                            <td>{game_time_display}</td>
                             <td class="matchup">{matchup}</td>
                             <td class="favored">{favored}</td>
                             <td><span class="team-badge upset-pick">{pick}</span></td>
@@ -558,6 +597,7 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
                 <table>
                     <thead>
                         <tr>
+                            <th>Time</th>
                             <th>Matchup</th>
                             <th>Favored</th>
                             <th>Model Pick</th>
@@ -567,6 +607,11 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
             """
             
             for rec in regular_picks:
+                # Format game time
+                game_time_display = rec.get('game_time', 'TBD')
+                if not game_time_display:
+                    game_time_display = 'TBD'
+                
                 # Format matchup
                 matchup = f"{rec['away_team']} <span class='vs'>@</span> {rec['home_team']}"
                 
@@ -586,6 +631,7 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
                 
                 html += f"""
                         <tr>
+                            <td>{game_time_display}</td>
                             <td class="matchup">{matchup}</td>
                             <td class="favored">{favored}</td>
                             <td><span class="team-badge pick">{pick}</span></td>

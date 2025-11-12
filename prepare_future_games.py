@@ -187,6 +187,7 @@ def load_market_data(market_path: Path) -> Dict[Tuple[str, str, str], Dict]:
             'total': game.get('total'),
             'moneyline_home': game.get('moneyline_home'),
             'moneyline_away': game.get('moneyline_away'),
+            'game_time': game.get('game_time'),
         }
     
     logging.info(f"Loaded market data for {len(market_dict)} games")
@@ -250,6 +251,7 @@ def build_future_game_record(
     total = market_info.get('total')
     moneyline_home = market_info.get('moneyline_home')
     moneyline_away = market_info.get('moneyline_away')
+    game_time = market_info.get('game_time')  # Optional field
     
     if None in {spread_home, total, moneyline_home, moneyline_away}:
         logging.warning(f"Incomplete market data for {away_team} @ {home_team} on {date_str}")
@@ -301,6 +303,7 @@ def build_future_game_record(
             "total": float(total),
             "moneyline_home": int(moneyline_home),
             "moneyline_away": int(moneyline_away),
+            "game_time": game_time,  # Optional field
         },
         "metadata": {
             "source": "future_game_prediction",

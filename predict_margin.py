@@ -129,6 +129,7 @@ def main():
         row = {
             'game_id': record.game_id,
             'date': record.date,
+            'game_time': record.market.game_time if record.market.game_time else None,
             'away_team': record.teams.A.team_id,
             'home_team': record.teams.H.team_id,
             'market_spread_home': batch.market_spread_home[i],

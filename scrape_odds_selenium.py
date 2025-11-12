@@ -252,6 +252,9 @@ def scrape_odds_with_selenium(headless: bool = True, target_date: Optional[str] 
                 if not re.search(r'\d+:\d+\s+(AM|PM)', time_cell):
                     continue
                 
+                # Store the game time for later use
+                game_time = time_cell
+                
                 # Extract team cell - must contain both teams
                 team_cell = cells[1]
                 team_imgs = team_cell.find_elements(By.TAG_NAME, "img")
@@ -328,6 +331,7 @@ def scrape_odds_with_selenium(headless: bool = True, target_date: Optional[str] 
                     'away_team': normalize_team_name(away_team),
                     'home_team': normalize_team_name(home_team),
                     'game_date': current_date,
+                    'game_time': game_time,
                     'spread_home': home_spread,
                     'total': total,
                     'moneyline_home': moneyline_home,
