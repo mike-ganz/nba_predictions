@@ -281,39 +281,48 @@ def get_spread_bucket(spread: float) -> int:
     Bucket 3: |spread| < 4
     """
     abs_spread = abs(spread)
-    if abs_spread >= 8:
+    if abs_spread >= 10:
         return 1
-    elif abs_spread >= 4:
+    elif abs_spread >= 5:
         return 2
     else:
         return 3
 
 
-def is_best_pick(rec: Dict) -> bool:
+def get_confidence_level(rec: Dict) -> str:
     """
-    Determine if a recommendation qualifies as a best pick.
+    Determine the confidence level for a recommendation.
     
-    Best picks:
-    1. Any home dogs (home team is underdog, spread > 0)
-    2. Home favorites in buckets 1 or 3 (spread < 0, |spread| >= 8 or |spread| < 4)
-    3. Road dogs in buckets 1 or 2 (spread < 0, |spread| >= 4)
+    Returns:
+        'high', 'medium', or 'low'
+    
+    CUSTOMIZE THIS FUNCTION to adjust confidence criteria:
+    - Return 'high' for highest confidence picks
+    - Return 'medium' for moderate confidence picks  
+    - Return 'low' for lower confidence picks
+    
+    Current logic (modify as needed):
+    - High: Home teams in buckets 1 or 3
+    - Medium: All other home picks
+    - Low: All away picks
     """
     spread = rec['market_spread_home']
     pick_side = rec['recommended_side']
     bucket = get_spread_bucket(spread)
-
-    # # Case 1: Road teams in bucket 1
-    # if pick_side == 'away' and bucket == 1:
-    #     return True
+    edge = rec['edge']
     
-    # # Case 2: Home teams in buckets 1 or 3
-    # elif pick_side == 'home' and (bucket == 1 or bucket == 3):
-    #     return True
-
-    if pick_side == 'home' and bucket == 3:
-        return True
+    # HIGH CONFIDENCE CRITERIA
+    # Example: Home teams in buckets 1 or 3
+    if pick_side == 'home' and (bucket == 1 or bucket == 3):
+        return 'high'
     
-    return False
+    # MEDIUM CONFIDENCE CRITERIA
+    # Example: Other home picks
+    if pick_side == 'away' and (bucket == 1 or bucket == 2):
+        return 'medium'
+    
+    # Default to low if no criteria matched
+    return 'low'
 
 
 def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
@@ -322,26 +331,24 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
     # Filter out pushes
     filtered_recs = [r for r in recommendations if r['recommended_side'] != 'push']
     
-    # Separate Best Picks from regular picks
-    # Best Picks criteria:
-    # 1. Any home dogs
-    # 2. Home favorites in buckets 1 or 3
-    # 3. Road dogs in buckets 1 or 2
-    best_picks = []
-    regular_picks = []
+    # Categorize picks by confidence level
+    high_confidence_picks = []
+    medium_confidence_picks = []
+    low_confidence_picks = []
     
     for rec in filtered_recs:
-        if is_best_pick(rec):
-            best_picks.append(rec)
+        confidence = get_confidence_level(rec)
+        if confidence == 'high':
+            high_confidence_picks.append(rec)
+        elif confidence == 'medium':
+            medium_confidence_picks.append(rec)
         else:
-            regular_picks.append(rec)
+            low_confidence_picks.append(rec)
     
     # Sort each category by game time (chronological order)
-    best_picks.sort(key=lambda r: parse_game_time_for_sorting(r.get('game_time', '')))
-    regular_picks.sort(key=lambda r: parse_game_time_for_sorting(r.get('game_time', '')))
-    
-    # Combine: best picks first, then regular
-    sorted_recs = best_picks + regular_picks
+    high_confidence_picks.sort(key=lambda r: parse_game_time_for_sorting(r.get('game_time', '')))
+    medium_confidence_picks.sort(key=lambda r: parse_game_time_for_sorting(r.get('game_time', '')))
+    low_confidence_picks.sort(key=lambda r: parse_game_time_for_sorting(r.get('game_time', '')))
     
     html = f"""
     <html>
@@ -382,7 +389,7 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
                 font-weight: 400;
             }}
             .content {{
-                padding: 40px;
+                padding: 10px;
             }}
             .intro {{
                 font-size: 16px;
@@ -407,15 +414,28 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
                 border-radius: 8px;
                 overflow: hidden;
             }}
-            .upset-table {{
+            .high-confidence-table {{
                 border: 3px solid #10b981;
                 box-shadow: 0 0 0 1px #10b981;
+            }}
+            .medium-confidence-table {{
+                border: 2px solid #3b82f6;
+                box-shadow: 0 0 0 1px #3b82f6;
+            }}
+            .low-confidence-table {{
+                border: 1px solid #9ca3af;
             }}
             thead {{
                 background-color: #f3f4f6;
             }}
-            .upset-table thead {{
+            .high-confidence-table thead {{
                 background-color: #d1fae5;
+            }}
+            .medium-confidence-table thead {{
+                background-color: #dbeafe;
+            }}
+            .low-confidence-table thead {{
+                background-color: #f3f4f6;
             }}
             th {{
                 padding: 14px 16px;
@@ -427,9 +447,17 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
                 text-transform: uppercase;
                 letter-spacing: 0.5px;
             }}
-            .upset-table th {{
+            .high-confidence-table th {{
                 color: #065f46;
                 border-bottom: 2px solid #10b981;
+            }}
+            .medium-confidence-table th {{
+                color: #1e40af;
+                border-bottom: 2px solid #3b82f6;
+            }}
+            .low-confidence-table th {{
+                color: #4b5563;
+                border-bottom: 1px solid #9ca3af;
             }}
             td {{
                 padding: 16px;
@@ -445,8 +473,14 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
             tbody tr:hover {{
                 background-color: #f9fafb;
             }}
-            .upset-table tbody tr:hover {{
+            .high-confidence-table tbody tr:hover {{
                 background-color: #ecfdf5;
+            }}
+            .medium-confidence-table tbody tr:hover {{
+                background-color: #eff6ff;
+            }}
+            .low-confidence-table tbody tr:hover {{
+                background-color: #f9fafb;
             }}
             .matchup {{
                 font-weight: 600;
@@ -472,9 +506,17 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
                 background-color: #dbeafe;
                 color: #1e40af;
             }}
-            .upset-pick {{
+            .high-confidence-pick {{
                 background-color: #d1fae5;
                 color: #065f46;
+            }}
+            .medium-confidence-pick {{
+                background-color: #dbeafe;
+                color: #1e40af;
+            }}
+            .low-confidence-pick {{
+                background-color: #e5e7eb;
+                color: #4b5563;
             }}
             .no-games {{
                 text-align: center;
@@ -512,24 +554,23 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
             </div>
             
             <div class="content">
-                <p class="intro">Today's model predictions and recommended picks</p>
     """
     
-    if not sorted_recs:
+    if not filtered_recs:
         html += """
                 <div class="no-games">
                     <p>No games with betting recommendations today.</p>
                 </div>
         """
     else:
-        # Render best picks first if they exist
+        # Render High Confidence picks
         html += """
-                <div class="section-title">⭐ Best Picks</div>
+                <div class="section-title">🔥 High Confidence Picks</div>
         """
         
-        if best_picks:
+        if high_confidence_picks:
             html += """
-                <table class="upset-table">
+                <table class="high-confidence-table">
                     <thead>
                         <tr>
                             <th>Time</th>
@@ -541,7 +582,7 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
                     <tbody>
             """
             
-            for rec in best_picks:
+            for rec in high_confidence_picks:
                 # Format game time
                 game_time_display = rec.get('game_time', 'TBD')
                 if not game_time_display:
@@ -569,7 +610,7 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
                             <td>{game_time_display}</td>
                             <td class="matchup">{matchup}</td>
                             <td class="favored">{favored}</td>
-                            <td><span class="team-badge upset-pick">{pick}</span></td>
+                            <td><span class="team-badge high-confidence-pick">{pick}</span></td>
                         </tr>
                 """
             
@@ -580,21 +621,18 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
         else:
             html += """
                 <div class="no-value-picks">
-                    <p>No games meet the Best Picks criteria today.</p>
-                    <p style="font-size: 13px; margin-top: 8px; color: #9ca3af;">
-                        (Home dogs, home favorites in buckets 1/3, or road dogs in buckets 1/2)
-                    </p>
+                    <p>No high confidence picks today.</p>
                 </div>
             """
         
-        # Render regular picks if they exist
-        if regular_picks:
+        # Render Medium Confidence picks
+        html += """
+                <div class="section-title">⚡ Medium Confidence Picks</div>
+        """
+        
+        if medium_confidence_picks:
             html += """
-                <div class="section-title">Other Picks</div>
-                """
-            
-            html += """
-                <table>
+                <table class="medium-confidence-table">
                     <thead>
                         <tr>
                             <th>Time</th>
@@ -606,7 +644,7 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
                     <tbody>
             """
             
-            for rec in regular_picks:
+            for rec in medium_confidence_picks:
                 # Format game time
                 game_time_display = rec.get('game_time', 'TBD')
                 if not game_time_display:
@@ -634,7 +672,7 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
                             <td>{game_time_display}</td>
                             <td class="matchup">{matchup}</td>
                             <td class="favored">{favored}</td>
-                            <td><span class="team-badge pick">{pick}</span></td>
+                            <td><span class="team-badge medium-confidence-pick">{pick}</span></td>
                         </tr>
                 """
             
@@ -642,11 +680,79 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
                     </tbody>
                 </table>
             """
+        else:
+            html += """
+                <div class="no-value-picks">
+                    <p>No medium confidence picks today.</p>
+                </div>
+            """
+        
+        # Render Low Confidence picks
+        html += """
+                <div class="section-title">📊 Low Confidence Picks</div>
+        """
+        
+        if low_confidence_picks:
+            html += """
+                <table class="low-confidence-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Matchup</th>
+                            <th>Favored</th>
+                            <th>Model Pick</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            """
+            
+            for rec in low_confidence_picks:
+                # Format game time
+                game_time_display = rec.get('game_time', 'TBD')
+                if not game_time_display:
+                    game_time_display = 'TBD'
+                
+                # Format matchup
+                matchup = f"{rec['away_team']} <span class='vs'>@</span> {rec['home_team']}"
+                
+                # Determine who is favored
+                spread = rec['market_spread_home']
+                if spread < 0:
+                    # Home team favored
+                    favored = f"{rec['home_team']} (Home) by {abs(spread):.1f}"
+                else:
+                    # Away team favored
+                    favored = f"{rec['away_team']} (Away) by {abs(spread):.1f}"
+                
+                # Format pick
+                pick_team = rec['recommended_team']
+                pick_location = rec['recommended_side'].capitalize()
+                pick = f"{pick_team} ({pick_location})"
+                
+                html += f"""
+                        <tr>
+                            <td>{game_time_display}</td>
+                            <td class="matchup">{matchup}</td>
+                            <td class="favored">{favored}</td>
+                            <td><span class="team-badge low-confidence-pick">{pick}</span></td>
+                        </tr>
+                """
+            
+            html += """
+                    </tbody>
+                </table>
+            """
+        else:
+            html += """
+                <div class="no-value-picks">
+                    <p>No low confidence picks today.</p>
+                </div>
+            """
     
     html += """
                 <div class="footer">
                     <p>Automatically generated by NBA Predictions Pipeline</p>
-                    <p>Model: Champion (12 features, corrected rest days) | 61.83% ATS | """ + datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z") + """</p>
+                    <p>""" + datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z") + """</p>
                 </div>
             </div>
         </div>
