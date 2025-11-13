@@ -565,7 +565,7 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
     else:
         # Render High Confidence picks
         html += """
-                <div class="section-title">🔥 High Confidence Picks</div>
+                <div class="section-title">🔥 High Confidence Picks (definitely bet)</div>
         """
         
         if high_confidence_picks:
@@ -627,7 +627,7 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
         
         # Render Medium Confidence picks
         html += """
-                <div class="section-title">⚡ Medium Confidence Picks</div>
+                <div class="section-title">⚡ Medium Confidence Picks (up to you)</div>
         """
         
         if medium_confidence_picks:
@@ -689,7 +689,7 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
         
         # Render Low Confidence picks
         html += """
-                <div class="section-title">📊 Low Confidence Picks</div>
+                <div class="section-title">📊 Low Confidence Picks (don't bet)</div>
         """
         
         if low_confidence_picks:
