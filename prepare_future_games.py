@@ -267,8 +267,8 @@ def build_future_game_record(
     injury_warnings = []
     if player_boxscore_df is not None:
         try:
-            away_players = get_season_roster_players(away_team, season, player_boxscore_df, injured_players)
-            home_players = get_season_roster_players(home_team, season, player_boxscore_df, injured_players)
+            away_players = get_season_roster_players(away_team, date_str, season, player_boxscore_df, injured_players)
+            home_players = get_season_roster_players(home_team, date_str, season, player_boxscore_df, injured_players)
             
             # Always include players (even with injuries)
             players_data = {

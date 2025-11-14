@@ -190,13 +190,20 @@ def _get_baseline_roster(
             season_df['DATE'] = pd.to_datetime(season_df['DATE'])
     
     # Get team's games before this date
+    # Try TEAM_CITY first (faster), but also fall back to OWN \nTEAM if no matches
+    # This handles cases where TEAM_CITY extraction might be incorrect (e.g., multi-word cities)
+    team_games = pd.DataFrame()
+    
     if 'TEAM_CITY' in season_df.columns:
         team_games = season_df[
             ((season_df['TEAM_CITY'] == team_name) | 
              (season_df['TEAM_CITY'].str.contains(team_name, case=False, na=False))) &
             (season_df['DATE'] < game_date_dt)
         ]
-    else:
+    
+    # If TEAM_CITY matching found nothing, try matching against original OWN \nTEAM column
+    # This handles cases where TEAM_CITY extraction failed (e.g., "New York" -> "New")
+    if len(team_games) == 0 and 'OWN \nTEAM' in season_df.columns:
         team_games = season_df[
             (season_df['OWN \nTEAM'].str.contains(team_name, case=False, na=False)) &
             (season_df['DATE'] < game_date_dt)
@@ -212,46 +219,62 @@ def _get_baseline_roster(
     # Filter to only those recent games
     recent_games = team_games[team_games['DATE'].isin(unique_dates)]
     
-    # Group by player and compute baseline stats
-    baseline_roster = {}
-    grouped = recent_games.groupby('PLAYER \nFULL NAME')
+    # Adaptive threshold: if we have prior games but no players meet the threshold,
+    # progressively lower it (3 -> 2 -> 1) until we get a roster
+    # This handles early season games where teams haven't played many games yet
+    max_available_games = len(unique_dates)
     
-    for player_name, player_games in grouped:
-        games_played = len(player_games['DATE'].unique())
+    # Helper function to build roster with a given threshold
+    def _build_roster_with_threshold(threshold: int) -> Dict[str, Dict]:
+        roster = {}
+        grouped = recent_games.groupby('PLAYER \nFULL NAME')
         
-        # Only include if player appeared in enough games
-        if games_played < min_games_for_roster:
-            continue
+        for player_name, player_games in grouped:
+            games_played = len(player_games['DATE'].unique())
+            
+            # Only include if player appeared in enough games
+            if games_played < threshold:
+                continue
+            
+            # Compute baseline stats
+            total_min = player_games['MIN'].sum()
+            total_pts = player_games['PTS'].sum()
+            total_fga = player_games['FGA'].sum()
+            total_fta = player_games['FTA'].sum()
+            
+            baseline_minutes = total_min / games_played
+            ppg = total_pts / games_played
+            fga_pg = total_fga / games_played
+            fta_pg = total_fta / games_played
+            
+            # True Shooting %
+            ts_denominator = 2 * (fga_pg + 0.44 * fta_pg)
+            baseline_ts = ppg / ts_denominator if ts_denominator > 0 else 0.53
+            
+            # Usage rate
+            if 'USAGE \nRATE (%)' in player_games.columns:
+                baseline_usage = player_games['USAGE \nRATE (%)'].mean()
+            elif 'USAGE RATE (%)' in player_games.columns:
+                baseline_usage = player_games['USAGE RATE (%)'].mean()
+            else:
+                baseline_usage = 20.0
+            
+            roster[player_name] = {
+                'baseline_minutes': baseline_minutes,
+                'baseline_ts': baseline_ts,
+                'baseline_usage': baseline_usage,
+                'games_played': games_played
+            }
         
-        # Compute baseline stats
-        total_min = player_games['MIN'].sum()
-        total_pts = player_games['PTS'].sum()
-        total_fga = player_games['FGA'].sum()
-        total_fta = player_games['FTA'].sum()
-        
-        baseline_minutes = total_min / games_played
-        ppg = total_pts / games_played
-        fga_pg = total_fga / games_played
-        fta_pg = total_fta / games_played
-        
-        # True Shooting %
-        ts_denominator = 2 * (fga_pg + 0.44 * fta_pg)
-        baseline_ts = ppg / ts_denominator if ts_denominator > 0 else 0.53
-        
-        # Usage rate
-        if 'USAGE \nRATE (%)' in player_games.columns:
-            baseline_usage = player_games['USAGE \nRATE (%)'].mean()
-        elif 'USAGE RATE (%)' in player_games.columns:
-            baseline_usage = player_games['USAGE RATE (%)'].mean()
-        else:
-            baseline_usage = 20.0
-        
-        baseline_roster[player_name] = {
-            'baseline_minutes': baseline_minutes,
-            'baseline_ts': baseline_ts,
-            'baseline_usage': baseline_usage,
-            'games_played': games_played
-        }
+        return roster
+    
+    # Try with the requested threshold, but don't require more games than available
+    actual_threshold = min(min_games_for_roster, max(1, max_available_games))
+    baseline_roster = _build_roster_with_threshold(actual_threshold)
+    
+    # If we still have no roster and we have prior games, try with threshold=1
+    if not baseline_roster and max_available_games > 0:
+        baseline_roster = _build_roster_with_threshold(1)
     
     return baseline_roster
 
@@ -311,13 +334,18 @@ def get_team_players_with_injuries(
             cached_df['DATE'] = pd.to_datetime(cached_df['DATE'])
     
     # Get this game's players
+    # Try TEAM_CITY first, but fall back to OWN \nTEAM if no matches
+    game_data = pd.DataFrame()
+    
     if 'TEAM_CITY' in cached_df.columns:
         game_data = cached_df[
             ((cached_df['TEAM_CITY'] == team_name) | 
              (cached_df['TEAM_CITY'].str.contains(team_name, case=False, na=False))) &
             (cached_df['DATE'] == game_date_dt)
         ]
-    else:
+    
+    # If TEAM_CITY matching found nothing, try matching against original OWN \nTEAM column
+    if len(game_data) == 0 and 'OWN \nTEAM' in cached_df.columns:
         game_data = cached_df[
             (cached_df['OWN \nTEAM'].str.contains(team_name, case=False, na=False)) &
             (cached_df['DATE'] == game_date_dt)

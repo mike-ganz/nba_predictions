@@ -17,7 +17,7 @@ from typing import List, Optional
 
 import pandas as pd
 
-from prepare_data import process_file, TEAM_NAME_TO_ABBR
+from prepare_data import process_file, TEAM_NAME_TO_ABBR, load_market_data
 from league_normalizer import normalize_game_jsonl
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -98,7 +98,26 @@ def main():
         default=True,
         help='Include player availability data'
     )
+    parser.add_argument(
+        '--market-data',
+        type=str,
+        default='data/market/current_spreads.json',
+        help='Path to market data JSON file (current_spreads.json)'
+    )
     args = parser.parse_args()
+    
+    # Load market data from current_spreads.json
+    market_data_dict = {}
+    market_path = Path(args.market_data)
+    if market_path.exists():
+        logging.info(f"Loading market data from: {market_path}")
+        market_data_dict = load_market_data(market_path)
+        if market_data_dict:
+            logging.info(f"Loaded market data for {len(market_data_dict)} games")
+        else:
+            logging.warning("No market data loaded, will fallback to boxscore data")
+    else:
+        logging.warning(f"Market data file not found: {market_path}, will use boxscore data only")
     
     # Find most recent files
     team_dir = Path(args.team_boxscores_dir)
@@ -140,7 +159,7 @@ def main():
     
     # Process the team boxscore file
     logging.info(f"Processing {args.season} season data...")
-    games = process_file(team_file, args.season, player_df)
+    games = process_file(team_file, args.season, player_df, market_data_dict)
     
     # Write to JSONL
     output_path = Path(args.output)

@@ -5,7 +5,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 
@@ -48,6 +48,49 @@ TEAM_NAME_TO_ABBR = {
     "Utah": "UTA",
     "Washington": "WAS",
 }
+
+
+def normalize_team_name(team_name: str) -> str:
+    """Normalize team name to match the format used in TEAM_NAME_TO_ABBR.
+    
+    Handles both short names (e.g., "Philadelphia") and full names (e.g., "Philadelphia 76ers").
+    """
+    # Remove common suffixes and clean up
+    team_name = team_name.strip()
+    
+    # Handle special cases first
+    if "Trail Blazers" in team_name:
+        return "Portland"
+    if "Clippers" in team_name:
+        return "LA Clippers"
+    if "Lakers" in team_name:
+        return "LA Lakers"
+    
+    # Try exact match first (case-insensitive)
+    team_lower = team_name.lower()
+    for known_name in TEAM_NAME_TO_ABBR.keys():
+        if known_name.lower() == team_lower:
+            return known_name
+    
+    # Try substring match: check if known name is contained in input
+    # (e.g., "Philadelphia" in "Philadelphia 76ers")
+    # Sort by length (longest first) to avoid false matches like "New" matching "New Orleans"
+    known_names_sorted = sorted(TEAM_NAME_TO_ABBR.keys(), key=len, reverse=True)
+    for known_name in known_names_sorted:
+        known_lower = known_name.lower()
+        # Check if known name appears as a word boundary in the input
+        # This prevents "New" from matching "New Orleans" incorrectly
+        if known_lower == team_lower or (
+            known_lower in team_lower and 
+            (team_lower.startswith(known_lower) or 
+             team_lower.endswith(known_lower) or
+             f" {known_lower} " in f" {team_lower} ")
+        ):
+            return known_name
+    
+    # Return as-is if no match
+    logging.debug(f"Could not normalize team name: '{team_name}', using as-is")
+    return team_name
 
 
 def _get_value(row: dict, *keys):
@@ -131,6 +174,55 @@ def parse_moneyline(row: dict, fallback_row: dict | None = None) -> int | None:
     if not match:
         return None
     return int(match.group())
+
+
+def load_market_data(market_path: Path) -> Dict[Tuple[str, str, str], Dict]:
+    """
+    Load market data from current_spreads.json and return dictionary keyed by (date, away_team, home_team).
+    
+    Args:
+        market_path: Path to market JSON file
+        
+    Returns:
+        Dict mapping (date_str, away_team, home_team) to market info
+    """
+    if not market_path.exists():
+        logging.warning(f"Market file not found: {market_path}")
+        return {}
+    
+    logging.info(f"Loading market data from {market_path}")
+    
+    with open(market_path, 'r') as f:
+        data = json.load(f)
+    
+    # Handle both formats: array or object with "games" key
+    if isinstance(data, list):
+        games = data
+    elif isinstance(data, dict) and 'games' in data:
+        games = data['games']
+    else:
+        logging.error(f"Invalid market data format in {market_path}")
+        return {}
+    
+    market_dict = {}
+    for game in games:
+        date_str = game.get('game_date')
+        away_team = normalize_team_name(game.get('away_team', ''))
+        home_team = normalize_team_name(game.get('home_team', ''))
+        
+        if not date_str or not away_team or not home_team:
+            continue
+        
+        key = (date_str, away_team, home_team)
+        market_dict[key] = {
+            'spread_home': game.get('spread_home'),
+            'total': game.get('total'),
+            'moneyline_home': game.get('moneyline_home'),
+            'moneyline_away': game.get('moneyline_away'),
+        }
+    
+    logging.info(f"Loaded market data for {len(market_dict)} games")
+    return market_dict
 
 
 def parse_venue_columns(df: pd.DataFrame) -> str:
@@ -241,7 +333,7 @@ def get_team_features(team_name: str, date_str: str, season: str) -> Tuple[Dict[
     return features, metadata
 
 
-def build_game_record(game_rows: pd.DataFrame, season: str, venue_col: str, player_boxscore_df: pd.DataFrame = None) -> Dict:
+def build_game_record(game_rows: pd.DataFrame, season: str, venue_col: str, player_boxscore_df: pd.DataFrame = None, market_data_dict: Dict[Tuple[str, str, str], Dict] = None) -> Dict:
     rows = game_rows.to_dict("records")
     home_row = next((r for r in rows if str(r.get(venue_col, "")).upper().startswith("H")), None)
     away_row = next((r for r in rows if str(r.get(venue_col, "")).upper().startswith("R")), None)
@@ -259,12 +351,36 @@ def build_game_record(game_rows: pd.DataFrame, season: str, venue_col: str, play
     away_features, away_meta = get_team_features(away_team_name, date_str, season)
     home_features, home_meta = get_team_features(home_team_name, date_str, season)
 
-    spread_home = parse_spread(home_row, fallback_row=away_row)
-    # opening_spread_home removed - testing showed it decreased model performance
-    # opening_spread_home = parse_opening_spread(home_row, fallback_row=away_row)
-    total = parse_total(home_row, fallback_row=away_row)
-    moneyline_home = parse_moneyline(home_row)
-    moneyline_away = parse_moneyline(away_row, fallback_row=home_row)
+    # Try to get market data from current_spreads.json first
+    spread_home = None
+    total = None
+    moneyline_home = None
+    moneyline_away = None
+    
+    if market_data_dict is not None:
+        # Normalize team names for lookup
+        normalized_away = normalize_team_name(away_team_name)
+        normalized_home = normalize_team_name(home_team_name)
+        market_key = (date_str, normalized_away, normalized_home)
+        
+        if market_key in market_data_dict:
+            market_info = market_data_dict[market_key]
+            spread_home = market_info.get('spread_home')
+            total = market_info.get('total')
+            moneyline_home = market_info.get('moneyline_home')
+            moneyline_away = market_info.get('moneyline_away')
+            logging.debug(f"Using market data from current_spreads.json for {away_team_name} @ {home_team_name} on {date_str}")
+    
+    # Fallback to parsing from boxscore rows if market data not found
+    if None in {spread_home, total, moneyline_home, moneyline_away}:
+        logging.debug(f"Falling back to boxscore data for {away_team_name} @ {home_team_name} on {date_str}")
+        spread_home = parse_spread(home_row, fallback_row=away_row) if spread_home is None else spread_home
+        # opening_spread_home removed - testing showed it decreased model performance
+        # opening_spread_home = parse_opening_spread(home_row, fallback_row=away_row)
+        total = parse_total(home_row, fallback_row=away_row) if total is None else total
+        moneyline_home = parse_moneyline(home_row) if moneyline_home is None else moneyline_home
+        moneyline_away = parse_moneyline(away_row, fallback_row=home_row) if moneyline_away is None else moneyline_away
+    
     if None in {spread_home, total, moneyline_home, moneyline_away}:
         logging.warning("Skipping game %s due to missing market", rows[0].get("GAME-ID"))
         return {}
@@ -325,7 +441,7 @@ def build_game_record(game_rows: pd.DataFrame, season: str, venue_col: str, play
     return game_record
 
 
-def process_file(path: Path, season: str, player_boxscore_df: pd.DataFrame = None) -> List[Dict]:
+def process_file(path: Path, season: str, player_boxscore_df: pd.DataFrame = None, market_data_dict: Dict[Tuple[str, str, str], Dict] = None) -> List[Dict]:
     logging.info("Processing %s", path)
     df = pd.read_excel(path)
     df = normalize_columns(df)
@@ -335,7 +451,7 @@ def process_file(path: Path, season: str, player_boxscore_df: pd.DataFrame = Non
     for idx, (game_id, group) in enumerate(df.groupby("GAME-ID"), 1):
         if idx % 100 == 0:
             logging.info(f"  Processed {idx}/{total_games} games...")
-        record = build_game_record(group, season, venue_col, player_boxscore_df)
+        record = build_game_record(group, season, venue_col, player_boxscore_df, market_data_dict)
         if record:
             games.append(record)
     return games
