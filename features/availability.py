@@ -60,20 +60,15 @@ def compute_availability_features(
     if not player_list:
         return AvailabilityFeatures(0.0, 0, 0.0, 0.0)
 
-    for player in player_list:
-        if baseline_cache.get(player.player_id) is None:
-            baseline_cache.update(
-                player.player_id,
-                PlayerBaseline(
-                    baseline_minutes=player.baseline_minutes,
-                    ts_pct=player.baseline_ts_pct or 0.53,
-                    usage_rate=player.baseline_usage_rate or 0.25,
-                ),
-            )
+    # Availability features should depend only on the per-game baseline fields
+    # carried on each PlayerAvailability record. We deliberately ignore and do
+    # not mutate the global baseline_cache here so that the features for a
+    # given game do not depend on which other games were processed earlier.
 
+    # Identify the top-2 players by their baseline minutes for this game.
     sorted_players = sorted(
         player_list,
-        key=lambda p: (baseline_cache.get(p.player_id).baseline_minutes if baseline_cache.get(p.player_id) else p.baseline_minutes),
+        key=lambda p: p.baseline_minutes,
         reverse=True,
     )
     top2 = sorted_players[:2]
@@ -82,26 +77,32 @@ def compute_availability_features(
     star_out = 0
     usage_top2 = 0.0
     for player in top2:
-        baseline = baseline_cache.get(player.player_id)
-        baseline_minutes = baseline.baseline_minutes if baseline else player.baseline_minutes
-        projected_source = player.projected_minutes if player.projected_minutes is not None else baseline_minutes
-        missing = max(0.0, baseline_minutes - projected_source)
+        baseline_minutes = float(player.baseline_minutes or 0.0)
+        projected = (
+            float(player.projected_minutes)
+            if player.projected_minutes is not None
+            else baseline_minutes
+        )
+        missing = max(0.0, baseline_minutes - projected)
         missing_minutes += missing
         # Star is out if projected < 10% of their usual minutes (injury/rest/etc)
-        if projected_source < (baseline_minutes * 0.10):
+        if baseline_minutes > 0.0 and projected < (baseline_minutes * 0.10):
             star_out = 1
-        # ALWAYS use player.baseline_usage_rate (current value), NOT cached value
-        usage_top2 += (player.baseline_usage_rate or 0.25)
+        # Use the per-game baseline usage rates for the top-2 share.
+        usage_top2 += float(player.baseline_usage_rate or 0.25)
 
     total_minutes = 0.0
     weighted_ts = 0.0
     for player in player_list:
-        baseline = baseline_cache.get(player.player_id)
-        baseline_minutes = baseline.baseline_minutes if baseline else player.baseline_minutes
-        projected_source = player.projected_minutes if player.projected_minutes is not None else baseline_minutes
-        total_minutes += projected_source
-        ts_pct = baseline.ts_pct if baseline else (player.baseline_ts_pct or 0.53)
-        weighted_ts += projected_source * ts_pct
+        baseline_minutes = float(player.baseline_minutes or 0.0)
+        projected = (
+            float(player.projected_minutes)
+            if player.projected_minutes is not None
+            else baseline_minutes
+        )
+        total_minutes += projected
+        ts_pct = float(player.baseline_ts_pct or 0.53)
+        weighted_ts += projected * ts_pct
 
     total_minutes = max(total_minutes, 1.0)
     weighted_ts /= total_minutes

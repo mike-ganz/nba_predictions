@@ -439,8 +439,11 @@ All three pipelines now use **roster reconstruction**:
 - Injury features went from 0% → 21.8% importance
 - `home_minutes_missing_top2` is now **#1 most important feature**
 - `away_minutes_missing_top2` is now **#6 most important feature**
-- Day-of and backlook predictions now consistent
-- Model can actually learn from injury patterns
+- Day-of, backlook, and training pipelines now compute availability features
+  (minutes missing, star_out, usage share, team-weighted TS) **purely from each
+  game's own PlayerAvailability baselines**, without any cross-game state.
+- This ensures that for any given game, all pipelines feed the **same notion of
+  “who is playing and how much they matter”** into the Champion model.
 
 See [UNIFIED_INJURY_IMPLEMENTATION_SUMMARY.md](UNIFIED_INJURY_IMPLEMENTATION_SUMMARY.md) for full technical details.
 
