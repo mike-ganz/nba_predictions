@@ -60,7 +60,19 @@ def main():
     exclude_features = cfg.get('model', {}).get('exclude_features', [])
     if exclude_features:
         print(f"  Excluding {len(exclude_features)} features: {exclude_features}")
-    dataset = MarginTrainingDataset(records, exclude_features=exclude_features)
+
+    # Honor include_diff_features flag from config so that tuning uses
+    # the same feature space as final training (important for Champion).
+    default_include_diff = True
+    include_diff_features = cfg.get('model', {}).get('include_diff_features', default_include_diff)
+    if not include_diff_features:
+        print("  Excluding difference features for tuning (include_diff_features = False)")
+
+    dataset = MarginTrainingDataset(
+        records,
+        exclude_features=exclude_features,
+        include_diff_features=include_diff_features,
+    )
     batch = dataset.build()
     print(f"  Feature dimensionality: {batch.x.shape[1]}")
     

@@ -69,21 +69,52 @@ def main():
         else:
             print(f"  Excluding difference features (as specified in config)")
     
-    dataset = MarginTrainingDataset(records, exclude_features=exclude_features, 
-                                   include_diff_features=include_diff_features)
+    dataset = MarginTrainingDataset(
+        records,
+        exclude_features=exclude_features,
+        include_diff_features=include_diff_features,
+    )
     batch = dataset.build()
     print(f"  Feature dimensionality: {batch.x.shape[1]}")
     print(f"  Actual margin range: {batch.y_margin.min():.1f} to {batch.y_margin.max():.1f} (mean: {batch.y_margin.mean():.2f})")
     print(f"  Baseline margin range: {batch.baseline_margin.min():.1f} to {batch.baseline_margin.max():.1f} (mean: {batch.baseline_margin.mean():.2f})")
+    
+    # Optional: sample weighting around the spread (for XGBoost only)
+    use_spread_weighting = bool(cfg.get('model', {}).get('use_spread_weighting', False))
+    spread_weight_sigma = float(cfg.get('model', {}).get('spread_weight_sigma', 6.0))
+    sample_weight = None
+    if use_spread_weighting and model_type == 'xgboost':
+        # Distance from the ATS decision boundary (home margin vs spread)
+        # delta = |actual_margin + spread_home|
+        import numpy as np
+
+        delta = np.abs(batch.y_margin + batch.market_spread_home)
+        # Higher weight for games closer to the number. Gaussian-shaped weighting:
+        # w = exp(-(delta / sigma)^2), then min-floor at 0.2 to avoid zeroing games.
+        raw_w = np.exp(-(delta / spread_weight_sigma) ** 2)
+        sample_weight = 0.2 + 0.8 * raw_w
+
+        print("\nUsing spread-based sample weighting:")
+        print(f"  spread_weight_sigma = {spread_weight_sigma:.2f}")
+        print(f"  weight range: {sample_weight.min():.3f} to {sample_weight.max():.3f}")
     
     # Train model based on type
     print("\n" + "="*70)
     print(f"Training {model_type.upper()} Margin Model")
     print("="*70)
     
-    # Remove dataset-specific keys from model config
-    model_cfg = {k: v for k, v in cfg.get('model', {}).items() 
-                 if k not in ['exclude_features', 'model_type', 'include_diff_features']}
+    # Remove dataset- and training-specific keys from model config
+    model_cfg = {
+        k: v
+        for k, v in cfg.get('model', {}).items()
+        if k not in [
+            'exclude_features',
+            'model_type',
+            'include_diff_features',
+            'use_spread_weighting',
+            'spread_weight_sigma',
+        ]
+    }
     
     if model_type == 'ridge':
         model_config = MarginNormalConfig(**model_cfg)
@@ -97,7 +128,13 @@ def main():
     elif model_type == 'xgboost':
         model_config = MarginXGBoostConfig(**model_cfg)
         model = MarginXGBoostModel(model_config)
-        model.fit(batch.x, batch.y_margin, batch.baseline_margin, batch.market_spread_home)
+        model.fit(
+            batch.x,
+            batch.y_margin,
+            batch.baseline_margin,
+            batch.market_spread_home,
+            sample_weight=sample_weight,
+        )
         
         print(f"  Trees built: {model.config.n_estimators}")
         print(f"  Max depth: {model.config.max_depth}")

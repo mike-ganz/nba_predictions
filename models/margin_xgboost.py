@@ -186,6 +186,8 @@ class MarginXGBoostModel:
         y_val_margin: np.ndarray | None = None,
         baseline_val_margin: np.ndarray | None = None,
         market_spread_val: np.ndarray | None = None,
+        sample_weight: np.ndarray | None = None,
+        sample_weight_val: np.ndarray | None = None,
     ) -> None:
         """
         Fit XGBoost model for margin prediction.
@@ -250,7 +252,10 @@ class MarginXGBoostModel:
             eval_set = [(x_val, y_val_target)]
         
         # Fit model
-        fit_params = {}
+        fit_params: dict = {}
+        if sample_weight is not None:
+            fit_params["sample_weight"] = sample_weight
+
         if eval_set is not None and self.config.early_stopping_rounds is not None:
             fit_params['eval_set'] = eval_set
             fit_params['early_stopping_rounds'] = self.config.early_stopping_rounds

@@ -1,0 +1,52 @@
+data:
+  training_jsonl: data/games_train_with_players_90_norm.jsonl
+  validation_jsonl: data/games_val_with_players_norm.jsonl
+  prediction_jsonl: data/games_predict_2024_2025_with_players_norm.jsonl
+model:
+  model_type: xgboost
+  # Start from current Champion hyperparameters; these will be re-tuned
+  n_estimators: 210
+  max_depth: 2
+  learning_rate: 0.00993809149474132
+  subsample: 0.7141392168923333
+  colsample_bytree: 0.847119229882813
+  reg_alpha: 1.8955231100841556
+  reg_lambda: 13.058778071766826
+  random_state: 42
+  n_jobs: -1
+  early_stopping_rounds: null
+  eval_metric: rmse
+
+  # Feature exclusions: same redundancy controls as Champion,
+  # but REST DAYS ARE NOW INCLUDED (home_rest_days / away_rest_days removed)
+  exclude_features:
+  - away_tov_edge
+  - shared_team_weighted_ts_away
+  - away_usage_share_top2
+  - shared_implied_home_winprob
+  - away_orb_edge
+  - away_tpar
+  - shared_pace_mean
+  - shared_pace_diff
+  - home_ftr
+  - away_ftr
+
+  # XGBoost: keep difference features disabled and no role indicators,
+  # to stay apples-to-apples with the Champion architecture
+  include_diff_features: false
+  include_fav_underdog_features: false
+
+evaluation:
+  margin_low: -60
+  margin_high: 60
+
+tuning:
+  # These will be overwritten by the hyperparameter tuning script for this config
+  method: model_specific_random_search
+  cv_folds: 5
+  n_iterations: 100
+  best_cv_rmse: null
+  n_features: null
+  note: Rest/schedule-aware Champion variant (training seasons 2021-2024)
+
+

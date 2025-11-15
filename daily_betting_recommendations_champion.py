@@ -1,18 +1,19 @@
 #!/usr/bin/env python
-"""Daily NBA Betting Recommendations Pipeline - Champion Model
+"""Daily NBA Betting Recommendations Pipeline - Rest-Aware Champion v2
 
 ═══════════════════════════════════════════════════════════════════════════════
-MODEL: Champion (Unified Injury Handling, Corrected Rest Days, No Redundancy)
-Location: artifacts/champion_corrected_rest_days
+MODEL: Rest-Aware Champion v2 (XGBoost, Unified Injury Handling, No Redundancy)
+Artifact: artifacts/champion_rest_schedule
 ═══════════════════════════════════════════════════════════════════════════════
 
-PERFORMANCE:
-  • Training: 54.89% ATS on 5,271 games (retrained Nov 9, 2025)
-  • Training MAE: 10.38 points, RMSE: 13.32 points
-  • Expected current season: ~61% ATS (similar to previous champion)
+PERFORMANCE (CURRENT CHAMPION - OPTION B, NOV 2025):
+  • Training: ~57.5% ATS on 3,560 games (2021-2024 seasons)
+  • Training MAE: ~10.20 points, RMSE: ~13.08 points
+  • 2024-2025 backtest: ~52.2% ATS (very similar to prior champion)
+  • 2025-2026 to date: ~57.3% ATS overall, with stable late-season performance
   • Unified injury handling: All pipelines now consistent
 
-FEATURES (12 total):
+FEATURES (14 total: 12 core + rest_days):
   ✓ home_oeff, away_oeff           - Offensive efficiency (league-relative)
   ✓ home_deff, away_deff           - Defensive efficiency (league-relative)
   ✓ home_tpar, away_tpar           - 3-point attempt rate (league-relative)
@@ -21,16 +22,18 @@ FEATURES (12 total):
   ✓ home_tor, away_tor             - Turnover rate (league-relative)
   ✓ home_tov_edge                  - Turnover differential (away TOr - home TOr)
   ✓ home_orb_edge                  - Offensive rebound differential
+  ✓ home_rest_days, away_rest_days - Days of rest before the game (schedule-aware)
   
   ✗ Excludes home_ftr, away_ftr    - Free throw rate (regime-specific)
   ✗ Excludes role indicators       - Favorite/underdog features (overfit risk)
   ✗ Excludes away_tov_edge         - Redundant (perfect inverse of home_tov_edge)
   ✗ Excludes away_orb_edge         - Highly correlated with home_orb_edge
-
-TRAINING DATA:
-  • 5,271 games (2021-2025 seasons) with unified injury handling
+  
+TRAINING DATA (CURRENT CHAMPION):
+  • 3,560 games (2021-2024 seasons) with unified injury handling
   • 83.2% of games have detected injuries (vs 0% in legacy pipeline)
-  • Retrained: November 9, 2025
+  • Rest_days now included as model features (home_rest_days, away_rest_days)
+  • Retrained: November 2025 as rest-aware Champion (Option B)
   
 HYPERPARAMETER TUNING:
   Method: Model-specific RandomizedSearchCV (100 iterations, 5-fold CV)
@@ -73,16 +76,23 @@ KEY IMPROVEMENTS (Nov 9, 2025):
 
 MODEL EVOLUTION:
   Original Champion (Pre-Nov 2025):
-    • Trained on 3,560 games
-    • Legacy injury handling (incomplete roster)
-    • 61.83% ATS on 2025-26 season
+    • Trained on 3,560 games (2021-2024)
+    • Legacy injury handling (incomplete roster, no unified injuries)
+    • 61.83% ATS on early 2025-26 season (before unified injury fix)
   
-  Current Champion (Nov 9, 2025):
-    • Trained on 5,271 games (+48% more data)
-    • Unified injury handling (complete roster with injury markers)
-    • Same proven hyperparameters
-    • Eliminates train-test distribution mismatch
-    • More consistent predictions between day-of and backlook
+  Unified-Injury Champion v1 (Nov 9, 2025, archived):
+    • Artifact: artifacts/champion_corrected_rest_days
+    • Trained on 5,271 games (2021-2025) with unified injury handling
+    • 12-feature set (no rest_days, no FTR, no redundancy)
+    • 2025-26 to date: ~56.8% ATS overall
+  
+  Rest-Aware Champion v2 (Nov 2025, CURRENT):
+    • Artifact: artifacts/champion_rest_schedule
+    • Same XGBoost architecture and redundancy controls as v1
+    • Adds home_rest_days and away_rest_days as features (rest-aware)
+    • Trained on 3,560 games (2021-2024) to avoid 24-25 regime shift issues
+    • 2024-25 backtest: ~52.2% ATS (similar to v1)
+    • 2025-26 to date: ~57.3% ATS with improved late-season stability
 
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -90,7 +100,7 @@ This script automates the complete workflow for generating and emailing
 daily NBA betting recommendations:
 1. Scrapes current odds and injury data
 2. Prepares today's games with features
-3. Generates margin predictions using Champion model
+3. Generates margin predictions using Rest-Aware Champion v2 model
 4. Analyzes predictions for betting recommendations
 5. Emails results via SendGrid API
 
@@ -124,6 +134,14 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+# Canonical model metadata for this pipeline. Keep these in sync with the
+# artifact actually used in the predict step so logs, comments, and email
+# subject lines always reflect reality.
+MODEL_NAME = "Rest-Aware Champion v2"
+MODEL_SHORT_NAME = "Champion"
+MODEL_ARTIFACT_PATH = "artifacts/champion_rest_schedule"
 
 
 def get_eastern_date() -> str:
@@ -292,37 +310,102 @@ def get_spread_bucket(spread: float) -> int:
 def get_confidence_level(rec: Dict) -> str:
     """
     Determine the confidence level for a recommendation.
-    
-    Returns:
-        'high', 'medium', or 'low'
-    
-    CUSTOMIZE THIS FUNCTION to adjust confidence criteria:
-    - Return 'high' for highest confidence picks
-    - Return 'medium' for moderate confidence picks  
-    - Return 'low' for lower confidence picks
-    
-    Current logic (modify as needed):
-    - High: Home teams in buckets 1 or 3
-    - Medium: All other home picks
-    - Low: All away picks
+
+    Rules are applied in priority order: Extra High → High → Medium → Low.
+
+    Extra High:
+        - All road favorites (away favorites, any spread bucket)
+
+    High:
+        - All home underdogs
+        - Home favorites in buckets 1 or 3
+
+    Medium:
+        - Road underdogs in bucket 2
+        - Road favorites in bucket 2
+
+    Low:
+        - All other options
     """
     spread = rec['market_spread_home']
     pick_side = rec['recommended_side']
     bucket = get_spread_bucket(spread)
-    edge = rec['edge']
     
-    # HIGH CONFIDENCE CRITERIA
-    # Example: Home teams in buckets 1 or 3
-    if pick_side == 'home' and (bucket == 1 or bucket == 3):
+    # Home or Away favorite/underdog (relative to market spread, which is home-centric)
+    is_home = pick_side == 'home'
+    is_away = pick_side == 'away'
+    
+    # In NBA spreads: negative = home favorite, positive = away favorite (relative to home)
+    # Home favorite: spread < 0
+    # Home underdog: spread > 0
+    # Away favorite: spread > 0
+    # Away underdog: spread < 0
+
+    # Extra High: all road favorites (away favorites), any bucket
+    if is_away and spread > 0:
+        return 'extra_high'
+
+    # High:
+    #   - All home underdogs
+    #   - Home favorites in buckets 1 or 3
+    if (
+        (is_home and spread > 0)  # all home underdogs
+        or (is_home and spread < 0 and bucket in {1, 3})  # home favorites in buckets 1 or 3
+    ):
         return 'high'
-    
-    # MEDIUM CONFIDENCE CRITERIA
-    # Example: Other home picks
-    if pick_side == 'away' and (bucket == 1 or bucket == 2):
+
+    # Medium:
+    #   - Road underdogs in bucket 2
+    #   - Road favorites in bucket 2 (note: overlaps with Extra High, but Extra High
+    #     takes precedence because rules are applied in order)
+    if (
+        (is_away and spread < 0 and bucket == 2)  # road underdogs in bucket 2
+        or (is_away and spread > 0 and bucket == 2)  # road favorites in bucket 2
+    ):
         return 'medium'
-    
-    # Default to low if no criteria matched
+
+    # All other cases are low confidence
     return 'low'
+
+
+# Configuration for how confidence levels should appear in the email.
+#
+# To add more levels (e.g., 5 instead of 3), you can:
+#   1) Update `get_confidence_level` to return new labels (e.g. "very_high")
+#   2) Add entries here with matching "key" values and desired titles/styles.
+# The email renderer will automatically create one table per configured level,
+# in the order defined below, and will also handle any extra confidence labels
+# not listed here using a generic style.
+CONFIDENCE_LEVELS = [
+    {
+        "key": "extra_high",
+        "title": "🚀 Extra High Confidence Picks (bet the farm)",
+        "table_class": "high-confidence-table",
+        "badge_class": "high-confidence-pick",
+        "no_picks_message": "No extra high confidence picks today.",
+    },
+    {
+        "key": "high",
+        "title": "🔥 High Confidence Picks (bet big)",
+        "table_class": "high-confidence-table",
+        "badge_class": "high-confidence-pick",
+        "no_picks_message": "No high confidence picks today.",
+    },
+    {
+        "key": "medium",
+        "title": "⚡ Medium Confidence Picks (up to you)",
+        "table_class": "medium-confidence-table",
+        "badge_class": "medium-confidence-pick",
+        "no_picks_message": "No medium confidence picks today.",
+    },
+    {
+        "key": "low",
+        "title": "📊 Low Confidence Picks (don't bet)",
+        "table_class": "low-confidence-table",
+        "badge_class": "low-confidence-pick",
+        "no_picks_message": "No low confidence picks today.",
+    },
+]
 
 
 def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
@@ -331,24 +414,15 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
     # Filter out pushes
     filtered_recs = [r for r in recommendations if r['recommended_side'] != 'push']
     
-    # Categorize picks by confidence level
-    high_confidence_picks = []
-    medium_confidence_picks = []
-    low_confidence_picks = []
-    
+    # Group picks by confidence label (supports N distinct levels)
+    picks_by_confidence: Dict[str, List[Dict]] = {}
     for rec in filtered_recs:
         confidence = get_confidence_level(rec)
-        if confidence == 'high':
-            high_confidence_picks.append(rec)
-        elif confidence == 'medium':
-            medium_confidence_picks.append(rec)
-        else:
-            low_confidence_picks.append(rec)
-    
-    # Sort each category by game time (chronological order)
-    high_confidence_picks.sort(key=lambda r: parse_game_time_for_sorting(r.get('game_time', '')))
-    medium_confidence_picks.sort(key=lambda r: parse_game_time_for_sorting(r.get('game_time', '')))
-    low_confidence_picks.sort(key=lambda r: parse_game_time_for_sorting(r.get('game_time', '')))
+        picks_by_confidence.setdefault(confidence, []).append(rec)
+
+    # Sort each confidence bucket by game time (chronological order)
+    for recs in picks_by_confidence.values():
+        recs.sort(key=lambda r: parse_game_time_for_sorting(r.get('game_time', '')))
     
     html = f"""
     <html>
@@ -563,14 +637,101 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
                 </div>
         """
     else:
-        # Render High Confidence picks
-        html += """
-                <div class="section-title">🔥 High Confidence Picks (definitely bet)</div>
-        """
-        
-        if high_confidence_picks:
-            html += """
-                <table class="high-confidence-table">
+        # Render sections for each configured confidence level (in order)
+        configured_keys = set()
+        for level in CONFIDENCE_LEVELS:
+            key = level["key"]
+            title = level["title"]
+            table_class = level.get("table_class", "")
+            badge_class = level.get("badge_class", "pick")
+            no_picks_message = level.get("no_picks_message", f"No {key} picks today.")
+            configured_keys.add(key)
+
+            html += f"""
+                <div class="section-title">{title}</div>
+            """
+
+            picks = picks_by_confidence.get(key, [])
+
+            if picks:
+                table_class_attr = f' class="{table_class}"' if table_class else ""
+                html += f"""
+                <table{table_class_attr}>
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Matchup</th>
+                            <th>Favored</th>
+                            <th>Model Pick</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                """
+
+                for rec in picks:
+                    # Format game time
+                    game_time_display = rec.get('game_time', 'TBD')
+                    if not game_time_display:
+                        game_time_display = 'TBD'
+
+                    # Format matchup
+                    matchup = f"{rec['away_team']} <span class='vs'>@</span> {rec['home_team']}"
+
+                    # Determine who is favored
+                    spread = rec['market_spread_home']
+                    if spread < 0:
+                        # Home team favored
+                        favored = f"{rec['home_team']} (Home) by {abs(spread):.1f}"
+                    else:
+                        # Away team favored
+                        favored = f"{rec['away_team']} (Away) by {abs(spread):.1f}"
+
+                    # Format pick
+                    pick_team = rec['recommended_team']
+                    pick_location = rec['recommended_side'].capitalize()
+                    pick = f"{pick_team} ({pick_location})"
+
+                    html += f"""
+                        <tr>
+                            <td>{game_time_display}</td>
+                            <td class="matchup">{matchup}</td>
+                            <td class="favored">{favored}</td>
+                            <td><span class="team-badge {badge_class}">{pick}</span></td>
+                        </tr>
+                    """
+
+                html += """
+                    </tbody>
+                </table>
+                """
+            else:
+                html += f"""
+                <div class="no-value-picks">
+                    <p>{no_picks_message}</p>
+                </div>
+                """
+
+        # Render any additional confidence levels not explicitly configured,
+        # using a generic style. This lets you extend `get_confidence_level`
+        # to return new labels without having to touch the email layout.
+        extra_keys = [k for k in picks_by_confidence.keys() if k not in configured_keys]
+        for key in sorted(extra_keys):
+            picks = picks_by_confidence[key]
+            if not picks:
+                continue
+
+            # Human-friendly title from the raw key
+            label_title = key.replace("_", " ").title()
+            title = f"📌 {label_title} Picks"
+            no_picks_message = f"No {label_title.lower()} picks today."
+
+            html += f"""
+                <div class="section-title">{title}</div>
+            """
+
+            table_class_attr = ""  # generic table styling
+            html += f"""
+                <table{table_class_attr}>
                     <thead>
                         <tr>
                             <th>Time</th>
@@ -581,172 +742,40 @@ def format_email_body(date_str: str, recommendations: List[Dict]) -> str:
                     </thead>
                     <tbody>
             """
-            
-            for rec in high_confidence_picks:
+
+            for rec in picks:
                 # Format game time
                 game_time_display = rec.get('game_time', 'TBD')
                 if not game_time_display:
                     game_time_display = 'TBD'
-                
+
                 # Format matchup
                 matchup = f"{rec['away_team']} <span class='vs'>@</span> {rec['home_team']}"
-                
+
                 # Determine who is favored
                 spread = rec['market_spread_home']
                 if spread < 0:
-                    # Home team favored
                     favored = f"{rec['home_team']} (Home) by {abs(spread):.1f}"
                 else:
-                    # Away team favored
                     favored = f"{rec['away_team']} (Away) by {abs(spread):.1f}"
-                
+
                 # Format pick
                 pick_team = rec['recommended_team']
                 pick_location = rec['recommended_side'].capitalize()
                 pick = f"{pick_team} ({pick_location})"
-                
+
                 html += f"""
                         <tr>
                             <td>{game_time_display}</td>
                             <td class="matchup">{matchup}</td>
                             <td class="favored">{favored}</td>
-                            <td><span class="team-badge high-confidence-pick">{pick}</span></td>
+                            <td><span class="team-badge pick">{pick}</span></td>
                         </tr>
                 """
-            
+
             html += """
                     </tbody>
                 </table>
-            """
-        else:
-            html += """
-                <div class="no-value-picks">
-                    <p>No high confidence picks today.</p>
-                </div>
-            """
-        
-        # Render Medium Confidence picks
-        html += """
-                <div class="section-title">⚡ Medium Confidence Picks (up to you)</div>
-        """
-        
-        if medium_confidence_picks:
-            html += """
-                <table class="medium-confidence-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Matchup</th>
-                            <th>Favored</th>
-                            <th>Model Pick</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-            """
-            
-            for rec in medium_confidence_picks:
-                # Format game time
-                game_time_display = rec.get('game_time', 'TBD')
-                if not game_time_display:
-                    game_time_display = 'TBD'
-                
-                # Format matchup
-                matchup = f"{rec['away_team']} <span class='vs'>@</span> {rec['home_team']}"
-                
-                # Determine who is favored
-                spread = rec['market_spread_home']
-                if spread < 0:
-                    # Home team favored
-                    favored = f"{rec['home_team']} (Home) by {abs(spread):.1f}"
-                else:
-                    # Away team favored
-                    favored = f"{rec['away_team']} (Away) by {abs(spread):.1f}"
-                
-                # Format pick
-                pick_team = rec['recommended_team']
-                pick_location = rec['recommended_side'].capitalize()
-                pick = f"{pick_team} ({pick_location})"
-                
-                html += f"""
-                        <tr>
-                            <td>{game_time_display}</td>
-                            <td class="matchup">{matchup}</td>
-                            <td class="favored">{favored}</td>
-                            <td><span class="team-badge medium-confidence-pick">{pick}</span></td>
-                        </tr>
-                """
-            
-            html += """
-                    </tbody>
-                </table>
-            """
-        else:
-            html += """
-                <div class="no-value-picks">
-                    <p>No medium confidence picks today.</p>
-                </div>
-            """
-        
-        # Render Low Confidence picks
-        html += """
-                <div class="section-title">📊 Low Confidence Picks (don't bet)</div>
-        """
-        
-        if low_confidence_picks:
-            html += """
-                <table class="low-confidence-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Matchup</th>
-                            <th>Favored</th>
-                            <th>Model Pick</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-            """
-            
-            for rec in low_confidence_picks:
-                # Format game time
-                game_time_display = rec.get('game_time', 'TBD')
-                if not game_time_display:
-                    game_time_display = 'TBD'
-                
-                # Format matchup
-                matchup = f"{rec['away_team']} <span class='vs'>@</span> {rec['home_team']}"
-                
-                # Determine who is favored
-                spread = rec['market_spread_home']
-                if spread < 0:
-                    # Home team favored
-                    favored = f"{rec['home_team']} (Home) by {abs(spread):.1f}"
-                else:
-                    # Away team favored
-                    favored = f"{rec['away_team']} (Away) by {abs(spread):.1f}"
-                
-                # Format pick
-                pick_team = rec['recommended_team']
-                pick_location = rec['recommended_side'].capitalize()
-                pick = f"{pick_team} ({pick_location})"
-                
-                html += f"""
-                        <tr>
-                            <td>{game_time_display}</td>
-                            <td class="matchup">{matchup}</td>
-                            <td class="favored">{favored}</td>
-                            <td><span class="team-badge low-confidence-pick">{pick}</span></td>
-                        </tr>
-                """
-            
-            html += """
-                    </tbody>
-                </table>
-            """
-        else:
-            html += """
-                <div class="no-value-picks">
-                    <p>No low confidence picks today.</p>
-                </div>
             """
     
     html += """
@@ -813,7 +842,7 @@ def send_email(api_key: str, from_email: str, to_email: str, subject: str, html_
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Daily NBA betting recommendations pipeline (Champion Model)",
+        description="Daily NBA betting recommendations pipeline (Rest-Aware Champion v2)",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
@@ -870,7 +899,8 @@ def main():
     logger.info("")
     logger.info("=" * 70)
     logger.info("NBA DAILY BETTING RECOMMENDATIONS PIPELINE")
-    logger.info("Model: Champion (12 features, corrected rest days, 61.83% ATS)")
+    logger.info(f"Model: {MODEL_NAME} ({MODEL_SHORT_NAME}, 14 features including rest_days)")
+    logger.info(f"Model artifact: {MODEL_ARTIFACT_PATH}")
     logger.info("=" * 70)
     logger.info("")
     
@@ -898,18 +928,18 @@ def main():
         logger.error("Cannot proceed without game data")
         sys.exit(1)
     
-    # STEP 2: Generate predictions using Champion model
+    # STEP 2: Generate predictions using Rest-Aware Champion v2 model
     # The predict_margin.py script will automatically use the correct features
-    # based on the model's config (12 features, no FTR, no role indicators, no redundancy)
+    # based on the model's config (rest-aware Champion v2: 14 features, no FTR, no role indicators, no redundancy)
     cmd = [
         sys.executable,
         "predict_margin.py",
         "--data", data_file,
-        "--model", "artifacts/champion_corrected_rest_days",
+        "--model", MODEL_ARTIFACT_PATH,
         "--output", predictions_file
     ]
     
-    success = run_step("Generate Predictions (Champion Model)", cmd)
+    success = run_step(f"Generate Predictions ({MODEL_NAME})", cmd)
     if not success:
         logger.error("Pipeline failed at prediction step")
         sys.exit(1)
@@ -964,7 +994,7 @@ def main():
             sys.exit(1)
         
         # Format and send email
-        subject = f"NBA Betting Recommendations - {date_str} (Champion Model)"
+        subject = f"NBA Betting Recommendations - {date_str} ({MODEL_NAME})"
         html_content = format_email_body(date_str, recommendations)
         
         success = send_email(api_key, from_email, to_email, subject, html_content, from_alias)

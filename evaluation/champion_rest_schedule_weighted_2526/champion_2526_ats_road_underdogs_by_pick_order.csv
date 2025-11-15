@@ -1,0 +1,3 @@
+block_start_pick,block_end_pick,n_games,ats_accuracy,roi_pct,first_date,last_date
+1,20,20,40.0,-23.599999999999998,2025-10-22,2025-11-07
+21,23,3,0.0,-100.0,2025-11-08,2025-11-14

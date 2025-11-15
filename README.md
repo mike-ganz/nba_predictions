@@ -129,57 +129,64 @@ We create derived features that capture team matchups:
 
 ### Step 4: Train the Model
 
-**Production Model: XGBoost (Champion Model)**
+**Production Model: XGBoost (Champion Model, Rest-Aware Option B)**
 
-The Champion model uses XGBoost with carefully tuned hyperparameters:
+The current Champion model uses XGBoost with carefully tuned hyperparameters and a
+rest-aware feature set built on unified injury handling.
 
 **Key Features:**
-- **12 features** (no redundancy, no FTR, optimal set)
-- **Injury features are critical:** 21.8% of total model importance
+- **14 features total** (12 core matchup/injury features + home/away_rest_days)
+- **Injury + availability features are critical** (minutes_missing_top2, star_out, usage_share_top2)
+- **Rest-aware schedule context:** home_rest_days and away_rest_days included
 - **Automatic interactions:** Learns complex patterns without manual feature engineering
-- **Trained on 5,271 games** (2021-2025 seasons with unified injury handling)
+- **Trained on 3,560 games** (2021-2024 seasons with unified injury handling)
 
 **Why XGBoost?**
 - Captures non-linear relationships automatically
-- Feature importance shows injury features (#1 and #6 most important)
-- Superior performance with unified injury handling
-- Robust hyperparameters (colsample=0.847, n_estimators=210, max_depth=2)
+- Feature importance highlights both injury and schedule/rest context
+- Robust hyperparameters tuned via cross-validated random search
 
-**Training Configuration:**
+**Training Configuration (rest-aware Champion v2):**
 ```yaml
 model:
   model_type: xgboost
-  n_estimators: 210
-  max_depth: 2
-  learning_rate: 0.00994
-  colsample_bytree: 0.847
-  subsample: 0.714
-  reg_alpha: 1.90
-  reg_lambda: 13.06
+  n_estimators: 100
+  max_depth: 3
+  learning_rate: 0.01
+  colsample_bytree: 1.0
+  subsample: 0.6
+  reg_alpha: 1.0
+  reg_lambda: 2.0
   exclude_features:
-    - away_tov_edge (redundant)
-    - shared_team_weighted_ts_away (noise)
-    - away_usage_share_top2 (redundant)
-    - shared_implied_home_winprob (redundant)
-    - home_rest_days (regime-specific)
-    - away_orb_edge (correlated)
-    - away_tpar (redundant)
-    - away_rest_days (regime-specific)
-    - shared_pace_mean (redundant)
-    - shared_pace_diff (redundant)
-    - home_ftr (regime-specific)
-    - away_ftr (regime-specific)
+    - away_tov_edge            # redundant (inverse of home_tov_edge)
+    - shared_team_weighted_ts_away  # lower signal vs home version
+    - away_usage_share_top2    # redundant with home/away edges
+    - shared_implied_home_winprob   # redundant with market baseline
+    - away_orb_edge            # highly correlated with home_orb_edge
+    - away_tpar                # redundant with home_tpar / matchup edges
+    - shared_pace_mean         # redundant with pace edges
+    - shared_pace_diff         # redundant with pace edges
+    - home_ftr                 # regime-specific free-throw rate
+    - away_ftr                 # regime-specific free-throw rate
+    # Explicit schedule flags (b2b / three-in-four) are built but excluded here;
+    # rest_days alone provided better generalization than adding these binaries.
+    - home_b2b
+    - away_b2b
+    - home_three_in_four
+    - away_three_in_four
 ```
 
 **Training Command:**
 ```bash
 python train_margin.py \
   --data data/games_train_with_players_90_norm.jsonl \
-  --config configs/champion_corrected_rest_days/config.yaml \
-  --output artifacts/champion_corrected_rest_days
+  --config configs/champion_rest_schedule_tuned.yaml \
+  --model-type xgboost \
+  --output artifacts/champion_rest_schedule
 ```
 
-**Note:** Model only predicts margin (μ), not uncertainty (σ). Cover probabilities computed separately if needed.
+**Note:** The Champion only predicts margin (μ), not uncertainty (σ). Cover probabilities can be
+computed separately if needed using a distributional model.
 
 ### Step 5: Generate Predictions
 
@@ -200,56 +207,75 @@ Output includes:
 
 ## 📈 Results & Performance
 
-### Model Selection: OLD vs NEW
+### Model Selection: Champion Evolution (Legacy → Unified Injuries → Rest-Aware)
 
-**Critical Decision (October 2025):** We trained two models and compared performance:
-- **OLD Model:** Trained on 2021-2024 (3 seasons, 3,560 games)
-- **NEW Model:** Trained on 2021-2025 (4 seasons, 4,875 games)
+Over the course of 2025, we iterated through multiple “Champion” candidates:
 
-**Why we chose OLD model for production:**
+1. **Legacy Champion (pre-unified injuries, pre-Nov 2025)**
+   - Trained on 3,560 games (2021-2024) with legacy injury handling.
+   - Achieved ~61.8% ATS on early 2025-26, but had inconsistent pipelines
+     (day-of vs backlook vs training).
 
-The NEW model included 2024-25 in training, which had **anomalous feature-outcome relationships**:
-- 3-point rate correlation **flipped sign** (positive in 21-24, negative in 24-25)
-- Other key features showed unstable coefficients
-- When 25-26 season reverted to normal patterns, NEW model performed worse
+2. **Unified-Injury Champion v1 – `artifacts/champion_corrected_rest_days` (Nov 9, 2025)**
+   - Trained on 5,271 games (2021-2025) with **unified injury handling**.
+   - 12-feature set (no rest_days, no FTR, no redundant features).
+   - 2024-25 test set (1,315 games): ~52.2% ATS, roughly breakeven ROI.
+   - 2025-26 to date (~185 games): ~56.8% ATS overall, but performance
+     deteriorated in the last ~35 games, driven largely by **late road underdogs**.
 
-**Evidence:**
-- OLD Model on 25-26: **56.94% ATS**
-- NEW Model on 25-26: **47.22% ATS** (significantly worse)
-- Coefficient analysis confirmed NEW model learned "wrong" patterns from 24-25
+3. **Rest-Aware Champion v2 – `artifacts/champion_rest_schedule` (CURRENT)**
+   - Same XGBoost architecture and redundancy controls as v1.
+   - Adds **home_rest_days** and **away_rest_days** as features (rest-aware)
+     while keeping FTR and role indicators excluded.
+   - Trained on 3,560 games (2021-2024) to avoid 24-25’s regime-shift anomalies
+     that previously degraded out-of-sample ATS.
 
-**Conclusion:** Using OLD model (21-24) provides more robust predictions for typical NBA seasons.
+**Why we promoted the rest-aware Champion (Option B):**
 
-### Champion Model Performance (Unified Injury Handling - Nov 2025)
+- **24-25 Generalization (1,315 games):**
+  - Unified-Injury v1: ~52.17% ATS, ROI ≈ –0.36%
+  - Rest-aware v2:     ~52.24% ATS, ROI ≈ –0.22%
+  - ⇒ Essentially identical performance on a full holdout season.
 
-**Model:** `artifacts/champion_corrected_rest_days` (retrained November 9, 2025)
+- **25-26 Current Season (185 games, through Nov 2025):**
+  - Unified-Injury v1: ~56.8% ATS overall, but drops to ~45.7% ATS
+    in the last 35 games, driven by poor late-season road underdogs.
+  - Rest-aware v2:     ~57.3% ATS overall, with **no late-season collapse**;
+    the final 35-game block is ~65.7% ATS.
+  - Rest-aware v2 also materially improves ATS once you **exclude road underdogs**
+    (from ~59.3% to ~63.0% ATS), while road dogs remain a known weak segment.
 
-**Training Performance:**
-| Metric | Value | Notes |
-|--------|-------|-------|
-| **Training Data** | 5,271 games | 2021-2025 seasons |
-| **Training ATS** | 54.89% | Good generalization |
-| **Training MAE** | 10.38 points | Strong margin prediction |
-| **Training RMSE** | 13.32 points | Consistent |
+- **Alternative schedules-aware experiments (rejected):**
+  - Adding explicit **b2b / three_in_four binaries** on top of rest_days did not
+    improve ATS; overall 25-26 performance dropped relative to rest-only.
+  - Adding **spread-based sample weighting** in the training loss (to focus on
+    close-to-the-number games) reduced ATS on 25-26 and made late road dogs worse.
+
+**Conclusion:** The rest-aware Champion v2 (`artifacts/champion_rest_schedule`) matches
+or slightly improves ATS on 2024-25 and **meaningfully improves stability on 2025-26**,
+without adding brittle ATS-focused losses or extra schedule flags. This is now our
+default Champion used by:
+
+- `evaluate_current_season_champion.ps1`
+- `daily_betting_recommendations_champion.py`
 
 ---
 
 ### Out-of-Sample Test Results
 
-#### 2024-2025 Season (1,315 games)
+#### 2024-2025 Season (1,315 games) – Champion v2 vs v1
 **Fully out-of-sample validation set**
 
-| Metric | Value | Status |
-|--------|-------|--------|
-| **ATS Accuracy** | 52.47% | ✅ Above breakeven (52.38%) |
-| **ROI** | +0.22% | ✅ Profitable |
-| **MAE** | 10.61 points | Excellent |
-| **RMSE** | 13.66 points | Strong |
-| **R²** | 0.266 | Good predictive power |
+Using `data/games_predict_2024_2025_with_players_norm.jsonl`:
 
-**By Favorite Status:**
-- **Home Favorite** (786 games): 53.56% ATS, +2.25% ROI ✅
-- **Home Dog** (529 games): 50.85% ATS, -2.93% ROI
+| Model                             | ATS    | ROI     | MAE    | RMSE   |
+|-----------------------------------|--------|---------|--------|--------|
+| Unified-Injury v1 (no rest_days)  | 52.17% | –0.36%  | 10.59  | 13.63  |
+| Rest-aware Champion v2 (current)  | 52.24% | –0.22%  | 10.62  | 13.68  |
+
+Both models generalize similarly on 24-25; the decision to promote v2 is driven
+primarily by **25-26 stability and segment-level behavior**, not a dramatic
+24-25 ATS gain.
 
 ---
 

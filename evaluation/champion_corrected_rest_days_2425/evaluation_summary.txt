@@ -1,0 +1,14 @@
+======================================================================
+MARGIN MODEL EVALUATION SUMMARY (XGBOOST)
+======================================================================
+
+Dataset: 1315 games
+
+Margin MAE:      10.59 points
+Margin RMSE:     13.63 points
+Margin R²:       0.269
+
+ATS Accuracy:    52.17%
+ATS ROI:         -0.36%
+ML Accuracy:     69.13%
+
