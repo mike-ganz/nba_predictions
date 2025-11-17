@@ -342,7 +342,7 @@ def get_confidence_level(rec: Dict) -> str:
     # Away underdog: spread < 0
 
     # Extra High: all road favorites (away favorites), any bucket
-    if is_away and spread > 0:
+    if is_away and spread > 0 and bucket == 3:
         return 'extra_high'
 
     # High:
@@ -350,7 +350,7 @@ def get_confidence_level(rec: Dict) -> str:
     #   - Home favorites in buckets 1 or 3
     if (
         (is_home and spread > 0)  # all home underdogs
-        or (is_home and spread < 0 and bucket in {1, 3})  # home favorites in buckets 1 or 3
+        or (is_home and spread < 0 and bucket == 3)  # home favorites in buckets 1 or 3
     ):
         return 'high'
 
@@ -360,7 +360,8 @@ def get_confidence_level(rec: Dict) -> str:
     #     takes precedence because rules are applied in order)
     if (
         (is_away and spread < 0 and bucket == 2)  # road underdogs in bucket 2
-        or (is_away and spread > 0 and bucket == 2)  # road favorites in bucket 2
+        or (is_away and spread > 0 and bucket in {1,2})  # road favorites in bucket 2
+        or (is_home and spread < 0 and bucket == 1)
     ):
         return 'medium'
 
