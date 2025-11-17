@@ -334,39 +334,53 @@ def get_confidence_level(rec: Dict) -> str:
     # Home or Away favorite/underdog (relative to market spread, which is home-centric)
     is_home = pick_side == 'home'
     is_away = pick_side == 'away'
-    
-    # In NBA spreads: negative = home favorite, positive = away favorite (relative to home)
-    # Home favorite: spread < 0
-    # Home underdog: spread > 0
-    # Away favorite: spread > 0
-    # Away underdog: spread < 0
 
-    # Extra High: all road favorites (away favorites), any bucket
-    if is_away and spread > 0 and bucket == 3:
-        return 'extra_high'
+    is_home_favorite = is_home and spread < 0
+    is_home_underdog = is_home and spread > 0
+    is_away_favorite = is_away and spread > 0
+    is_away_underdog = is_away and spread < 0
 
-    # High:
-    #   - All home underdogs
-    #   - Home favorites in buckets 1 or 3
-    if (
-        (is_home and spread > 0)  # all home underdogs
-        or (is_home and spread < 0 and bucket == 3)  # home favorites in buckets 1 or 3
-    ):
+    if is_home_underdog and (spread <= 4):
         return 'high'
+    elif is_home_favorite and (spread >= -5 or spread < -12):
+        return 'high'
+    elif is_away_favorite:
+        return 'high'
+    else:
+        return 'low'
+    
+    # # In NBA spreads: negative = home favorite, positive = away favorite (relative to home)
+    # # Home favorite: spread < 0
+    # # Home underdog: spread > 0
+    # # Away favorite: spread > 0
+    # # Away underdog: spread < 0
 
-    # Medium:
-    #   - Road underdogs in bucket 2
-    #   - Road favorites in bucket 2 (note: overlaps with Extra High, but Extra High
-    #     takes precedence because rules are applied in order)
-    if (
-        (is_away and spread < 0 and bucket == 2)  # road underdogs in bucket 2
-        or (is_away and spread > 0 and bucket in {1,2})  # road favorites in bucket 2
-        or (is_home and spread < 0 and bucket == 1)
-    ):
-        return 'medium'
+    # # Extra High: all road favorites (away favorites), any bucket
+    # if is_away_favorite and bucket == 3:
+    #     return 'extra_high'
 
-    # All other cases are low confidence
-    return 'low'
+    # # High:
+    # #   - All home underdogs
+    # #   - Home favorites in buckets 1 or 3
+    # if (
+    #     is_home_underdog
+    #     or (is_home_favorite and bucket == 3)
+    #     or (is_away_favorite and bucket in {1,2})
+    # ):
+    #     return 'high'
+
+    # # Medium:
+    # #   - Road underdogs in bucket 2
+    # #   - Road favorites in bucket 2 (note: overlaps with Extra High, but Extra High
+    # #     takes precedence because rules are applied in order)
+    # if (
+    #     (is_home_favorite and bucket == 1)
+    #     or (is_away_underdog and bucket == 2)
+    # ):
+    #     return 'medium'
+
+    # # All other cases are low confidence
+    # return 'low'
 
 
 # Configuration for how confidence levels should appear in the email.
@@ -378,30 +392,30 @@ def get_confidence_level(rec: Dict) -> str:
 # in the order defined below, and will also handle any extra confidence labels
 # not listed here using a generic style.
 CONFIDENCE_LEVELS = [
-    {
-        "key": "extra_high",
-        "title": "🚀 Extra High Confidence Picks (bet the farm)",
-        "table_class": "high-confidence-table",
-        "badge_class": "high-confidence-pick",
-        "no_picks_message": "No extra high confidence picks today.",
-    },
+    # {
+    #     "key": "extra_high",
+    #     "title": "🚀 Extra High Confidence Picks (bet the farm)",
+    #     "table_class": "high-confidence-table",
+    #     "badge_class": "high-confidence-pick",
+    #     "no_picks_message": "No extra high confidence picks today.",
+    # },
     {
         "key": "high",
-        "title": "🔥 High Confidence Picks (bet big)",
+        "title": "🔥 High Confidence Picks",
         "table_class": "high-confidence-table",
         "badge_class": "high-confidence-pick",
         "no_picks_message": "No high confidence picks today.",
     },
-    {
-        "key": "medium",
-        "title": "⚡ Medium Confidence Picks (up to you)",
-        "table_class": "medium-confidence-table",
-        "badge_class": "medium-confidence-pick",
-        "no_picks_message": "No medium confidence picks today.",
-    },
+    # {
+    #     "key": "medium",
+    #     "title": "⚡ Medium Confidence Picks (up to you)",
+    #     "table_class": "medium-confidence-table",
+    #     "badge_class": "medium-confidence-pick",
+    #     "no_picks_message": "No medium confidence picks today.",
+    # },
     {
         "key": "low",
-        "title": "📊 Low Confidence Picks (don't bet)",
+        "title": "📊 Low Confidence Picks",
         "table_class": "low-confidence-table",
         "badge_class": "low-confidence-pick",
         "no_picks_message": "No low confidence picks today.",
@@ -995,7 +1009,7 @@ def main():
             sys.exit(1)
         
         # Format and send email
-        subject = f"NBA Betting Recommendations - {date_str} ({MODEL_NAME})"
+        subject = f"NBA Betting Recommendations - {date_str}"
         html_content = format_email_body(date_str, recommendations)
         
         success = send_email(api_key, from_email, to_email, subject, html_content, from_alias)

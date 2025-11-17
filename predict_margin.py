@@ -129,12 +129,14 @@ def main():
         row = {
             'game_id': record.game_id,
             'date': record.date,
-            'game_time': record.market.game_time if record.market.game_time else None,
+            'game_time': getattr(record.market, 'game_time', None),
             'away_team': record.teams.A.team_id,
             'home_team': record.teams.H.team_id,
             'market_spread_home': batch.market_spread_home[i],
             'baseline_margin': batch.baseline_margin[i],
             'pred_margin_mu': mu[i],
+            'moneyline_home': record.market.moneyline_home,
+            'moneyline_away': record.market.moneyline_away,
         }
         
         # Add model-specific columns
@@ -147,8 +149,6 @@ def main():
         
         # Add actuals if available
         if record.outcome:
-            row['actual_home'] = record.outcome.home_final
-            row['actual_away'] = record.outcome.away_final
             row['actual_margin'] = batch.y_margin[i]
         
         results.append(row)

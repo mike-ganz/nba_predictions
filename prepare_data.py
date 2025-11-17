@@ -219,6 +219,7 @@ def load_market_data(market_path: Path) -> Dict[Tuple[str, str, str], Dict]:
             'total': game.get('total'),
             'moneyline_home': game.get('moneyline_home'),
             'moneyline_away': game.get('moneyline_away'),
+            'game_time': game.get('game_time'),
         }
     
     logging.info(f"Loaded market data for {len(market_dict)} games")
@@ -356,6 +357,7 @@ def build_game_record(game_rows: pd.DataFrame, season: str, venue_col: str, play
     total = None
     moneyline_home = None
     moneyline_away = None
+    game_time = None
     
     if market_data_dict is not None:
         # Normalize team names for lookup
@@ -369,6 +371,7 @@ def build_game_record(game_rows: pd.DataFrame, season: str, venue_col: str, play
             total = market_info.get('total')
             moneyline_home = market_info.get('moneyline_home')
             moneyline_away = market_info.get('moneyline_away')
+            game_time = market_info.get('game_time')
             logging.debug(f"Using market data from current_spreads.json for {away_team_name} @ {home_team_name} on {date_str}")
     
     # Fallback to parsing from boxscore rows if market data not found
@@ -420,6 +423,7 @@ def build_game_record(game_rows: pd.DataFrame, season: str, venue_col: str, play
             "total": total,
             "moneyline_home": moneyline_home,
             "moneyline_away": moneyline_away,
+            "game_time": game_time,
         },
         "outcome": {
             "home_final": home_score,
