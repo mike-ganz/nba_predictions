@@ -22,3 +22,6 @@ webdriver-manager>=4.0.0
 xgboost>=2.0.0
 sendgrid>=6.11.0
 pytz>=2024.1
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pyngrok>=7.0.0
