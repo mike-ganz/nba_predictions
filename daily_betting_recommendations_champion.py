@@ -340,12 +340,25 @@ def get_confidence_level(rec: Dict) -> str:
     is_away_favorite = is_away and spread > 0
     is_away_underdog = is_away and spread < 0
 
-    if is_home_underdog and (spread <= 4):
-        return 'high'
+    if is_home_underdog:
+        if spread <= 4:
+            return 'high'
+        elif spread > 5:
+            return 'medium'
+        else:
+            return 'low'
     elif is_home_favorite and (spread >= -5 or spread < -12):
-        return 'high'
+        return 'medium'
+    elif is_away_underdog:
+        if -9 <= spread <= -5:
+            return 'medium'
+        else:
+            return 'low'
     elif is_away_favorite:
-        return 'high'
+        if spread < 5:
+            return 'high'
+        else:
+            return 'medium'
     else:
         return 'low'
     
@@ -392,13 +405,13 @@ def get_confidence_level(rec: Dict) -> str:
 # in the order defined below, and will also handle any extra confidence labels
 # not listed here using a generic style.
 CONFIDENCE_LEVELS = [
-    # {
-    #     "key": "extra_high",
-    #     "title": "🚀 Extra High Confidence Picks (bet the farm)",
-    #     "table_class": "high-confidence-table",
-    #     "badge_class": "high-confidence-pick",
-    #     "no_picks_message": "No extra high confidence picks today.",
-    # },
+#     {
+#         "key": "extra_high",
+#         "title": "🚀 Extra High Confidence Picks (bet the farm)",
+#         "table_class": "high-confidence-table",
+#         "badge_class": "high-confidence-pick",
+#         "no_picks_message": "No extra high confidence picks today.",
+#     },
     {
         "key": "high",
         "title": "🔥 High Confidence Picks",
@@ -406,13 +419,13 @@ CONFIDENCE_LEVELS = [
         "badge_class": "high-confidence-pick",
         "no_picks_message": "No high confidence picks today.",
     },
-    # {
-    #     "key": "medium",
-    #     "title": "⚡ Medium Confidence Picks (up to you)",
-    #     "table_class": "medium-confidence-table",
-    #     "badge_class": "medium-confidence-pick",
-    #     "no_picks_message": "No medium confidence picks today.",
-    # },
+    {
+        "key": "medium",
+        "title": "⚡ Medium Confidence Picks",
+        "table_class": "medium-confidence-table",
+        "badge_class": "medium-confidence-pick",
+        "no_picks_message": "No medium confidence picks today.",
+    },
     {
         "key": "low",
         "title": "📊 Low Confidence Picks",
