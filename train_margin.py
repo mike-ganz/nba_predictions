@@ -86,8 +86,6 @@ def main():
     if use_spread_weighting and model_type == 'xgboost':
         # Distance from the ATS decision boundary (home margin vs spread)
         # delta = |actual_margin + spread_home|
-        import numpy as np
-
         delta = np.abs(batch.y_margin + batch.market_spread_home)
         # Higher weight for games closer to the number. Gaussian-shaped weighting:
         # w = exp(-(delta / sigma)^2), then min-floor at 0.2 to avoid zeroing games.

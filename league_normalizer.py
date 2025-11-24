@@ -122,28 +122,76 @@ def calculate_league_averages(season: str, target_date: str, min_games: int = 20
             else:
                 # Use hardcoded league averages
                 return {
-                    'OEFF': 110.0,
-                    'DEFF': 110.0,
-                    'PACE': 100.0,
-                    '3PAr': 0.40,
-                    'FTr': 0.25,
-                    'ORr': 0.25,
-                    'DRr': 0.75,
-                    'ASTr': 0.55,
-                    'TOr': 0.13,
+                    'OEFF': 110.0, 'OEFF_std': 5.0,
+                    'DEFF': 110.0, 'DEFF_std': 5.0,
+                    'PACE': 100.0, 'PACE_std': 2.0,
+                    '3PAr': 0.40, '3PAr_mean': 0.40, '3PAr_std': 0.05,
+                    'FTr': 0.25, 'FTr_mean': 0.25, 'FTr_std': 0.05,
+                    'ORr': 0.25, 'ORr_mean': 0.25, 'ORr_std': 0.05,
+                    'DRr': 0.75, 'DRr_mean': 0.75, 'DRr_std': 0.05,
+                    'ASTr': 0.55, 'ASTr_mean': 0.55, 'ASTr_std': 0.05,
+                    'TOr': 0.13, 'TOr_mean': 0.13, 'TOr_std': 0.02,
                 }
     
-    # Calculate averages
+    # Calculate stats for derived metrics
+    # Handle potential division by zero with safe replacement
+    fga_safe = df_before['FGA'].replace(0, np.nan)
+    fg_safe = df_before['FG'].replace(0, np.nan)
+    
+    # Calculate per-game rate series for std dev calculation
+    s_3par = df_before['3PA'] / fga_safe
+    s_ftr = df_before['FTA'] / fga_safe
+    
+    # Rebound rates require total rebounds
+    total_reb = df_before['OR'] + df_before['DR']
+    reb_safe = total_reb.replace(0, np.nan)
+    s_orr = df_before['OR'] / reb_safe
+    s_drr = df_before['DR'] / reb_safe
+    
+    s_astr = df_before['A'] / fg_safe
+    
+    # Turnover rate: TO / (FGA + 0.44*FTA + TO)
+    poss_est = df_before['FGA'] + 0.44 * df_before['FTA'] + df_before['TO']
+    poss_safe = poss_est.replace(0, np.nan)
+    s_tor = df_before['TO'] / poss_safe
+
+    # Calculate averages and standard deviations
     averages = {
+        # Raw means (team averages)
         'OEFF': df_before['OEFF'].mean(),
+        'OEFF_std': df_before['OEFF'].std(),
+        
         'DEFF': df_before['DEFF'].mean(),
+        'DEFF_std': df_before['DEFF'].std(),
+        
         'PACE': df_before['PACE'].mean(),
+        'PACE_std': df_before['PACE'].std(),
+        
+        # Derived metrics (Aggregate ratios for Center mode, Per-game Mean/Std for Z-Score)
+        # Note: Center mode uses Sum/Sum to match historical behavior
         '3PAr': df_before['3PA'].sum() / df_before['FGA'].sum() if df_before['FGA'].sum() > 0 else 0.40,
+        '3PAr_mean': s_3par.mean(),
+        '3PAr_std': s_3par.std(),
+        
         'FTr': df_before['FTA'].sum() / df_before['FGA'].sum() if df_before['FGA'].sum() > 0 else 0.25,
-        'ORr': df_before['OR'].sum() / (df_before['OR'].sum() + df_before['DR'].sum()) if (df_before['OR'].sum() + df_before['DR'].sum()) > 0 else 0.25,
-        'DRr': df_before['DR'].sum() / (df_before['OR'].sum() + df_before['DR'].sum()) if (df_before['OR'].sum() + df_before['DR'].sum()) > 0 else 0.75,
+        'FTr_mean': s_ftr.mean(),
+        'FTr_std': s_ftr.std(),
+        
+        'ORr': df_before['OR'].sum() / total_reb.sum() if total_reb.sum() > 0 else 0.25,
+        'ORr_mean': s_orr.mean(),
+        'ORr_std': s_orr.std(),
+        
+        'DRr': df_before['DR'].sum() / total_reb.sum() if total_reb.sum() > 0 else 0.75,
+        'DRr_mean': s_drr.mean(),
+        'DRr_std': s_drr.std(),
+        
         'ASTr': df_before['A'].sum() / df_before['FG'].sum() if df_before['FG'].sum() > 0 else 0.55,
-        'TOr': df_before['TO'].sum() / (df_before['FGA'].sum() + 0.44 * df_before['FTA'].sum() + df_before['TO'].sum()) if (df_before['FGA'].sum() + 0.44 * df_before['FTA'].sum() + df_before['TO'].sum()) > 0 else 0.13,
+        'ASTr_mean': s_astr.mean(),
+        'ASTr_std': s_astr.std(),
+        
+        'TOr': df_before['TO'].sum() / poss_est.sum() if poss_est.sum() > 0 else 0.13,
+        'TOr_mean': s_tor.mean(),
+        'TOr_std': s_tor.std(),
     }
     
     # Cache the result
@@ -152,7 +200,7 @@ def calculate_league_averages(season: str, target_date: str, min_games: int = 20
     return averages
 
 
-def normalize_team_features(raw_features: Dict[str, float], season: str, game_date: str) -> Dict[str, float]:
+def normalize_team_features(raw_features: Dict[str, float], season: str, game_date: str, method: str = 'center') -> Dict[str, float]:
     """
     Normalize team features to be league-relative.
     
@@ -160,6 +208,9 @@ def normalize_team_features(raw_features: Dict[str, float], season: str, game_da
         raw_features: Dictionary of raw team features (from get_team_features)
         season: Season string
         game_date: Game date string
+        method: Normalization method ('center' or 'zscore'). 
+               'center' = raw - avg (default)
+               'zscore' = (raw - avg) / std
         
     Returns:
         Dictionary with both raw and normalized features
@@ -187,20 +238,37 @@ def normalize_team_features(raw_features: Dict[str, float], season: str, game_da
     }
     
     for feature_key, league_key in mapping.items():
-        if feature_key in raw_features and league_key in league_avg:
+        if feature_key in raw_features:
             raw_value = raw_features[feature_key]
-            league_value = league_avg[league_key]
             
-            # Only add normalized value if both raw and league values are valid
-            if raw_value is not None and league_value is not None:
+            # Determine league stats based on method
+            if method == 'zscore':
+                # Use per-game mean and std for Z-score
+                mu = league_avg.get(f"{league_key}_mean", league_avg.get(league_key))
+                sigma = league_avg.get(f"{league_key}_std", 1.0)
+                
+                if sigma is None or sigma == 0:
+                    sigma = 1.0
+                    
+            else:
+                # Default 'center': use aggregate average
+                mu = league_avg.get(league_key)
+                sigma = 1.0 # Not used for centering
+            
+            # Only add normalized value if valid
+            if raw_value is not None and mu is not None:
                 if not (isinstance(raw_value, float) and math.isnan(raw_value)):
-                    if not (isinstance(league_value, float) and math.isnan(league_value)):
-                        normalized[feature_key + '_norm'] = raw_value - league_value
+                    if not (isinstance(mu, float) and math.isnan(mu)):
+                        
+                        if method == 'zscore':
+                             normalized[feature_key + '_norm'] = (raw_value - mu) / sigma
+                        else:
+                             normalized[feature_key + '_norm'] = raw_value - mu
     
     return normalized
 
 
-def normalize_game_jsonl(input_path: str, output_path: str):
+def normalize_game_jsonl(input_path: str, output_path: str, method: str = 'center'):
     """
     Read games from input JSONL, add normalized features, write to output JSONL.
     OPTIMIZED: Batch process games by date to minimize league average calculations.
@@ -208,8 +276,9 @@ def normalize_game_jsonl(input_path: str, output_path: str):
     Args:
         input_path: Path to input JSONL file
         output_path: Path to output JSONL file
+        method: Normalization method ('center' or 'zscore')
     """
-    print(f"Normalizing features: {input_path} -> {output_path}")
+    print(f"Normalizing features ({method}): {input_path} -> {output_path}")
     
     # PERFORMANCE FIX #3: Batch process games by (season, date)
     # Read all games first
@@ -243,12 +312,12 @@ def normalize_game_jsonl(input_path: str, output_path: str):
         for game in date_games:
             # Normalize home team features
             home_features = game['teams']['H']
-            home_normalized = normalize_team_features(home_features, season, game_date)
+            home_normalized = normalize_team_features(home_features, season, game_date, method=method)
             game['teams']['H'] = home_normalized
             
             # Normalize away team features
             away_features = game['teams']['A']
-            away_normalized = normalize_team_features(away_features, season, game_date)
+            away_normalized = normalize_team_features(away_features, season, game_date, method=method)
             game['teams']['A'] = away_normalized
             
             normalized_games.append(game)

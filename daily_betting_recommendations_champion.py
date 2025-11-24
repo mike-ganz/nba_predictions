@@ -343,17 +343,17 @@ def get_confidence_level(rec: Dict) -> str:
     if is_home_underdog:
         if spread <= 4:
             return 'high'
-        elif spread > 5:
-            return 'medium'
+        # elif spread > 5:
+        #     return 'medium'
         else:
             return 'low'
     elif is_home_favorite and (spread >= -5 or spread < -12):
         return 'medium'
-    elif is_away_underdog:
-        if -9 <= spread <= -5:
-            return 'medium'
-        else:
-            return 'low'
+    # elif is_away_underdog:
+    #     if -9 <= spread <= -5:
+    #         return 'medium'
+    #     else:
+    #         return 'low'
     elif is_away_favorite:
         if spread < 5:
             return 'high'

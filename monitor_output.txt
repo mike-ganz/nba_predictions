@@ -1,0 +1,44 @@
+
+================================================================================
+NBA METRICS MONITORING & REGIME CHANGE DETECTION
+================================================================================
+
+
+--------------------------------------------------------------------------------
+STEP 1: Loading Current Season Progression
+--------------------------------------------------------------------------------
+
+Loading all current season files...
+Found 34 data snapshots
+Date range: 10/21/2025 to 11/23/2025
+Games analyzed: 250
+
+Available metrics: OEFF, DEFF, ORr, DRr, TOr, 3PAr, ASTr, Pace, FTR, eFG, TS, 3P_Pct, PPG
+
+--------------------------------------------------------------------------------
+STEP 2: Loading Historical Baseline
+--------------------------------------------------------------------------------
+
+Loading historical season files...
+Historical seasons loaded: 5
+
+Loading historical season progressions...
+Historical progressions loaded: 5 seasons
+
+
+Traceback (most recent call last):
+  File "C:\Users\micha\nba_predictions\monitor_nba_metrics.py", line 1673, in <module>
+--------------------------------------------------------------------------------
+STEP 3: Metrics Analysis & Regime Change Detection
+--------------------------------------------------------------------------------
+
+
+    main()
+  File "C:\Users\micha\nba_predictions\monitor_nba_metrics.py", line 1286, in main
+    print_metrics_table(analysis_df, verbose=args.verbose)
+  File "C:\Users\micha\nba_predictions\monitor_nba_metrics.py", line 1135, in print_metrics_table
+    print("\u2554" + "\u2550" * 78 + "\u2557")
+  File "C:\Users\micha\AppData\Local\Programs\Python\Python311\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode characters in position 0-79: character maps to <undefined>
