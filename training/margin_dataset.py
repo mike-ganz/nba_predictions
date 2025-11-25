@@ -18,6 +18,7 @@ from features.builder import (
     HOME_FEATURE_KEYS,
     AWAY_FEATURE_KEYS,
     SHARED_FEATURE_KEYS,
+    CONTEXT_FEATURE_KEYS,
 )
 
 
@@ -46,9 +47,10 @@ class MarginTrainingDataset:
     - Added difference features to capture relative advantages
     """
     
-    def __init__(self, records: Iterable[GameRecord], builder: FeatureBuilder | None = None, exclude_features: List[str] | None = None, include_diff_features: bool = True):
+    def __init__(self, records: Iterable[GameRecord], builder: FeatureBuilder | None = None, exclude_features: List[str] | None = None, include_diff_features: bool = True, include_context: bool = False):
         self.records: List[GameRecord] = list(records)
-        self.builder = builder or FeatureBuilder()
+        self.include_context = include_context
+        self.builder = builder or FeatureBuilder(include_context=include_context)
         self.exclude_features = exclude_features or []
         self.include_diff_features = include_diff_features
     
@@ -74,6 +76,13 @@ class MarginTrainingDataset:
             shared_feats = [features.x_shared[k] for k in SHARED_FEATURE_KEYS 
                            if f'shared_{k}' not in self.exclude_features]
             
+            # Add context features (league-wide volatility) if enabled
+            context_feats = []
+            if self.include_context:
+                for k in CONTEXT_FEATURE_KEYS:
+                    if f'ctx_{k}' not in self.exclude_features:
+                        context_feats.append(features.x_shared.get(k, 0.0))
+            
             # Add difference features (capture asymmetry)
             # These help linear models learn relative advantages
             # Tree models can learn these automatically, so they're optional
@@ -84,7 +93,7 @@ class MarginTrainingDataset:
                         if f'diff_{k}' not in self.exclude_features:
                             diff_feats.append(features.x_home[k] - features.x_away.get(k, 0))
             
-            combined = home_feats + away_feats + shared_feats + diff_feats
+            combined = home_feats + away_feats + shared_feats + context_feats + diff_feats
             x_list.append(combined)
             
             # Target: actual margin (optional for future games)

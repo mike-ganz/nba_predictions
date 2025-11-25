@@ -37,6 +37,14 @@ SHARED_FEATURE_KEYS: List[str] = [
     # spread_line_movement removed - empirically harmful to ATS performance
 ]
 
+# Context features (league-wide volatility) - optional, added via include_context flag
+CONTEXT_FEATURE_KEYS: List[str] = [
+    "ctx_std_oeff",
+    "ctx_std_deff",
+    "ctx_std_pace",
+    "ctx_std_orb",
+]
+
 
 @dataclass
 class BuiltFeatures:
@@ -48,6 +56,15 @@ class BuiltFeatures:
 
 
 class FeatureBuilder:
+    def __init__(self, include_context: bool = False):
+        """
+        Initialize the feature builder.
+        
+        Args:
+            include_context: If True, include league context features (volatility metrics).
+        """
+        self.include_context = include_context
+    
     def build(self, record: GameRecord) -> BuiltFeatures:
         market = compute_market_features(record.market)
         matchup = compute_matchup_features(record.teams)
@@ -67,6 +84,13 @@ class FeatureBuilder:
             "team_weighted_ts_away": availability_away.team_weighted_ts,
             # spread_line_movement excluded - decreased ATS from 53.31% to 48.37%
         }
+        
+        # Add league context features if requested and available
+        if self.include_context and record.league_context:
+            x_shared["ctx_std_oeff"] = record.league_context.ctx_std_oeff or 3.5
+            x_shared["ctx_std_deff"] = record.league_context.ctx_std_deff or 3.5
+            x_shared["ctx_std_pace"] = record.league_context.ctx_std_pace or 2.0
+            x_shared["ctx_std_orb"] = record.league_context.ctx_std_orb or 0.03
 
         x_home = {
             "edge": matchup.edge_home,
@@ -112,5 +136,6 @@ __all__ = [
     "HOME_FEATURE_KEYS",
     "AWAY_FEATURE_KEYS",
     "SHARED_FEATURE_KEYS",
+    "CONTEXT_FEATURE_KEYS",
 ]
 

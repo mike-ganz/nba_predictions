@@ -68,16 +68,21 @@ def main():
         exclude_features = cfg.get('model', {}).get('exclude_features', [])
         include_diff_features = cfg.get('model', {}).get('include_diff_features', True)
         include_fav_underdog_features = cfg.get('model', {}).get('include_fav_underdog_features', False)
+        include_context = cfg.get('model', {}).get('include_context', False)
     else:
         exclude_features = []
         include_diff_features = True
         include_fav_underdog_features = False
+        include_context = False
     
     if exclude_features:
         print(f"Excluding {len(exclude_features)} features: {exclude_features}")
     
     if not include_diff_features:
         print(f"Excluding difference features (tree-based model)")
+    
+    if include_context:
+        print(f"Including league context features")
     
     if include_fav_underdog_features:
         print(f"Including favorite/underdog indicators (extended features)")
@@ -98,14 +103,16 @@ def main():
             records, 
             exclude_features=exclude_features,
             include_diff_features=include_diff_features,
-            include_fav_underdog_features=include_fav_underdog_features
+            include_fav_underdog_features=include_fav_underdog_features,
+            include_context=include_context
         )
     else:
         # Use standard dataset for baseline models
         dataset = MarginTrainingDataset(
             records, 
             exclude_features=exclude_features,
-            include_diff_features=include_diff_features
+            include_diff_features=include_diff_features,
+            include_context=include_context
         )
     batch = dataset.build()
     

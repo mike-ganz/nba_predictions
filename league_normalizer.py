@@ -200,6 +200,112 @@ def calculate_league_averages(season: str, target_date: str, min_games: int = 20
     return averages
 
 
+# Cache for league context by (season, date)
+_league_context_cache: Dict[Tuple[str, str], Dict[str, float]] = {}
+
+
+def calculate_league_context(season: str, target_date: str, min_games: int = 50) -> Dict[str, float]:
+    """
+    Calculate league-wide context features (volatility/variance metrics) for a given date.
+    
+    These features describe the "state" of the league - how spread out teams are -
+    which helps the model adjust its confidence based on the current environment.
+    
+    Args:
+        season: Season string (e.g., '2023-2024')
+        target_date: Date string (e.g., '2023-12-15')
+        min_games: Minimum games required; if fewer, use prior season's final context
+        
+    Returns:
+        Dictionary with context features:
+        - ctx_std_oeff: Std dev of team offensive ratings
+        - ctx_std_deff: Std dev of team defensive ratings
+        - ctx_std_pace: Std dev of team pace
+        - ctx_std_orb: Std dev of team offensive rebound rates
+    """
+    # Check cache first
+    cache_key = (season, target_date)
+    if cache_key in _league_context_cache:
+        return _league_context_cache[cache_key]
+    
+    # Load season data
+    df = _load_team_boxscores_for_season(season)
+    
+    if df.empty:
+        # Return default context (historical averages)
+        return _get_default_context()
+    
+    # Filter to games before target date
+    if target_date not in _datetime_cache:
+        _datetime_cache[target_date] = pd.to_datetime(target_date)
+    target_dt = _datetime_cache[target_date]
+    
+    df_before = df[df['DATE'] < target_dt]
+    
+    # Check if we have enough data
+    if len(df_before) < min_games:
+        # Fall back to prior season's final context
+        prior_season_map = {
+            '2022-2023': '2021-2022',
+            '2023-2024': '2022-2023',
+            '2024-2025': '2023-2024',
+            '2025-2026': '2024-2025',
+        }
+        
+        if season in prior_season_map:
+            prior_season = prior_season_map[season]
+            prior_df = _load_team_boxscores_for_season(prior_season)
+            
+            if not prior_df.empty:
+                # Use entire prior season
+                df_before = prior_df
+            else:
+                return _get_default_context()
+        else:
+            return _get_default_context()
+    
+    # Calculate TEAM-LEVEL statistics (not game-level)
+    # Group by team and calculate season-to-date averages per team
+    team_stats = df_before.groupby('TEAM').agg({
+        'OEFF': 'mean',
+        'DEFF': 'mean',
+        'PACE': 'mean',
+        'OR': 'sum',
+        'DR': 'sum',
+    })
+    
+    # Calculate offensive rebound rate per team
+    team_stats['ORB_rate'] = team_stats['OR'] / (team_stats['OR'] + team_stats['DR'])
+    
+    # Calculate standard deviations ACROSS TEAMS (this is the "spread" of the league)
+    context = {
+        'ctx_std_oeff': team_stats['OEFF'].std(),
+        'ctx_std_deff': team_stats['DEFF'].std(),
+        'ctx_std_pace': team_stats['PACE'].std(),
+        'ctx_std_orb': team_stats['ORB_rate'].std(),
+    }
+    
+    # Handle NaN (can happen with very few teams)
+    for key in context:
+        if pd.isna(context[key]):
+            context[key] = _get_default_context()[key]
+    
+    # Cache the result
+    _league_context_cache[cache_key] = context
+    
+    return context
+
+
+def _get_default_context() -> Dict[str, float]:
+    """Return default/fallback context values based on historical averages."""
+    return {
+        'ctx_std_oeff': 3.5,   # Historical avg std dev of team offensive ratings
+        'ctx_std_deff': 3.5,   # Historical avg std dev of team defensive ratings
+        'ctx_std_pace': 2.0,   # Historical avg std dev of team pace
+        'ctx_std_orb': 0.03,   # Historical avg std dev of team ORB rate
+    }
+
+
 def normalize_team_features(raw_features: Dict[str, float], season: str, game_date: str, method: str = 'center') -> Dict[str, float]:
     """
     Normalize team features to be league-relative.
@@ -268,7 +374,7 @@ def normalize_team_features(raw_features: Dict[str, float], season: str, game_da
     return normalized
 
 
-def normalize_game_jsonl(input_path: str, output_path: str, method: str = 'center'):
+def normalize_game_jsonl(input_path: str, output_path: str, method: str = 'center', include_context: bool = False):
     """
     Read games from input JSONL, add normalized features, write to output JSONL.
     OPTIMIZED: Batch process games by date to minimize league average calculations.
@@ -277,8 +383,10 @@ def normalize_game_jsonl(input_path: str, output_path: str, method: str = 'cente
         input_path: Path to input JSONL file
         output_path: Path to output JSONL file
         method: Normalization method ('center' or 'zscore')
+        include_context: If True, inject league context features into each game
     """
-    print(f"Normalizing features ({method}): {input_path} -> {output_path}")
+    context_str = " +context" if include_context else ""
+    print(f"Normalizing features ({method}{context_str}): {input_path} -> {output_path}")
     
     # PERFORMANCE FIX #3: Batch process games by (season, date)
     # Read all games first
@@ -308,6 +416,11 @@ def normalize_game_jsonl(input_path: str, output_path: str, method: str = 'cente
         # Calculate league average ONCE per date (not once per game!)
         league_avg = calculate_league_averages(season, game_date)
         
+        # Calculate league context ONCE per date (if requested)
+        league_context = None
+        if include_context:
+            league_context = calculate_league_context(season, game_date)
+        
         # Apply to all games on this date
         for game in date_games:
             # Normalize home team features
@@ -319,6 +432,10 @@ def normalize_game_jsonl(input_path: str, output_path: str, method: str = 'cente
             away_features = game['teams']['A']
             away_normalized = normalize_team_features(away_features, season, game_date, method=method)
             game['teams']['A'] = away_normalized
+            
+            # Inject league context (same for all games on this date)
+            if include_context and league_context:
+                game['league_context'] = league_context
             
             normalized_games.append(game)
             processed_count += 1

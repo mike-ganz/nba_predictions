@@ -63,13 +63,15 @@ class FeatureBuilderExtended:
     These are mutually exclusive binary indicators based on closing spread.
     """
     
-    def __init__(self, include_fav_underdog_features: bool = True):
+    def __init__(self, include_fav_underdog_features: bool = True, include_context: bool = False):
         """
         Args:
             include_fav_underdog_features: Whether to include the favorite/underdog indicators.
                                            Set to False to match original feature builder.
+            include_context: Whether to include league context features (volatility metrics).
         """
         self.include_fav_underdog_features = include_fav_underdog_features
+        self.include_context = include_context
     
     def build(self, record: GameRecord) -> BuiltFeaturesExtended:
         market = compute_market_features(record.market)
@@ -109,6 +111,13 @@ class FeatureBuilderExtended:
             x_shared["is_home_underdog"] = is_home_underdog
             x_shared["is_away_favorite"] = is_away_favorite
             x_shared["is_away_underdog"] = is_away_underdog
+
+        # Add league context features if requested and available
+        if self.include_context and record.league_context:
+            x_shared["ctx_std_oeff"] = record.league_context.ctx_std_oeff or 3.5
+            x_shared["ctx_std_deff"] = record.league_context.ctx_std_deff or 3.5
+            x_shared["ctx_std_pace"] = record.league_context.ctx_std_pace or 2.0
+            x_shared["ctx_std_orb"] = record.league_context.ctx_std_orb or 0.03
 
         x_home = {
             "edge": matchup.edge_home,

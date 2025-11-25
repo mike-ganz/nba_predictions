@@ -69,10 +69,16 @@ def main():
         else:
             print(f"  Excluding difference features (as specified in config)")
     
+    # Optionally include league context features (volatility metrics)
+    include_context = cfg.get('model', {}).get('include_context', False)
+    if include_context:
+        print(f"  Including league context features (ctx_std_oeff, ctx_std_deff, ctx_std_pace, ctx_std_orb)")
+    
     dataset = MarginTrainingDataset(
         records,
         exclude_features=exclude_features,
         include_diff_features=include_diff_features,
+        include_context=include_context,
     )
     batch = dataset.build()
     print(f"  Feature dimensionality: {batch.x.shape[1]}")
@@ -109,6 +115,7 @@ def main():
             'exclude_features',
             'model_type',
             'include_diff_features',
+            'include_context',
             'use_spread_weighting',
             'spread_weight_sigma',
         ]
@@ -230,6 +237,8 @@ def main():
         'feature_count': batch.x.shape[1],
         'game_count': len(records),
         'exclude_features': exclude_features,
+        'include_diff_features': include_diff_features,
+        'include_context': include_context,
     }
     metadata_path = output_dir / "metadata.yaml"
     with open(metadata_path, 'w') as f:

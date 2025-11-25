@@ -19,6 +19,7 @@ from features.builder_extended import (
     AWAY_FEATURE_KEYS_EXTENDED,
     SHARED_FEATURE_KEYS_EXTENDED,
 )
+from features.builder import CONTEXT_FEATURE_KEYS
 
 
 @dataclass
@@ -49,6 +50,7 @@ class MarginTrainingDatasetExtended:
         exclude_features: List[str] | None = None,
         include_diff_features: bool = True,
         include_fav_underdog_features: bool = False,
+        include_context: bool = False,
     ):
         """
         Args:
@@ -56,15 +58,18 @@ class MarginTrainingDatasetExtended:
             exclude_features: List of features to exclude (e.g., ['home_ftr'])
             include_diff_features: Whether to include home-away difference features
             include_fav_underdog_features: Whether to include favorite/underdog indicators
+            include_context: Whether to include league context features (volatility)
         """
         self.records: List[GameRecord] = list(records)
         self.exclude_features = exclude_features or []
         self.include_diff_features = include_diff_features
         self.include_fav_underdog_features = include_fav_underdog_features
+        self.include_context = include_context
         
         # Initialize builder with appropriate feature flags
         self.builder = FeatureBuilderExtended(
-            include_fav_underdog_features=include_fav_underdog_features
+            include_fav_underdog_features=include_fav_underdog_features,
+            include_context=include_context
         )
     
     def build(self) -> MarginTrainingBatchExtended:
@@ -99,6 +104,13 @@ class MarginTrainingDatasetExtended:
                            if f'shared_{k}' not in self.exclude_features 
                            and k in features.x_shared]  # Check existence for fav/underdog
             
+            # Add context features (league-wide volatility) if enabled
+            context_feats = []
+            if self.include_context:
+                for k in CONTEXT_FEATURE_KEYS:
+                    if f'ctx_{k}' not in self.exclude_features:
+                        context_feats.append(features.x_shared.get(k, 0.0))
+            
             # Add difference features (capture asymmetry)
             diff_feats = []
             if self.include_diff_features:
@@ -109,7 +121,7 @@ class MarginTrainingDatasetExtended:
                             if f'home_{k}' not in self.exclude_features and f'away_{k}' not in self.exclude_features:
                                 diff_feats.append(features.x_home[k] - features.x_away.get(k, 0))
             
-            combined = home_feats + away_feats + shared_feats + diff_feats
+            combined = home_feats + away_feats + shared_feats + context_feats + diff_feats
             x_list.append(combined)
             
             # Target: actual margin (optional for future games)

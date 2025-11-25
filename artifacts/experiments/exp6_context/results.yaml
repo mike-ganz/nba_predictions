@@ -1,0 +1,9 @@
+ats_correct: 132
+ats_pct: 53.01204819277108
+ats_total: 249
+experiment: exp6_context
+features: 14 base + 4 context
+mae: 10.341586775191308
+test_data: 2025-2026
+test_games: 249
+training_data: 2021-2024

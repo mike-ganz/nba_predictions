@@ -1,0 +1,11 @@
+exclude_features:
+- home_b2b
+- home_three_in_four
+- away_b2b
+- away_three_in_four
+feature_count: 28
+game_count: 3560
+include_context: true
+include_diff_features: false
+model_type: xgboost
+training_data: data\experiments\context\games_train_context.jsonl
