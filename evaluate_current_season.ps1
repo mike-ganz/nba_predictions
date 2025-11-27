@@ -108,16 +108,9 @@ switch ($Mode) {
         
         # Step 2b: Generate Context predictions (needed for hybrid)
         Write-Host "  [2b] Preparing context-enhanced data..." -ForegroundColor Cyan
-        python -c @'
-from league_normalizer import normalize_game_jsonl
-normalize_game_jsonl(
-    "data/games_2025_2026_current.jsonl",
-    "data/games_2025_2026_current_context.jsonl",
-    method="center",
-    include_context=True
-)
-print("Context data prepared successfully")
-'@
+        python prepare_context_data.py `
+            --input data/games_2025_2026_current.jsonl `
+            --output data/games_2025_2026_current_context.jsonl
         
         if ($LASTEXITCODE -ne 0) {
             Write-Host "Error preparing context data" -ForegroundColor Red
@@ -174,16 +167,9 @@ print("Context data prepared successfully")
         
         # First generate context-enhanced data
         Write-Host "  Preparing context-enhanced data..." -ForegroundColor Cyan
-        python -c @"
-from league_normalizer import normalize_game_jsonl
-normalize_game_jsonl(
-    'data/games_2025_2026_current.jsonl',
-    'data/games_2025_2026_current_context.jsonl',
-    method='center',
-    include_context=True
-)
-print('Context data prepared successfully')
-"@
+        python prepare_context_data.py `
+            --input data/games_2025_2026_current.jsonl `
+            --output data/games_2025_2026_current_context.jsonl
         
         if ($LASTEXITCODE -ne 0) {
             Write-Host "Error preparing context data" -ForegroundColor Red
