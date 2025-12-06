@@ -488,5 +488,19 @@
     "threshold": 1.3,
     "changed_from_previous": false,
     "previous_regime": "high"
+  },
+  {
+    "date": "2025-12-06",
+    "season": "2025-2026",
+    "regime": "high",
+    "raw_regime": "normal",
+    "model_recommended": "context",
+    "variance_ratio": 1.1827288547857828,
+    "std_deff": 3.9857962406280882,
+    "games_analyzed": 680,
+    "consecutive_high_days": 10,
+    "threshold": 1.3,
+    "changed_from_previous": false,
+    "previous_regime": "high"
   }
 ]

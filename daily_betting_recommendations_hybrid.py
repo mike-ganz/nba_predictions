@@ -405,17 +405,20 @@ def get_confidence_level_context(rec: Dict) -> str:
     is_away_favorite = is_away and spread > 0  # Away team is favorite when spread > 0
 
     # Home dogs: 2.5 to 4 (inclusive) -> medium
-    if is_home_underdog and 2.5 <= spread <= 4:
-        return 'medium'
+    # if is_home_underdog and 2.5 <= spread <= 3.5:
+    #     return 'medium'
     
     # Home favorites: < -12 -> medium
-    if is_home_favorite and spread < -12:
-        return 'medium'
+    # if is_home_favorite and spread < -12:
+    #     return 'medium'
     
     # Road dogs: -5 to -9 (inclusive) -> medium
     # When picking away team and spread is negative (home favored), away is underdog
-    if is_away_underdog and -9 <= spread <= -5:
-        return 'medium'
+    if is_away_underdog and (spread > -8):
+        return 'high'
+
+    # if is_away_favorite and 3 <= spread <= 4.5:
+    #     return 'medium'
     
     # Road favorites: none are medium
     # Everything else is low
